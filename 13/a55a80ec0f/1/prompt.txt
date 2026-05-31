@@ -1,0 +1,12 @@
+Review the current branch changes and report actionable findings. Prioritize correctness, regressions, security, and missing test coverage. Do not make code changes.
+
+Scope: review the commits unique to this branch vs origin/main, plus any uncommitted changes in the working tree. Ignore code outside this scope.
+
+Checkpoint context from commits in scope:
+- cde5d8b348d8: prompt: Create a new branch to implement docs/semantic_provider_requirements.md. Write your progress into docs/progress-so-far.md. Make sure everything is tested, reviewed with "entire review", and commit/push along the way.
+- 344d73e0a85b: prompt: Create a new branch to implement docs/semantic_provider_requirements.md. Write your progress into docs/progress-so-far.md. Make sure everything is tested, reviewed with "entire review", and commit/push along the way.
+
+Use `entire explain <id>` for full checkpoint context, or `entire explain <id> --raw-transcript` for raw transcripts.
+
+In-progress session context (uncommitted):
+  019e7da4 Codex (touched: 5 files) prompt: Try “entire review” again. If you don’t understand how it works, inspect the ../cli repo.

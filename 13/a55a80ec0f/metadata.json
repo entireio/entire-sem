@@ -3,7 +3,7 @@
   "checkpoint_id": "13a55a80ec0f",
   "strategy": "manual-commit",
   "branch": "semantic-provider-contract",
-  "checkpoints_count": 0,
+  "checkpoints_count": 1,
   "files_touched": [
     "docs/progress-so-far.md",
     "internal/sem/provider.go",
@@ -15,13 +15,20 @@
       "transcript": "/13/a55a80ec0f/0/full.jsonl",
       "content_hash": "/13/a55a80ec0f/0/content_hash.txt",
       "prompt": "/13/a55a80ec0f/0/prompt.txt"
+    },
+    {
+      "metadata": "/13/a55a80ec0f/1/metadata.json",
+      "transcript": "/13/a55a80ec0f/1/full.jsonl",
+      "content_hash": "/13/a55a80ec0f/1/content_hash.txt",
+      "prompt": "/13/a55a80ec0f/1/prompt.txt"
     }
   ],
   "token_usage": {
-    "input_tokens": 94534,
+    "input_tokens": 151634,
     "cache_creation_tokens": 0,
-    "cache_read_tokens": 2937728,
-    "output_tokens": 2088,
-    "api_call_count": 58
-  }
+    "cache_read_tokens": 3674240,
+    "output_tokens": 7797,
+    "api_call_count": 72
+  },
+  "has_review": true
 }

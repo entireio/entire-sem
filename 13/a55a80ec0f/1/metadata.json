@@ -1,0 +1,61 @@
+{
+  "cli_version": "0.6.3-nightly.202605190723.fd212937",
+  "checkpoint_id": "13a55a80ec0f",
+  "session_id": "019e7db7-d89c-7070-b812-4435399bcd61",
+  "strategy": "manual-commit",
+  "created_at": "2026-05-31T11:11:29.593828Z",
+  "branch": "semantic-provider-contract",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "docs/progress-so-far.md",
+    "internal/sem/provider.go",
+    "internal/sem/provider_test.go"
+  ],
+  "agent": "Codex",
+  "model": "gpt-5.5",
+  "turn_id": "4d23616296b8",
+  "token_usage": {
+    "input_tokens": 57100,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 736512,
+    "output_tokens": 5709,
+    "api_call_count": 14
+  },
+  "session_metrics": {
+    "turn_count": 1
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-05-31T11:11:29.577933Z",
+    "agent_lines": 0,
+    "agent_removed": 0,
+    "human_added": 97,
+    "human_modified": 21,
+    "human_removed": 0,
+    "total_committed": 97,
+    "total_lines_changed": 118,
+    "agent_percentage": 0,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 118,
+      "user_lines_removed": 15,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        "docs/progress-so-far.md": 14,
+        "internal/sem/provider.go": 69,
+        "internal/sem/provider_test.go": 35
+      },
+      "user_removed_per_file": {
+        "internal/sem/provider.go": 15
+      }
+    }
+  ],
+  "kind": "agent_review",
+  "review_skills": [
+    "/review"
+  ],
+  "review_prompt": "Review the current branch changes and report actionable findings. Prioritize correctness, regressions, security, and missing test coverage. Do not make code changes.\n\nScope: review the commits unique to this branch vs origin/main, plus any uncommitted changes in the working tree. Ignore code outside this scope.\n\nCheckpoint context from commits in scope:\n- cde5d8b348d8: prompt: Create a new branch to implement docs/semantic_provider_requirements.md. Write your progress into docs/progress-so-far.md. Make sure everything is tested, reviewed with \"entire review\", and commit/push along the way.\n- 344d73e0a85b: prompt: Create a new branch to implement docs/semantic_provider_requirements.md. Write your progress into docs/progress-so-far.md. Make sure everything is tested, reviewed with \"entire review\", and commit/push along the way.\n\nUse `entire explain <id>` for full checkpoint context, or `entire explain <id> --raw-transcript` for raw transcripts.\n\nIn-progress session context (uncommitted):\n  019e7da4 Codex (touched: 5 files) prompt: Try “entire review” again. If you don’t understand how it works, inspect the ../cli repo."
+}
