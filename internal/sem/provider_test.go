@@ -108,6 +108,31 @@ func TestWriteSnapshotNDJSON(t *testing.T) {
 	}
 }
 
+func TestEntitySymbolsDisambiguatesDuplicateNames(t *testing.T) {
+	symbols := entitySymbols("gh/example/repo", "src/session.ts", "TypeScript", []Entity{
+		{Kind: "method", Name: "Session.toTime", StartLine: 10, EndLine: 12},
+		{Kind: "method", Name: "Session.toTime", StartLine: 20, EndLine: 22},
+		{Kind: "method", Name: "Session.toPosition", StartLine: 30, EndLine: 32},
+	})
+
+	ids := map[string]bool{}
+	for _, symbol := range symbols {
+		if ids[symbol.ID] {
+			t.Fatalf("duplicate symbol id %q in %#v", symbol.ID, symbols)
+		}
+		ids[symbol.ID] = true
+	}
+	if symbols[0].ID == "gh/example/repo:TypeScript:src/session.ts:method:Session.toTime" {
+		t.Fatalf("first duplicate was not disambiguated: %#v", symbols)
+	}
+	if symbols[1].ID == "gh/example/repo:TypeScript:src/session.ts:method:Session.toTime" {
+		t.Fatalf("second duplicate was not disambiguated: %#v", symbols)
+	}
+	if symbols[2].ID != "gh/example/repo:TypeScript:src/session.ts:method:Session.toPosition" {
+		t.Fatalf("unique symbol id changed: %q", symbols[2].ID)
+	}
+}
+
 func TestBuildProviderSnapshotReadsAdvertisedHeadTree(t *testing.T) {
 	repo := t.TempDir()
 	git(t, repo, "init")

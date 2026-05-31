@@ -341,10 +341,22 @@ func WriteRelationsNDJSON(out io.Writer, snapshot ProviderSnapshot) error {
 
 func entitySymbols(repoKey, path, language string, entities []Entity) []SymbolRecord {
 	byName := map[string]string{}
+	baseCounts := map[string]int{}
+	seenDuplicateIDs := map[string]int{}
+	for _, entity := range entities {
+		baseCounts[symbolID(repoKey, language, path, entity.Kind, entity.Name)]++
+	}
 	var symbols []SymbolRecord
 	for _, entity := range entities {
 		qualified := entity.Name
 		id := symbolID(repoKey, language, path, entity.Kind, qualified)
+		if baseCounts[id] > 1 {
+			id = symbolID(repoKey, language, path, entity.Kind, duplicateSymbolName(qualified, entity))
+			seenDuplicateIDs[id]++
+			if seenDuplicateIDs[id] > 1 {
+				id = fmt.Sprintf("%s#%d", id, seenDuplicateIDs[id])
+			}
+		}
 		containerID := ""
 		if containerName := containerName(qualified); containerName != "" {
 			if parentID, ok := byName[containerName]; ok {
@@ -370,6 +382,10 @@ func entitySymbols(repoKey, path, language string, entities []Entity) []SymbolRe
 		byName[qualified] = id
 	}
 	return symbols
+}
+
+func duplicateSymbolName(qualified string, entity Entity) string {
+	return fmt.Sprintf("%s#L%d-%d", qualified, entity.StartLine, entity.EndLine)
 }
 
 func buildRelations(repoKey string, files []FileRecord, recordsByFile map[string][]SymbolRecord, contentByFile map[string]string) []RelationRecord {
