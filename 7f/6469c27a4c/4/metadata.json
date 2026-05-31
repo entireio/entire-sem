@@ -1,0 +1,66 @@
+{
+  "cli_version": "0.6.3-nightly.202605190723.fd212937",
+  "checkpoint_id": "7f6469c27a4c",
+  "session_id": "019e7f79-aebd-7ee1-ba8e-b4231733cf00",
+  "strategy": "manual-commit",
+  "created_at": "2026-05-31T19:25:12.607196Z",
+  "branch": "semantic-provider-contract",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "internal/cli/root.go",
+    "internal/cli/root_test.go",
+    "internal/gitutil/git.go",
+    "internal/sem/provider.go",
+    "internal/sem/provider_test.go"
+  ],
+  "agent": "Codex",
+  "model": "gpt-5.5",
+  "turn_id": "39aa9ee68e68",
+  "token_usage": {
+    "input_tokens": 55736,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 548480,
+    "output_tokens": 4601,
+    "api_call_count": 11
+  },
+  "session_metrics": {
+    "turn_count": 1
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-05-31T19:25:12.591003Z",
+    "agent_lines": 0,
+    "agent_removed": 0,
+    "human_added": 0,
+    "human_modified": 11,
+    "human_removed": 4,
+    "total_committed": 0,
+    "total_lines_changed": 15,
+    "agent_percentage": 0,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 224,
+      "user_lines_removed": 9,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        "internal/cli/root.go": 16,
+        "internal/cli/root_test.go": 44,
+        "internal/gitutil/git.go": 26,
+        "internal/sem/provider.go": 59,
+        "internal/sem/provider_test.go": 79
+      },
+      "user_removed_per_file": {
+        "internal/cli/root.go": 5,
+        "internal/sem/provider.go": 4
+      }
+    }
+  ],
+  "kind": "agent_review",
+  "review_skills": [
+    "/review"
+  ],
+  "review_prompt": "Review the current branch changes and report actionable findings. Prioritize correctness, regressions, security, and missing test coverage. Do not make code changes.\n\nScope: review the commits unique to this branch vs origin/HEAD, plus any uncommitted changes in the working tree. Ignore code outside this scope.\n\nCheckpoint context from commits in scope:\n- 13a55a80ec0f: prompt: Try “entire review” again. If you don’t understand how it works, inspect the ../cli repo.\n- cde5d8b348d8: prompt: Create a new branch to implement docs/semantic_provider_requirements.md. Write your progress into docs/progress-so-far.md. Make sure everything is tested, reviewed with \"entire review\", and commit/push along the way.\n- 344d73e0a85b: prompt: Create a new branch to implement docs/semantic_provider_requirements.md. Write your progress into docs/progress-so-far.md. Make sure everything is tested, reviewed with \"entire review\", and commit/push along the way.\n\nUse `entire explain <id>` for full checkpoint context, or `entire explain <id> --raw-transcript` for raw transcripts.\n\nIn-progress session context (uncommitted):\n  019e7da4 Codex (touched: 2 files) prompt: Try “entire review” again. If you don’t understand how it works, inspect the ../cli repo.\n  019e7f73 Codex (touched: 5 files) prompt: Task for Codex in `../entire-sem`: Fix Phase 1 provider contract compatibility with `entire-brain`. Context: - `entire-brain` invokes the semantic provider as: - `entire sem doctor --json` - `entire sem snapshot --repo <path> --format ndjson --no-network` - Local integration testing found two provider incompatibilit...\n  019e7f73 Codex prompt: You are a helpful assistant. You will be presented with a user prompt, and your job is to provide a short title for a task that will be created from that prompt. The task usually has to do with coding work, such as fixing a bug, changing a feature, or answering a question about a codebase. Generate a concise UI titl..."
+}
