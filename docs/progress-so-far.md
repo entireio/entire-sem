@@ -27,5 +27,9 @@ Branch: `semantic-provider-contract`
   - `go run ./cmd/entire-sem doctor --json`
   - `go run ./cmd/entire-sem capabilities --json`
   - `go run ./cmd/entire-sem snapshot --repo . --format ndjson`
-- `entire review` has not been run yet.
-- No commit has been made yet; this file will be updated after tests, review, commits, and push.
+- Committed implementation checkpoint:
+  - `3c7913e Implement semantic provider contract`
+- Pushed branch:
+  - `origin/semantic-provider-contract`
+- Ran `entire review`; it exited successfully with no output.
+- Re-ran `go test ./...` after `entire review`; it passed.
