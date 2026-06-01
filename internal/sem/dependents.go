@@ -112,6 +112,14 @@ func containsIdentifier(content, name string) bool {
 	return false
 }
 
+func identifiersIn(content string) map[string]struct{} {
+	identifiers := map[string]struct{}{}
+	for _, token := range identifierBoundary.FindAllString(content, -1) {
+		identifiers[token] = struct{}{}
+	}
+	return identifiers
+}
+
 func referenceName(change EntityChange) string {
 	switch change.Type {
 	case "renamed":

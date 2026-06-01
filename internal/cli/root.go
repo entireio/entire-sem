@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/suhaanthayyil/entire-sem/internal/gitutil"
 	"github.com/suhaanthayyil/entire-sem/internal/sem"
@@ -54,8 +55,22 @@ func Run(ctx context.Context, opts Options, args []string) error {
 	case "analyze":
 		return runAnalyze(ctx, opts, args[1:])
 	case "doctor":
-		return runDoctor(opts)
+		return runDoctor(ctx, opts, args[1:])
+	case "capabilities":
+		return runCapabilities(opts, args[1:])
+	case "snapshot":
+		return runProviderRecords(ctx, opts, args[1:], "snapshot")
+	case "symbols":
+		return runProviderRecords(ctx, opts, args[1:], "symbols")
+	case "edges":
+		return runProviderRecords(ctx, opts, args[1:], "edges")
 	case "version", "--version", "-v":
+		if len(args) > 1 && args[1] == "--json" {
+			return json.NewEncoder(opts.Stdout).Encode(map[string]string{
+				"provider": sem.ProviderName,
+				"version":  opts.Version,
+			})
+		}
 		fmt.Fprintln(opts.Stdout, opts.Version)
 		return nil
 	case "help", "--help", "-h":
@@ -74,14 +89,43 @@ Usage:
   entire sem checkpoint <checkpoint-id> [--json] [--repo path]
   entire sem diff --base <rev> --head <rev> [--json] [--repo path] [-- path...]
   entire sem analyze [--base <rev>] [--head <rev>] [--json] [--repo path] [-- path...]
-  entire sem doctor
-  entire sem version`)
+  entire sem doctor [--json]
+  entire sem version [--json]
+  entire sem capabilities --json
+  entire sem snapshot --repo . --format ndjson
+  entire sem symbols --repo . --format ndjson
+  entire sem edges --repo . --format ndjson`)
 }
 
-func runDoctor(opts Options) error {
-	fmt.Fprintf(opts.Stdout, "ENTIRE_CLI_VERSION=%s\n", valueOrUnset(opts.Env.CLIVersion))
-	fmt.Fprintf(opts.Stdout, "ENTIRE_REPO_ROOT=%s\n", valueOrUnset(opts.Env.RepoRoot))
-	fmt.Fprintf(opts.Stdout, "ENTIRE_PLUGIN_DATA_DIR=%s\n", valueOrUnset(opts.Env.PluginDataDir))
+func runDoctor(ctx context.Context, opts Options, args []string) error {
+	asJSON := len(args) == 1 && args[0] == "--json"
+	if len(args) > 1 || (len(args) == 1 && !asJSON) {
+		return errors.New("doctor accepts only --json")
+	}
+	report := map[string]any{
+		"provider":  sem.ProviderName,
+		"version":   opts.Version,
+		"no_egress": true,
+		"environment": map[string]string{
+			envCLIVersion:    valueOrUnset(opts.Env.CLIVersion),
+			envRepoRoot:      valueOrUnset(opts.Env.RepoRoot),
+			envPluginDataDir: valueOrUnset(opts.Env.PluginDataDir),
+		},
+		"phase_1_local_only": map[string]bool{
+			"fetch_remote_code":              false,
+			"download_grammars_or_assets":    false,
+			"upload_telemetry":               false,
+			"call_hosted_model_apis":         false,
+			"call_remote_embedding_provider": false,
+			"perform_network_discovery":      false,
+		},
+	}
+	if !asJSON {
+		fmt.Fprintf(opts.Stdout, "ENTIRE_CLI_VERSION=%s\n", valueOrUnset(opts.Env.CLIVersion))
+		fmt.Fprintf(opts.Stdout, "ENTIRE_REPO_ROOT=%s\n", valueOrUnset(opts.Env.RepoRoot))
+		fmt.Fprintf(opts.Stdout, "ENTIRE_PLUGIN_DATA_DIR=%s\n", valueOrUnset(opts.Env.PluginDataDir))
+		fmt.Fprintln(opts.Stdout, "no_egress=true")
+	}
 
 	if opts.Env.PluginDataDir != "" {
 		if err := os.MkdirAll(opts.Env.PluginDataDir, 0o700); err != nil {
@@ -98,22 +142,110 @@ func runDoctor(opts Options) error {
 		if err := os.Remove(probeName); err != nil {
 			return fmt.Errorf("remove plugin data probe: %w", err)
 		}
-		fmt.Fprintln(opts.Stdout, "plugin_data_dir=writable")
+		report["plugin_data_dir"] = "writable"
+		if !asJSON {
+			fmt.Fprintln(opts.Stdout, "plugin_data_dir=writable")
+		}
 	}
 
-	repo, err := resolveRepo(context.Background(), opts.Env, "")
+	repo, err := resolveRepo(ctx, opts.Env, "")
 	if err != nil {
+		report["repo_root"] = ""
+		report["repo_error"] = err.Error()
+		if asJSON {
+			return json.NewEncoder(opts.Stdout).Encode(report)
+		}
 		fmt.Fprintf(opts.Stdout, "repo_root=%s\n", valueOrUnset(""))
 		fmt.Fprintf(opts.Stdout, "repo_error=%s\n", err)
 		return nil
+	}
+	report["repo_root"] = repo
+	if asJSON {
+		return json.NewEncoder(opts.Stdout).Encode(report)
 	}
 	fmt.Fprintf(opts.Stdout, "repo_root=%s\n", repo)
 	return nil
 }
 
+func runCapabilities(opts Options, args []string) error {
+	if len(args) != 1 || args[0] != "--json" {
+		return errors.New("capabilities requires --json")
+	}
+	return json.NewEncoder(opts.Stdout).Encode(sem.Capabilities())
+}
+
+func runProviderRecords(ctx context.Context, opts Options, args []string, mode string) error {
+	flags, rest, err := parseProviderFlags(args)
+	if err != nil {
+		return err
+	}
+	if len(rest) != 0 {
+		return fmt.Errorf("%s received unexpected arguments: %s", mode, strings.Join(rest, " "))
+	}
+	if flags.Format != "ndjson" {
+		return fmt.Errorf("%s requires --format ndjson", mode)
+	}
+	repo, err := resolveRepo(ctx, opts.Env, flags.Repo)
+	if err != nil {
+		return err
+	}
+	snapshot, err := sem.BuildProviderSnapshotWithOptions(ctx, repo, opts.Version, sem.ProviderSnapshotOptions{
+		NoNetwork: flags.NoNetwork,
+		Worktree:  flags.Worktree,
+	})
+	if err != nil {
+		return err
+	}
+	switch mode {
+	case "snapshot":
+		return sem.WriteSnapshotNDJSON(opts.Stdout, snapshot)
+	case "symbols":
+		return sem.WriteSymbolsNDJSON(opts.Stdout, snapshot)
+	case "edges":
+		return sem.WriteRelationsNDJSON(opts.Stdout, snapshot)
+	default:
+		return fmt.Errorf("unknown provider record mode %q", mode)
+	}
+}
+
 type commonFlags struct {
 	Repo string
 	JSON bool
+}
+
+type providerFlags struct {
+	Repo      string
+	Format    string
+	NoNetwork bool
+	Worktree  bool
+}
+
+func parseProviderFlags(args []string) (providerFlags, []string, error) {
+	flags := providerFlags{Format: "ndjson"}
+	var rest []string
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--repo":
+			i++
+			if i >= len(args) {
+				return flags, nil, errors.New("--repo requires a value")
+			}
+			flags.Repo = args[i]
+		case "--format":
+			i++
+			if i >= len(args) {
+				return flags, nil, errors.New("--format requires a value")
+			}
+			flags.Format = args[i]
+		case "--no-network":
+			flags.NoNetwork = true
+		case "--worktree":
+			flags.Worktree = true
+		default:
+			rest = append(rest, args[i])
+		}
+	}
+	return flags, rest, nil
 }
 
 func parseCommonFlags(args []string) (commonFlags, []string, error) {

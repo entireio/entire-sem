@@ -12,6 +12,10 @@ entire sem commit HEAD
 entire sem checkpoint abc123def456
 entire sem diff --base HEAD~1 --head HEAD
 entire sem analyze --json
+entire sem capabilities --json
+entire sem snapshot --repo . --format ndjson
+entire sem symbols --repo . --format ndjson
+entire sem edges --repo . --format ndjson
 ```
 
 ## Status
@@ -29,6 +33,11 @@ The plugin uses a tree-sitter-backed parser for:
 
 The parser is isolated behind `internal/sem`, so the command surface can stay stable
 while the semantic model gets richer.
+
+This branch also adds a local-only semantic provider contract for tools that need
+machine-readable repository snapshots. Provider commands emit JSON or NDJSON records
+for capabilities, files, symbols, and relations without fetching remote code, calling
+hosted model APIs, uploading telemetry, or downloading grammars at runtime.
 
 ## Install
 
@@ -92,11 +101,67 @@ Analyze the commit associated with an Entire checkpoint trailer:
 entire sem checkpoint abc123def456
 ```
 
+Inspect the provider and its environment:
+
+```sh
+entire sem version --json
+entire sem doctor --json
+entire sem capabilities --json
+```
+
+Emit semantic provider records:
+
+```sh
+entire sem snapshot --repo . --format ndjson
+entire sem symbols --repo . --format ndjson
+entire sem edges --repo . --format ndjson
+```
+
+`snapshot` writes a complete NDJSON stream: one header record followed by file,
+symbol, and relation records. `symbols` and `edges` are filtered views over the
+same snapshot builder. By default, snapshots read the committed `HEAD` tree when
+git metadata is available, so dirty tracked edits and untracked files are excluded.
+Use `--worktree` to include live working-tree contents, and `--no-network` to make
+the provider's no-egress contract explicit to callers.
+
 Run without installing through Entire:
 
 ```sh
 ENTIRE_REPO_ROOT=/path/to/repo ./entire-sem diff --base HEAD~1 --head HEAD
 ```
+
+## Provider Contract
+
+The provider contract is designed for Entire or other local tools that want a stable
+semantic graph rather than human-oriented diff text.
+
+- `version --json` returns the provider name and plugin version.
+- `doctor --json` reports Entire environment variables, repository resolution,
+  plugin data directory writability, and `no_egress=true`.
+- `capabilities --json` reports supported extensions, languages, parser metadata,
+  relation types, optional local-only features, and network requirements.
+- `snapshot --format ndjson` emits header, file, symbol, and relation records.
+- `symbols --format ndjson` emits only symbol records.
+- `edges --format ndjson` emits only relation records.
+
+Snapshot headers include the schema version, provider version, repository key,
+`HEAD` commit and tree when available, parsed languages, capability labels,
+warnings, partial failures, and aggregate completeness stats. Symbol records include
+stable compound IDs, `stable_id_version`, kind, qualified name, source range,
+signature, body hash, language, and container ID when the symbol is nested.
+
+Current relation records are:
+
+- `DEFINES`
+- `CONTAINS`
+- `IMPORTS`
+- `CALLS`
+- `HANDLES_ROUTE`
+- `HANDLES_TOOL`
+
+Unsupported but detected source files are reported as machine-readable partial
+failures instead of disappearing silently. Repositories without a readable `HEAD`
+fall back to the working tree and include a warning in the snapshot header.
 
 ## Example Output
 
@@ -127,6 +192,8 @@ checkpoint context at the entity level instead of stopping at "this file changed
 - compare signatures and normalized bodies
 - build a heuristic dependent count from parsed references in the target tree
 - report added, removed, renamed, signature-changed, and body-changed entities
+- expose the same parser through local-only provider commands that emit
+  JSON/NDJSON snapshot, symbol, and relation records
 
 The implementation does not copy or vendor Ataraxy Labs code. The parser dependency is
 `github.com/smacker/go-tree-sitter`, which is MIT-licensed.
@@ -134,6 +201,8 @@ The implementation does not copy or vendor Ataraxy Labs code. The parser depende
 ## Current Limits
 
 - Dependent counts are heuristic, not compiler/type-checker accurate.
+- `CALLS`, `HANDLES_ROUTE`, and `HANDLES_TOOL` relations are heuristic.
 - Rename detection is heuristic.
+- Unsupported languages are reported as partial failures, not parsed semantically.
 - The plugin is invoked as `entire sem ...`; it does not require changes to the
   main Entire CLI repository.
