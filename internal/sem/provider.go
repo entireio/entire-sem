@@ -422,6 +422,7 @@ func buildRelations(repoKey string, files []FileRecord, recordsByFile map[string
 		if !ok {
 			continue
 		}
+		lines := strings.Split(content, "\n")
 		fromID := fileID(repoKey, file.Path)
 		for _, imported := range importsFor(file.Path, content) {
 			relations = append(relations, RelationRecord{
@@ -435,11 +436,12 @@ func buildRelations(repoKey string, files []FileRecord, recordsByFile map[string
 			})
 		}
 		for _, from := range recordsByFile[file.Path] {
-			block := symbolBlock(content, from)
-			for name, candidates := range symbolsByShortName {
-				if name == from.Name || !containsIdentifier(block, name) {
+			block := symbolBlockFromLines(lines, from)
+			for name := range identifiersIn(block) {
+				if name == from.Name {
 					continue
 				}
+				candidates := symbolsByShortName[name]
 				for _, to := range candidates {
 					if to.ID == from.ID {
 						continue
@@ -641,7 +643,10 @@ func looksLikeToolHandler(symbol SymbolRecord, block string) bool {
 }
 
 func symbolBlock(content string, symbol SymbolRecord) string {
-	lines := strings.Split(content, "\n")
+	return symbolBlockFromLines(strings.Split(content, "\n"), symbol)
+}
+
+func symbolBlockFromLines(lines []string, symbol SymbolRecord) string {
 	start := symbol.StartLine - 1
 	if start < 0 {
 		start = 0

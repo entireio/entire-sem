@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -105,6 +106,74 @@ func TestWriteSnapshotNDJSON(t *testing.T) {
 		if err := json.Unmarshal([]byte(line), &decoded); err != nil {
 			t.Fatalf("invalid json line %q: %v", line, err)
 		}
+	}
+}
+
+func TestBuildRelationsUsesSymbolBlockIdentifierLookup(t *testing.T) {
+	const symbolCount = 5000
+
+	files := make([]FileRecord, 0, symbolCount+1)
+	recordsByFile := make(map[string][]SymbolRecord, symbolCount+1)
+	contentByFile := make(map[string]string, symbolCount+1)
+
+	for i := 0; i < symbolCount; i++ {
+		path := "pkg/symbol_" + strconv.Itoa(i) + ".go"
+		name := "UnrelatedSymbol" + strconv.Itoa(i)
+		if i == symbolCount-1 {
+			name = "TargetSymbol"
+		}
+		symbol := SymbolRecord{
+			RecordType:    "symbol",
+			ID:            "sym-" + strconv.Itoa(i),
+			Kind:          "function",
+			Name:          name,
+			QualifiedName: name,
+			FilePath:      path,
+			StartLine:     1,
+			EndLine:       3,
+			Language:      "Go",
+		}
+		files = append(files, FileRecord{RecordType: "file", Path: path, Language: "Go"})
+		recordsByFile[path] = []SymbolRecord{symbol}
+		contentByFile[path] = "package pkg\nfunc " + name + "() {}\n"
+	}
+
+	caller := SymbolRecord{
+		RecordType:    "symbol",
+		ID:            "caller",
+		Kind:          "function",
+		Name:          "Caller",
+		QualifiedName: "Caller",
+		FilePath:      "pkg/caller.go",
+		StartLine:     2,
+		EndLine:       4,
+		Language:      "Go",
+	}
+	files = append(files, FileRecord{RecordType: "file", Path: caller.FilePath, Language: "Go"})
+	recordsByFile[caller.FilePath] = []SymbolRecord{caller}
+	contentByFile[caller.FilePath] = "package pkg\nfunc Caller() {\n\tTargetSymbol()\n}\n"
+
+	relations := buildRelations("repo", files, recordsByFile, contentByFile)
+
+	var sawTargetCall bool
+	for _, relation := range relations {
+		if relation.Type != "CALLS" {
+			continue
+		}
+		if relation.FromID != caller.ID {
+			t.Fatalf("unexpected CALLS relation from non-caller symbol: %#v", relation)
+		}
+		switch relation.ToID {
+		case "sym-" + strconv.Itoa(symbolCount-1):
+			sawTargetCall = true
+		case "sym-0":
+			t.Fatalf("unrelated symbol was emitted as a CALLS relation: %#v", relation)
+		default:
+			t.Fatalf("unexpected CALLS relation: %#v", relation)
+		}
+	}
+	if !sawTargetCall {
+		t.Fatalf("missing CALLS relation from caller to TargetSymbol in %#v", relations)
 	}
 }
 
