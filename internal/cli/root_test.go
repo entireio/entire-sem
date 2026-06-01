@@ -113,12 +113,12 @@ def check_token(token):
 `)
 
 	tests := []struct {
-		command string
-		want    string
+		command         string
+		wantRecordTypes []string
 	}{
-		{command: "snapshot", want: `"schema_version":"1.0"`},
-		{command: "symbols", want: `"record_type":"symbol"`},
-		{command: "edges", want: `"record_type":"relation"`},
+		{command: "snapshot", wantRecordTypes: []string{"file", "symbol", "relation"}},
+		{command: "symbols", wantRecordTypes: []string{"symbol"}},
+		{command: "edges", wantRecordTypes: []string{"relation"}},
 	}
 	for _, tt := range tests {
 		var out bytes.Buffer
@@ -126,13 +126,39 @@ def check_token(token):
 		if err != nil {
 			t.Fatalf("%s: %v", tt.command, err)
 		}
-		if !strings.Contains(out.String(), tt.want) {
-			t.Fatalf("%s missing %s:\n%s", tt.command, tt.want, out.String())
+		lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+		if len(lines) < 2 {
+			t.Fatalf("%s emitted too few lines:\n%s", tt.command, out.String())
 		}
-		for _, line := range strings.Split(strings.TrimSpace(out.String()), "\n") {
+		var header map[string]any
+		if err := json.Unmarshal([]byte(lines[0]), &header); err != nil {
+			t.Fatalf("%s invalid header json %q: %v", tt.command, lines[0], err)
+		}
+		if header["schema_version"] != "1.0" || header["provider"] != "entire-sem" {
+			t.Fatalf("%s header = %#v", tt.command, header)
+		}
+		seenTypes := map[string]bool{}
+		allowedTypes := map[string]bool{}
+		for _, recordType := range tt.wantRecordTypes {
+			allowedTypes[recordType] = true
+		}
+		for _, line := range lines[1:] {
 			var decoded map[string]any
 			if err := json.Unmarshal([]byte(line), &decoded); err != nil {
 				t.Fatalf("%s invalid json line %q: %v", tt.command, line, err)
+			}
+			recordType, ok := decoded["record_type"].(string)
+			if !ok {
+				t.Fatalf("%s record missing record_type: %#v", tt.command, decoded)
+			}
+			if !allowedTypes[recordType] {
+				t.Fatalf("%s emitted unexpected record type %q in %#v", tt.command, recordType, decoded)
+			}
+			seenTypes[recordType] = true
+		}
+		for _, recordType := range tt.wantRecordTypes {
+			if !seenTypes[recordType] {
+				t.Fatalf("%s missing record type %q:\n%s", tt.command, recordType, out.String())
 			}
 		}
 	}

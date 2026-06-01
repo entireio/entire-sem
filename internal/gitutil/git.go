@@ -51,15 +51,14 @@ func FindCommitWithCheckpoint(ctx context.Context, repo, checkpointID string) (s
 }
 
 func ListFiles(ctx context.Context, repo, rev string) ([]string, error) {
-	out, err := run(ctx, repo, "git", "ls-tree", "-r", "--name-only", rev)
+	out, err := run(ctx, repo, "git", "ls-tree", "-r", "-z", "--name-only", rev)
 	if err != nil {
 		return nil, err
 	}
 	var files []string
-	for _, line := range strings.Split(out, "\n") {
-		line = strings.TrimSpace(line)
-		if line != "" {
-			files = append(files, line)
+	for _, path := range strings.Split(out, "\x00") {
+		if path != "" {
+			files = append(files, path)
 		}
 	}
 	return files, nil

@@ -14,6 +14,10 @@ func TestBuildProviderSnapshotEmitsContractRecords(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "auth.py", `import json
 
+class AuthService:
+    def execute_tool_handler(self):
+        return {"tool": "execute", "schema": {}}
+
 def validate_token(token):
     return bool(token)
 
@@ -41,6 +45,11 @@ def check_token(token):
 	if len(snapshot.Files) != 2 {
 		t.Fatalf("files = %#v", snapshot.Files)
 	}
+	for _, file := range snapshot.Files {
+		if file.ID == "" {
+			t.Fatalf("file record missing id: %#v", file)
+		}
+	}
 
 	var validate SymbolRecord
 	for _, symbol := range snapshot.Symbols {
@@ -64,16 +73,25 @@ def check_token(token):
 		if relation.WarningCodes == nil {
 			t.Fatalf("warning_codes should be an array in %#v", relation)
 		}
+		if relation.Confidence <= 0 || relation.Reason == "" {
+			t.Fatalf("relation missing confidence/reason: %#v", relation)
+		}
 	}
-	for _, want := range []string{"DEFINES", "IMPORTS", "CALLS", "HANDLES_ROUTE"} {
+	for _, want := range []string{"DEFINES", "CONTAINS", "IMPORTS", "CALLS", "HANDLES_ROUTE", "HANDLES_TOOL"} {
 		if !seenRelations[want] {
 			t.Fatalf("missing %s in %#v", want, snapshot.Relations)
 		}
+	}
+	if len(snapshot.Externals) == 0 {
+		t.Fatalf("missing external endpoint records")
 	}
 }
 
 func TestCapabilitiesAdvertiseExpandedLanguageSet(t *testing.T) {
 	caps := Capabilities()
+	if caps.SchemaVersion != SchemaVersion || caps.Provider != ProviderName {
+		t.Fatalf("capabilities identity = %#v", caps)
+	}
 	seen := map[string]bool{}
 	for _, language := range caps.SupportedLanguages {
 		seen[language] = true
@@ -107,6 +125,29 @@ func TestCapabilitiesAdvertiseExpandedLanguageSet(t *testing.T) {
 			t.Fatalf("capabilities missing language %q in %#v", want, caps.SupportedLanguages)
 		}
 	}
+	for _, want := range []string{".go", ".py", ".ts", ".rs", ".swift", ".proto"} {
+		if !contains(caps.SupportedFileExtensions, want) {
+			t.Fatalf("capabilities missing extension %q in %#v", want, caps.SupportedFileExtensions)
+		}
+	}
+	for _, want := range relationTypes {
+		if !contains(caps.SupportedRelationTypes, want) {
+			t.Fatalf("capabilities missing relation type %q in %#v", want, caps.SupportedRelationTypes)
+		}
+	}
+	if caps.ParserVersions["go-tree-sitter"] == "" {
+		t.Fatalf("capabilities missing parser metadata: %#v", caps.ParserVersions)
+	}
+	for feature, requiresNetwork := range caps.FeaturesRequiringNetworkAccess {
+		if requiresNetwork {
+			t.Fatalf("feature %s should not require network access", feature)
+		}
+	}
+	for _, feature := range []string{"stable_symbol_ids", "semantic_diff", "ndjson_snapshot"} {
+		if !caps.OptionalLocalOnlyFeatures[feature] {
+			t.Fatalf("optional feature %s not advertised: %#v", feature, caps.OptionalLocalOnlyFeatures)
+		}
+	}
 }
 
 func TestWriteSnapshotNDJSON(t *testing.T) {
@@ -116,7 +157,7 @@ func TestWriteSnapshotNDJSON(t *testing.T) {
 			Provider:        ProviderName,
 			ProviderVersion: "test",
 		},
-		Files: []FileRecord{{RecordType: "file", Path: "main.go", Blob: "abc"}},
+		Files: []FileRecord{{RecordType: "file", ID: "repo:file:main.go", Path: "main.go", Blob: "abc"}},
 		Symbols: []SymbolRecord{{
 			RecordType:      "symbol",
 			ID:              "id",
@@ -146,6 +187,39 @@ func TestWriteSnapshotNDJSON(t *testing.T) {
 	}
 }
 
+func TestBuildProviderSnapshotReportsParseErrors(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "good.py", "def valid():\n    return True\n")
+	writeFile(t, repo, "bad.py", "def broken(:\n    return False\n")
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	seenSymbol := false
+	for _, symbol := range snapshot.Symbols {
+		if symbol.QualifiedName == "valid" {
+			seenSymbol = true
+		}
+	}
+	if !seenSymbol {
+		t.Fatalf("valid file symbols were not emitted: %#v", snapshot.Symbols)
+	}
+	var found bool
+	for _, failure := range snapshot.Header.PartialFailures {
+		if failure.Code == "E_PARSE_ERROR" && failure.FilePath == "bad.py" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("missing parse error partial failure: %#v", snapshot.Header.PartialFailures)
+	}
+	if snapshot.Header.Stats.CompletenessLevel == "ok" {
+		t.Fatalf("parse failures should affect completeness: %#v", snapshot.Header.Stats)
+	}
+}
+
 func TestBuildRelationsUsesSymbolBlockIdentifierLookup(t *testing.T) {
 	const symbolCount = 5000
 
@@ -170,7 +244,7 @@ func TestBuildRelationsUsesSymbolBlockIdentifierLookup(t *testing.T) {
 			EndLine:       3,
 			Language:      "Go",
 		}
-		files = append(files, FileRecord{RecordType: "file", Path: path, Language: "Go"})
+		files = append(files, FileRecord{RecordType: "file", ID: fileID("repo", path), Path: path, Language: "Go"})
 		recordsByFile[path] = []SymbolRecord{symbol}
 		contentByFile[path] = "package pkg\nfunc " + name + "() {}\n"
 	}
@@ -186,7 +260,7 @@ func TestBuildRelationsUsesSymbolBlockIdentifierLookup(t *testing.T) {
 		EndLine:       4,
 		Language:      "Go",
 	}
-	files = append(files, FileRecord{RecordType: "file", Path: caller.FilePath, Language: "Go"})
+	files = append(files, FileRecord{RecordType: "file", ID: fileID("repo", caller.FilePath), Path: caller.FilePath, Language: "Go"})
 	recordsByFile[caller.FilePath] = []SymbolRecord{caller}
 	contentByFile[caller.FilePath] = "package pkg\nfunc Caller() {\n\tTargetSymbol()\n}\n"
 
@@ -236,6 +310,18 @@ func TestEntitySymbolsDisambiguatesDuplicateNames(t *testing.T) {
 	}
 	if symbols[2].ID != "gh/example/repo:TypeScript:src/session.ts:method:Session.toPosition" {
 		t.Fatalf("unique symbol id changed: %q", symbols[2].ID)
+	}
+}
+
+func TestEntitySymbolsKeepCompoundIDStableAcrossBodyEdits(t *testing.T) {
+	before := entitySymbols("gh/example/repo", "src/auth.py", "Python", []Entity{
+		{Kind: "function", Name: "validate_token", StartLine: 1, EndLine: 2, Signature: "def validate_token(token):", BodyHash: "old"},
+	})
+	after := entitySymbols("gh/example/repo", "src/auth.py", "Python", []Entity{
+		{Kind: "function", Name: "validate_token", StartLine: 1, EndLine: 4, Signature: "def validate_token(token):", BodyHash: "new"},
+	})
+	if before[0].ID != after[0].ID {
+		t.Fatalf("compound id changed across body edit: before=%q after=%q", before[0].ID, after[0].ID)
 	}
 }
 
@@ -426,4 +512,13 @@ func writeFile(t *testing.T, repo, path, content string) {
 	if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func contains(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }

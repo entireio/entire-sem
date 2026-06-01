@@ -86,15 +86,29 @@ var treeSitterLanguages = map[string]languageSpec{
 
 type TreeSitterParser struct{}
 
+type ParseStatus struct {
+	ParseError bool
+	Detail     string
+}
+
 func (TreeSitterParser) Parse(path, content string) ([]Entity, string) {
+	entities, language, _ := TreeSitterParser{}.ParseWithStatus(path, content)
+	return entities, language
+}
+
+func (TreeSitterParser) ParseWithStatus(path, content string) ([]Entity, string, ParseStatus) {
 	spec, ok := languageForPath(path)
 	if !ok {
-		return nil, ""
+		return nil, "", ParseStatus{}
 	}
 	src := []byte(content)
 	root, err := sitter.ParseCtx(context.Background(), src, spec.grammar)
 	if err != nil || root == nil || root.IsNull() {
-		return nil, spec.language
+		detail := "tree-sitter parse failed"
+		if err != nil {
+			detail = err.Error()
+		}
+		return nil, spec.language, ParseStatus{ParseError: true, Detail: detail}
 	}
 
 	var entities []Entity
@@ -105,7 +119,11 @@ func (TreeSitterParser) Parse(path, content string) ([]Entity, string) {
 		}
 		return entities[i].StartLine < entities[j].StartLine
 	})
-	return entities, spec.language
+	status := ParseStatus{}
+	if root.HasError() {
+		status = ParseStatus{ParseError: true, Detail: "tree-sitter syntax error nodes present"}
+	}
+	return entities, spec.language, status
 }
 
 func Supported(path string) bool {

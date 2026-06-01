@@ -79,10 +79,18 @@ type PartialFailure struct {
 
 type FileRecord struct {
 	RecordType string `json:"record_type"`
+	ID         string `json:"id"`
 	Path       string `json:"path"`
 	Blob       string `json:"blob"`
 	Language   string `json:"language,omitempty"`
 	Bytes      int    `json:"bytes"`
+}
+
+type ExternalRecord struct {
+	RecordType string `json:"record_type"`
+	ID         string `json:"id"`
+	Kind       string `json:"kind"`
+	Value      string `json:"value"`
 }
 
 type SymbolRecord struct {
@@ -126,6 +134,7 @@ type CapabilityReport struct {
 type ProviderSnapshot struct {
 	Header    SnapshotHeader
 	Files     []FileRecord
+	Externals []ExternalRecord
 	Symbols   []SymbolRecord
 	Relations []RelationRecord
 }
@@ -243,7 +252,7 @@ func BuildProviderSnapshotWithOptions(ctx context.Context, repo, providerVersion
 			})
 			continue
 		}
-		entities, language := parser.Parse(path, content)
+		entities, language, parseStatus := parser.ParseWithStatus(path, content)
 		if language == "" {
 			failures = append(failures, PartialFailure{
 				Code:                 "E_UNSUPPORTED_LANGUAGE",
@@ -253,10 +262,20 @@ func BuildProviderSnapshotWithOptions(ctx context.Context, repo, providerVersion
 			})
 			continue
 		}
+		if parseStatus.ParseError {
+			failures = append(failures, PartialFailure{
+				Code:                 "E_PARSE_ERROR",
+				Severity:             "warning",
+				FilePath:             path,
+				EffectOnCompleteness: "file parsed with syntax errors; semantic facts may be incomplete",
+				Detail:               parseStatus.Detail,
+			})
+		}
 		languageSet[language] = struct{}{}
 		contentBytes := []byte(content)
 		files = append(files, FileRecord{
 			RecordType: "file",
+			ID:         fileID(key, path),
 			Path:       path,
 			Blob:       contentHash(contentBytes),
 			Language:   language,
@@ -268,6 +287,7 @@ func BuildProviderSnapshotWithOptions(ctx context.Context, repo, providerVersion
 	}
 
 	relations := buildRelations(key, files, recordsByFile, contentByFile)
+	externals := externalRecords(relations)
 	languages := sortedKeys(languageSet)
 	if warnings == nil {
 		warnings = []ProviderWarning{}
@@ -296,7 +316,7 @@ func BuildProviderSnapshotWithOptions(ctx context.Context, repo, providerVersion
 			CompletenessLevel: completenessLevel(len(failures), len(files)),
 		},
 	}
-	return ProviderSnapshot{Header: header, Files: files, Symbols: symbols, Relations: relations}, nil
+	return ProviderSnapshot{Header: header, Files: files, Externals: externals, Symbols: symbols, Relations: relations}, nil
 }
 
 func WriteSnapshotNDJSON(out io.Writer, snapshot ProviderSnapshot) error {
@@ -304,6 +324,11 @@ func WriteSnapshotNDJSON(out io.Writer, snapshot ProviderSnapshot) error {
 		return err
 	}
 	for _, record := range snapshot.Files {
+		if err := writeJSONLine(out, record); err != nil {
+			return err
+		}
+	}
+	for _, record := range snapshot.Externals {
 		if err := writeJSONLine(out, record); err != nil {
 			return err
 		}
@@ -322,6 +347,9 @@ func WriteSnapshotNDJSON(out io.Writer, snapshot ProviderSnapshot) error {
 }
 
 func WriteSymbolsNDJSON(out io.Writer, snapshot ProviderSnapshot) error {
+	if err := writeJSONLine(out, snapshot.Header); err != nil {
+		return err
+	}
 	for _, record := range snapshot.Symbols {
 		if err := writeJSONLine(out, record); err != nil {
 			return err
@@ -331,6 +359,9 @@ func WriteSymbolsNDJSON(out io.Writer, snapshot ProviderSnapshot) error {
 }
 
 func WriteRelationsNDJSON(out io.Writer, snapshot ProviderSnapshot) error {
+	if err := writeJSONLine(out, snapshot.Header); err != nil {
+		return err
+	}
 	for _, record := range snapshot.Relations {
 		if err := writeJSONLine(out, record); err != nil {
 			return err
@@ -490,6 +521,43 @@ func buildRelations(repoKey string, files []FileRecord, recordsByFile map[string
 	return dedupeRelations(relations)
 }
 
+func externalRecords(relations []RelationRecord) []ExternalRecord {
+	seen := map[string]ExternalRecord{}
+	for _, relation := range relations {
+		for _, id := range []string{relation.FromID, relation.ToID} {
+			if !strings.HasPrefix(id, "external:") {
+				continue
+			}
+			kind, value := externalParts(id)
+			seen[id] = ExternalRecord{
+				RecordType: "external",
+				ID:         id,
+				Kind:       kind,
+				Value:      value,
+			}
+		}
+	}
+	ids := make([]string, 0, len(seen))
+	for id := range seen {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	out := make([]ExternalRecord, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, seen[id])
+	}
+	return out
+}
+
+func externalParts(id string) (string, string) {
+	rest := strings.TrimPrefix(id, "external:")
+	kind, value, ok := strings.Cut(rest, ":")
+	if !ok {
+		return "unknown", rest
+	}
+	return kind, value
+}
+
 func snapshotSource(ctx context.Context, repo string, useHead bool) ([]string, map[string]string, error) {
 	if useHead {
 		paths, err := gitutil.ListFiles(ctx, repo, "HEAD")
@@ -498,6 +566,9 @@ func snapshotSource(ctx context.Context, repo string, useHead bool) ([]string, m
 		}
 		contentByFile := map[string]string{}
 		for _, path := range paths {
+			if !Supported(path) {
+				continue
+			}
 			content, ok, err := gitutil.ShowFile(ctx, repo, "HEAD", path)
 			if err != nil {
 				return nil, nil, err
@@ -514,7 +585,15 @@ func snapshotSource(ctx context.Context, repo string, useHead bool) ([]string, m
 	}
 	contentByFile := map[string]string{}
 	for _, path := range paths {
-		content, err := os.ReadFile(filepath.Join(repo, filepath.FromSlash(path)))
+		if !Supported(path) {
+			continue
+		}
+		full := filepath.Join(repo, filepath.FromSlash(path))
+		info, err := os.Lstat(full)
+		if err != nil || info.Mode()&fs.ModeSymlink != 0 || !info.Mode().IsRegular() {
+			continue
+		}
+		content, err := os.ReadFile(full)
 		if err != nil {
 			continue
 		}

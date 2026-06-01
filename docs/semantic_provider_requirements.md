@@ -93,10 +93,15 @@ Initial snapshot header:
 Following records should be typed:
 
 ```json
-{"record_type":"file","path":"internal/auth/token.go","blob":"..."}
+{"record_type":"file","id":"gh/org/repo:file:internal/auth/token.go","path":"internal/auth/token.go","blob":"..."}
+{"record_type":"external","id":"external:import:net/http","kind":"import","value":"net/http"}
 {"record_type":"symbol","id":"...","kind":"function","name":"ValidateToken"}
 {"record_type":"relation","from_id":"...","to_id":"...","type":"CALLS"}
 ```
+
+Relation endpoints may point to file records, symbol records, or external endpoint
+records. Consumers should ignore unknown record types within the supported major
+schema version, but should not assume every relation target is a symbol.
 
 ## Symbols
 
@@ -121,10 +126,11 @@ The first stable symbol ID version should use a documented compound identity:
 <repo-key>:<language>:<file-path>:<kind>:<qualified-name>
 ```
 
-This is stable across content edits but breaks across file moves and some
-renames. `entire-sem` should document that breakage and emit enough diff data
-for later rename reconciliation using body hash, signature similarity, and
-semantic diff records.
+This is stable across ordinary content edits but breaks across file moves, some
+renames, and duplicate same-name symbols that need source-range disambiguation.
+`entire-sem` should document that breakage and emit enough diff data for later
+rename reconciliation using body hash, signature similarity, and semantic diff
+records.
 
 If a change report spans a file rename or move that cannot be reconciled to
 stable symbols, `entire-sem` should emit an explicit warning instead of silently
@@ -147,16 +153,14 @@ Initial relation vocabulary:
 - `CONTAINS`
 - `IMPORTS`
 - `CALLS`
-- `IMPLEMENTS`
-- `EXTENDS`
-- `OVERRIDES`
-- `ACCESSES`
 - `HANDLES_ROUTE`
 - `HANDLES_TOOL`
 
 Relation extraction should grow beyond heuristic dependent counts. Phase 1
 should prioritize containment, definitions, imports, calls, and enough route/tool
-handler extraction to support local impact analysis.
+handler extraction to support local impact analysis. Later phases can add typed
+object-oriented and data-flow relations such as `IMPLEMENTS`, `EXTENDS`,
+`OVERRIDES`, and `ACCESSES` once the parser model can support them consistently.
 
 ## Warnings And Partial Failures
 
@@ -218,12 +222,20 @@ Useful existing foundation:
 - Entity signature and body-hash comparison.
 - Checkpoint-aware semantic diffs.
 
-Current gaps:
+Current implemented foundation:
 
-- No whole-repo graph snapshot.
-- No persisted semantic output contract for snapshots.
-- Limited relation extraction.
-- No stable call/import/type graph contract.
-- No stable cross-run symbol identity contract.
-- No machine-readable provider capability command.
-- No stable warning code vocabulary.
+- Whole-repo NDJSON snapshot output with schema headers.
+- Machine-readable provider capability and doctor commands.
+- Stable `compound-v1` symbol IDs for ordinary body/signature edits.
+- File, symbol, external endpoint, and relation records.
+- Stable warning and partial-failure records for unsupported files, syntax errors,
+  missing `HEAD`, and explicit working-tree snapshots.
+
+Remaining gaps:
+
+- Relation extraction is still intentionally heuristic.
+- File moves, renames, and duplicate same-name symbols need stronger ID
+  reconciliation.
+- `IMPLEMENTS`, `EXTENDS`, `OVERRIDES`, and `ACCESSES` are future relation types,
+  not Phase 1 contract records yet.
+- Performance and memory budgets need larger benchmark coverage.

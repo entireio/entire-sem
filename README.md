@@ -157,15 +157,19 @@ semantic graph rather than human-oriented diff text.
   plugin data directory writability, and `no_egress=true`.
 - `capabilities --json` reports supported extensions, languages, parser metadata,
   relation types, optional local-only features, and network requirements.
-- `snapshot --format ndjson` emits header, file, symbol, and relation records.
-- `symbols --format ndjson` emits only symbol records.
-- `edges --format ndjson` emits only relation records.
+- `snapshot --format ndjson` emits a header plus file, external endpoint,
+  symbol, and relation records.
+- `symbols --format ndjson` emits the same header followed by symbol records.
+- `edges --format ndjson` emits the same header followed by relation records.
 
 Snapshot headers include the schema version, provider version, repository key,
 `HEAD` commit and tree when available, parsed languages, capability labels,
-warnings, partial failures, and aggregate completeness stats. Symbol records include
-stable compound IDs, `stable_id_version`, kind, qualified name, source range,
-signature, body hash, language, and container ID when the symbol is nested.
+warnings, partial failures, and aggregate completeness stats. File records include
+stable file IDs so `DEFINES` relation endpoints can be resolved. Symbol records
+include stable compound IDs, `stable_id_version`, kind, qualified name, source
+range, signature, body hash, language, and container ID when the symbol is nested.
+External endpoint records describe relation targets such as imported modules,
+routes, and tool handlers.
 
 Current relation records are:
 
@@ -177,8 +181,16 @@ Current relation records are:
 - `HANDLES_TOOL`
 
 Unsupported but detected source files are reported as machine-readable partial
-failures instead of disappearing silently. Repositories without a readable `HEAD`
-fall back to the working tree and include a warning in the snapshot header.
+failures instead of disappearing silently. Supported files with tree-sitter syntax
+errors are also reported as partial failures while any recoverable symbols are
+still emitted. Repositories without a readable `HEAD` fall back to the working tree
+and include a warning in the snapshot header.
+
+`compound-v1` IDs are stable across ordinary body/signature edits because they use
+repo key, language, path, kind, and qualified name. Duplicate same-name symbols in
+one file are disambiguated with source ranges, so inserted lines above duplicates
+can change those duplicate IDs; move/rename reconciliation is left to semantic diff
+records.
 
 ## Example Output
 
