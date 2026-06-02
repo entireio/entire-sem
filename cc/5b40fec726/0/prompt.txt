@@ -1,0 +1,5 @@
+commit/push
+
+---
+
+Now also add an option --include-file that works the other way round, letting the user specify a file in the same format as .gitignore to include additional files. This option should be parsed last, i.e. it overwrites excludes from the .gitignore and --ignore-file. For example, if the .gitignore excludes a folder and the include-file lists that same folder, entire-sem should include files in that folder assuming they don't match other ignore patterns.
