@@ -152,9 +152,10 @@ type ProviderSnapshot struct {
 }
 
 type ProviderSnapshotOptions struct {
-	NoNetwork   bool
-	Worktree    bool
-	IgnoreFiles []string
+	NoNetwork    bool
+	Worktree     bool
+	IgnoreFiles  []string
+	IncludeFiles []string
 }
 
 func Capabilities() CapabilityReport {
@@ -215,7 +216,7 @@ func BuildProviderSnapshotWithOptions(ctx context.Context, repo, providerVersion
 	// explicit for callers that enforce no-egress provider execution.
 	_ = options.NoNetwork
 	useHead := !options.Worktree && commitErr == nil && treeErr == nil
-	paths, contentByFile, err := snapshotSource(ctx, absRepo, useHead, options.IgnoreFiles)
+	paths, contentByFile, err := snapshotSource(ctx, absRepo, useHead, options.IgnoreFiles, options.IncludeFiles)
 	if err != nil {
 		return ProviderSnapshot{}, err
 	}
@@ -788,7 +789,7 @@ func externalParts(id string) (string, string) {
 	return kind, value
 }
 
-func snapshotSource(ctx context.Context, repo string, useHead bool, ignoreFiles []string) ([]string, map[string]string, error) {
+func snapshotSource(ctx context.Context, repo string, useHead bool, ignoreFiles, includeFiles []string) ([]string, map[string]string, error) {
 	if useHead {
 		paths, err := gitutil.ListFiles(ctx, repo, "HEAD")
 		if err != nil {
@@ -809,7 +810,7 @@ func snapshotSource(ctx context.Context, repo string, useHead bool, ignoreFiles 
 		}
 		return paths, contentByFile, nil
 	}
-	ignores, err := loadWorktreeIgnoreMatcher(repo, ignoreFiles)
+	ignores, err := loadWorktreeIgnoreMatcher(repo, ignoreFiles, includeFiles)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -853,7 +854,8 @@ func workingTreeFiles(repo string, ignores ignoreMatcher) ([]string, error) {
 				if err != nil {
 					return err
 				}
-				if ignores.Ignored(filepath.ToSlash(rel), true) {
+				rel = filepath.ToSlash(rel)
+				if ignores.Ignored(rel, true) && !ignores.MayIncludeDescendant(rel) {
 					return filepath.SkipDir
 				}
 			}

@@ -52,6 +52,7 @@ entire sem snapshot --repo . --format ndjson
 entire sem symbols --repo . --format ndjson
 entire sem edges --repo . --format ndjson
 entire sem snapshot --repo . --format ndjson --worktree --ignore-file .brainignore
+entire sem snapshot --repo . --format ndjson --worktree --include-file .seminclude
 entire sem diff --base main --head HEAD --json
 ```
 
@@ -64,7 +65,10 @@ Worktree provider snapshots should honor the repository root `.gitignore` before
 walking or reading files. Callers may pass repeatable `--ignore-file <path>`
 flags for additional gitignore-style exclusions such as `.brainignore`; relative
 ignore-file paths resolve against `--repo`, and missing ignore files should fail
-closed with a clear error.
+closed with a clear error. Callers may also pass repeatable `--include-file
+<path>` flags containing gitignore-style inclusion rules. Include files are
+applied after `.gitignore` and `--ignore-file`, so they can reopen otherwise
+ignored paths.
 
 ## Schema Contract
 

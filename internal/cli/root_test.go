@@ -232,6 +232,35 @@ func TestProviderCommandsAcceptIgnoreFile(t *testing.T) {
 	}
 }
 
+func TestProviderCommandsAcceptIncludeFile(t *testing.T) {
+	repo := t.TempDir()
+	write(t, repo, ".gitignore", "ignored/\n")
+	write(t, repo, ".seminclude", "ignored/\n")
+	write(t, repo, "ignored/reopened.py", `def reopened():
+    return True
+`)
+
+	for _, command := range []string{"snapshot", "symbols", "edges"} {
+		var out bytes.Buffer
+		err := Run(t.Context(), Options{Version: "0.1.0", Env: EntireEnv{RepoRoot: repo}, Stdout: &out}, []string{
+			command,
+			"--repo", repo,
+			"--format", "ndjson",
+			"--worktree",
+			"--include-file", ".seminclude",
+		})
+		if err != nil {
+			t.Fatalf("%s: %v", command, err)
+		}
+		if !strings.Contains(out.String(), `"schema_version":"1.0"`) {
+			t.Fatalf("%s output missing header:\n%s", command, out.String())
+		}
+		if !strings.Contains(out.String(), "reopened") {
+			t.Fatalf("%s output did not include reopened file:\n%s", command, out.String())
+		}
+	}
+}
+
 func TestAnalyzeJSONCommand(t *testing.T) {
 	repo := t.TempDir()
 	git(t, repo, "init")

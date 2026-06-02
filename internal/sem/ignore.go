@@ -16,15 +16,25 @@ type ignoreMatcher struct {
 }
 
 type ignoreRule struct {
-	negated      bool
+	ignore       bool
+	includeFile  bool
 	directory    bool
 	basenameOnly bool
+	pattern      string
 	expression   *regexp.Regexp
 }
 
-func loadWorktreeIgnoreMatcher(repo string, ignoreFiles []string) (ignoreMatcher, error) {
+type ignoreMatchKind int
+
+const (
+	ignoreNoMatch ignoreMatchKind = iota
+	ignoreAncestorMatch
+	ignoreSelfMatch
+)
+
+func loadWorktreeIgnoreMatcher(repo string, ignoreFiles, includeFiles []string) (ignoreMatcher, error) {
 	var matcher ignoreMatcher
-	if err := matcher.loadOptional(filepath.Join(repo, ".gitignore")); err != nil {
+	if err := matcher.loadOptional(filepath.Join(repo, ".gitignore"), false); err != nil {
 		return ignoreMatcher{}, err
 	}
 	for _, ignoreFile := range ignoreFiles {
@@ -32,60 +42,79 @@ func loadWorktreeIgnoreMatcher(repo string, ignoreFiles []string) (ignoreMatcher
 		if !filepath.IsAbs(resolved) {
 			resolved = filepath.Join(repo, resolved)
 		}
-		if err := matcher.loadRequired(resolved); err != nil {
+		if err := matcher.loadRequired(resolved, false); err != nil {
+			return ignoreMatcher{}, err
+		}
+	}
+	for _, includeFile := range includeFiles {
+		resolved := includeFile
+		if !filepath.IsAbs(resolved) {
+			resolved = filepath.Join(repo, resolved)
+		}
+		if err := matcher.loadRequired(resolved, true); err != nil {
 			return ignoreMatcher{}, err
 		}
 	}
 	return matcher, nil
 }
 
-func (m *ignoreMatcher) loadOptional(file string) error {
+func (m *ignoreMatcher) loadOptional(file string, includeMode bool) error {
+	label := ignoreFileLabel(includeMode)
 	info, err := os.Stat(file)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("read ignore file %q: %w", file, err)
+		return fmt.Errorf("read %s %q: %w", label, file, err)
 	}
 	if !info.Mode().IsRegular() {
-		return fmt.Errorf("ignore file %q is not a regular file", file)
+		return fmt.Errorf("%s %q is not a regular file", label, file)
 	}
-	return m.loadFile(file)
+	return m.loadFile(file, includeMode)
 }
 
-func (m *ignoreMatcher) loadRequired(file string) error {
+func (m *ignoreMatcher) loadRequired(file string, includeMode bool) error {
+	label := ignoreFileLabel(includeMode)
 	info, err := os.Stat(file)
 	if errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("ignore file %q does not exist", file)
+		return fmt.Errorf("%s %q does not exist", label, file)
 	}
 	if err != nil {
-		return fmt.Errorf("read ignore file %q: %w", file, err)
+		return fmt.Errorf("read %s %q: %w", label, file, err)
 	}
 	if !info.Mode().IsRegular() {
-		return fmt.Errorf("ignore file %q is not a regular file", file)
+		return fmt.Errorf("%s %q is not a regular file", label, file)
 	}
-	return m.loadFile(file)
+	return m.loadFile(file, includeMode)
 }
 
-func (m *ignoreMatcher) loadFile(file string) error {
+func (m *ignoreMatcher) loadFile(file string, includeMode bool) error {
+	label := ignoreFileLabel(includeMode)
 	content, err := os.ReadFile(file)
 	if err != nil {
-		return fmt.Errorf("read ignore file %q: %w", file, err)
+		return fmt.Errorf("read %s %q: %w", label, file, err)
 	}
 	scanner := bufio.NewScanner(strings.NewReader(string(content)))
 	for scanner.Scan() {
-		rule, ok := parseIgnoreRule(scanner.Text())
+		rule, ok := parseIgnoreRule(scanner.Text(), includeMode)
 		if ok {
 			m.rules = append(m.rules, rule)
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("read ignore file %q: %w", file, err)
+		return fmt.Errorf("read %s %q: %w", label, file, err)
 	}
 	return nil
 }
 
-func parseIgnoreRule(line string) (ignoreRule, bool) {
+func ignoreFileLabel(includeMode bool) string {
+	if includeMode {
+		return "include file"
+	}
+	return "ignore file"
+}
+
+func parseIgnoreRule(line string, includeMode bool) (ignoreRule, bool) {
 	line = strings.TrimRight(line, "\r")
 	line = strings.TrimSpace(line)
 	if line == "" || strings.HasPrefix(line, "#") {
@@ -114,10 +143,16 @@ func parseIgnoreRule(line string) (ignoreRule, bool) {
 	}
 
 	basenameOnly := !anchored && !strings.Contains(line, "/")
+	ignore := !negated
+	if includeMode {
+		ignore = negated
+	}
 	return ignoreRule{
-		negated:      negated,
+		ignore:       ignore,
+		includeFile:  includeMode,
 		directory:    directory,
 		basenameOnly: basenameOnly,
+		pattern:      line,
 		expression:   regexp.MustCompile(globPatternExpression(line)),
 	}, true
 }
@@ -127,23 +162,50 @@ func (m ignoreMatcher) Ignored(rel string, isDir bool) bool {
 	if rel == "" {
 		return false
 	}
-	ignored := false
+	selfMatched := false
+	selfIgnored := false
+	ancestorMatched := false
+	ancestorIgnored := false
 	for _, rule := range m.rules {
-		if rule.matches(rel, isDir) {
-			ignored = !rule.negated
+		switch rule.matchKind(rel, isDir) {
+		case ignoreSelfMatch:
+			selfMatched = true
+			selfIgnored = rule.ignore
+		case ignoreAncestorMatch:
+			ancestorMatched = true
+			ancestorIgnored = rule.ignore
 		}
 	}
-	return ignored
-}
-
-func (r ignoreRule) matches(rel string, isDir bool) bool {
-	if r.basenameOnly {
-		return r.matchesBasename(rel, isDir)
+	if selfMatched {
+		return selfIgnored
 	}
-	return r.matchesPath(rel, isDir)
+	if ancestorMatched {
+		return ancestorIgnored
+	}
+	return false
 }
 
-func (r ignoreRule) matchesBasename(rel string, isDir bool) bool {
+func (m ignoreMatcher) MayIncludeDescendant(rel string) bool {
+	rel = cleanIgnorePath(rel)
+	if rel == "" {
+		return false
+	}
+	for _, rule := range m.rules {
+		if rule.includeFile && !rule.ignore && rule.mayMatchDescendant(rel) {
+			return true
+		}
+	}
+	return false
+}
+
+func (r ignoreRule) matchKind(rel string, isDir bool) ignoreMatchKind {
+	if r.basenameOnly {
+		return r.matchBasename(rel, isDir)
+	}
+	return r.matchPath(rel, isDir)
+}
+
+func (r ignoreRule) matchBasename(rel string, isDir bool) ignoreMatchKind {
 	segments := strings.Split(rel, "/")
 	last := len(segments) - 1
 	if r.directory {
@@ -152,32 +214,49 @@ func (r ignoreRule) matchesBasename(rel string, isDir bool) bool {
 				continue
 			}
 			if r.expression.MatchString(segment) {
-				return true
+				if i == last {
+					return ignoreSelfMatch
+				}
+				return ignoreAncestorMatch
 			}
 		}
-		return false
+		return ignoreNoMatch
 	}
-	for _, segment := range segments {
+	for i, segment := range segments {
 		if r.expression.MatchString(segment) {
-			return true
+			if i == last {
+				return ignoreSelfMatch
+			}
+			return ignoreAncestorMatch
 		}
 	}
-	return false
+	return ignoreNoMatch
 }
 
-func (r ignoreRule) matchesPath(rel string, isDir bool) bool {
+func (r ignoreRule) matchPath(rel string, isDir bool) ignoreMatchKind {
 	if !r.directory && r.expression.MatchString(rel) {
-		return true
+		return ignoreSelfMatch
 	}
 	if r.directory && isDir && r.expression.MatchString(rel) {
-		return true
+		return ignoreSelfMatch
 	}
 	for _, ancestor := range ancestorPaths(rel) {
 		if r.expression.MatchString(ancestor) {
-			return true
+			return ignoreAncestorMatch
 		}
 	}
-	return false
+	return ignoreNoMatch
+}
+
+func (r ignoreRule) mayMatchDescendant(rel string) bool {
+	if r.basenameOnly {
+		return true
+	}
+	prefix := literalPatternPrefix(r.pattern)
+	if prefix == "" {
+		return true
+	}
+	return prefix == rel || strings.HasPrefix(prefix, rel+"/") || strings.HasPrefix(rel, prefix+"/")
 }
 
 func ancestorPaths(rel string) []string {
@@ -200,6 +279,14 @@ func cleanIgnorePath(value string) string {
 		return ""
 	}
 	return strings.TrimPrefix(cleaned, "/")
+}
+
+func literalPatternPrefix(pattern string) string {
+	index := strings.IndexAny(pattern, "*?[")
+	if index >= 0 {
+		pattern = pattern[:index]
+	}
+	return strings.Trim(strings.TrimRight(cleanIgnorePath(pattern), "/"), "/")
 }
 
 func globPatternExpression(pattern string) string {

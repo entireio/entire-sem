@@ -575,6 +575,88 @@ func TestBuildProviderSnapshotWorktreeCombinesMultipleIgnoreFiles(t *testing.T) 
 	}
 }
 
+func TestBuildProviderSnapshotWorktreeIncludeFileReopensIgnoredDirectory(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, ".gitignore", "cache/\n")
+	writeFile(t, repo, ".seminclude", "cache/\n")
+	writeFile(t, repo, "cache/included.py", "def included():\n    return True\n")
+	writeFile(t, repo, "src/keep.py", "def keep():\n    return True\n")
+
+	snapshot, err := BuildProviderSnapshotWithOptions(t.Context(), repo, "test-version", ProviderSnapshotOptions{
+		Worktree:     true,
+		IncludeFiles: []string{".seminclude"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !snapshotHasSymbol(snapshot, "included") {
+		t.Fatalf("snapshot did not include file from reopened directory: %#v", snapshot.Symbols)
+	}
+	if !snapshotHasSymbol(snapshot, "keep") {
+		t.Fatalf("snapshot missing kept symbol: %#v", snapshot.Symbols)
+	}
+}
+
+func TestBuildProviderSnapshotWorktreeIncludeFileWinsAfterIgnoreFile(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, ".brainignore", "generated/\n")
+	writeFile(t, repo, ".seminclude", "generated/\n")
+	writeFile(t, repo, "generated/included.py", "def included():\n    return True\n")
+
+	snapshot, err := BuildProviderSnapshotWithOptions(t.Context(), repo, "test-version", ProviderSnapshotOptions{
+		Worktree:     true,
+		IgnoreFiles:  []string{".brainignore"},
+		IncludeFiles: []string{".seminclude"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !snapshotHasSymbol(snapshot, "included") {
+		t.Fatalf("snapshot did not include file from include-file override: %#v", snapshot.Symbols)
+	}
+}
+
+func TestBuildProviderSnapshotWorktreeIncludeDirectoryKeepsSpecificFileIgnore(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, ".gitignore", "cache/\ncache/skip.py\n")
+	writeFile(t, repo, ".seminclude", "cache/\n")
+	writeFile(t, repo, "cache/include.py", "def include_me():\n    return True\n")
+	writeFile(t, repo, "cache/skip.py", "def skip_me():\n    return True\n")
+
+	snapshot, err := BuildProviderSnapshotWithOptions(t.Context(), repo, "test-version", ProviderSnapshotOptions{
+		Worktree:     true,
+		IncludeFiles: []string{".seminclude"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !snapshotHasSymbol(snapshot, "include_me") {
+		t.Fatalf("snapshot did not include file from reopened directory: %#v", snapshot.Symbols)
+	}
+	if snapshotHasPath(snapshot, "cache/skip.py") || snapshotHasSymbol(snapshot, "skip_me") {
+		t.Fatalf("snapshot included specifically ignored file: files=%#v symbols=%#v", snapshot.Files, snapshot.Symbols)
+	}
+}
+
+func TestBuildProviderSnapshotMissingIncludeFileFailsClosed(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "auth.py", "def validate_token(token):\n    return bool(token)\n")
+
+	_, err := BuildProviderSnapshotWithOptions(t.Context(), repo, "test-version", ProviderSnapshotOptions{
+		Worktree:     true,
+		IncludeFiles: []string{"does-not-exist"},
+	})
+	if err == nil {
+		t.Fatal("expected missing include file error")
+	}
+	if !strings.Contains(err.Error(), "include file") || !strings.Contains(err.Error(), "does-not-exist") {
+		t.Fatalf("missing include file error was not clear: %v", err)
+	}
+}
+
 func TestBuildProviderSnapshotIgnoredUnsupportedFilesDoNotProduceFailures(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, ".gitignore", "ignored/\n")

@@ -17,6 +17,7 @@ entire sem snapshot --repo . --format ndjson
 entire sem symbols --repo . --format ndjson
 entire sem edges --repo . --format ndjson
 entire sem snapshot --repo . --format ndjson --worktree --ignore-file .brainignore
+entire sem snapshot --repo . --format ndjson --worktree --include-file .seminclude
 ```
 
 ## Status
@@ -144,7 +145,9 @@ Use `--worktree` to include live working-tree contents, and `--no-network` to ma
 the provider's no-egress contract explicit to callers. Worktree snapshots honor
 the repository root `.gitignore`. Pass repeatable `--ignore-file <path>` flags for
 additional gitignore-style exclusions, resolved relative to `--repo` unless the
-path is absolute.
+path is absolute. Pass repeatable `--include-file <path>` flags for gitignore-style
+inclusion rules that are applied after `.gitignore` and `--ignore-file`, allowing
+callers to reopen otherwise ignored paths.
 
 Run without installing through Entire:
 
