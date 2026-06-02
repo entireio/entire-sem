@@ -1,0 +1,9 @@
+Create a new branch to implement the new ignore file task in the docs folder.
+
+---
+
+The file should be untracked. Read it and implement the task.
+
+---
+
+Remove the docs/task-honor-ignore-lists.md file as the work is done
