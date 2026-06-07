@@ -92,9 +92,9 @@ Usage:
   entire sem doctor [--json]
   entire sem version [--json]
   entire sem capabilities --json
-  entire sem snapshot --repo . --format ndjson
-  entire sem symbols --repo . --format ndjson
-  entire sem edges --repo . --format ndjson`)
+  entire sem snapshot --repo . --format ndjson [--worktree] [--ignore-file path] [--include-file path]
+  entire sem symbols --repo . --format ndjson [--worktree] [--ignore-file path] [--include-file path]
+  entire sem edges --repo . --format ndjson [--worktree] [--ignore-file path] [--include-file path]`)
 }
 
 func runDoctor(ctx context.Context, opts Options, args []string) error {
@@ -190,8 +190,10 @@ func runProviderRecords(ctx context.Context, opts Options, args []string, mode s
 		return err
 	}
 	snapshot, err := sem.BuildProviderSnapshotWithOptions(ctx, repo, opts.Version, sem.ProviderSnapshotOptions{
-		NoNetwork: flags.NoNetwork,
-		Worktree:  flags.Worktree,
+		NoNetwork:    flags.NoNetwork,
+		Worktree:     flags.Worktree,
+		IgnoreFiles:  flags.IgnoreFiles,
+		IncludeFiles: flags.IncludeFiles,
 	})
 	if err != nil {
 		return err
@@ -214,10 +216,12 @@ type commonFlags struct {
 }
 
 type providerFlags struct {
-	Repo      string
-	Format    string
-	NoNetwork bool
-	Worktree  bool
+	Repo         string
+	Format       string
+	NoNetwork    bool
+	Worktree     bool
+	IgnoreFiles  []string
+	IncludeFiles []string
 }
 
 func parseProviderFlags(args []string) (providerFlags, []string, error) {
@@ -241,6 +245,18 @@ func parseProviderFlags(args []string) (providerFlags, []string, error) {
 			flags.NoNetwork = true
 		case "--worktree":
 			flags.Worktree = true
+		case "--ignore-file":
+			i++
+			if i >= len(args) {
+				return flags, nil, errors.New("--ignore-file requires a value")
+			}
+			flags.IgnoreFiles = append(flags.IgnoreFiles, args[i])
+		case "--include-file":
+			i++
+			if i >= len(args) {
+				return flags, nil, errors.New("--include-file requires a value")
+			}
+			flags.IncludeFiles = append(flags.IncludeFiles, args[i])
 		default:
 			rest = append(rest, args[i])
 		}

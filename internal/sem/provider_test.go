@@ -505,6 +505,225 @@ func TestBuildProviderSnapshotWorktreeIncludesDirtyFiles(t *testing.T) {
 	}
 }
 
+func TestBuildProviderSnapshotWorktreeHonorsRootGitignore(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, ".gitignore", "cache/\n")
+	writeFile(t, repo, "cache/ignored.py", "def ignored():\n    return True\n")
+	writeFile(t, repo, "src/keep.py", "def keep():\n    return True\n")
+
+	snapshot, err := BuildProviderSnapshotWithOptions(t.Context(), repo, "test-version", ProviderSnapshotOptions{
+		Worktree: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !snapshotHasSymbol(snapshot, "keep") {
+		t.Fatalf("snapshot missing kept symbol: %#v", snapshot.Symbols)
+	}
+	assertSnapshotOmitsPathPrefix(t, snapshot, "cache/")
+	if snapshotHasSymbol(snapshot, "ignored") {
+		t.Fatalf("snapshot included ignored symbol: %#v", snapshot.Symbols)
+	}
+}
+
+func TestBuildProviderSnapshotWorktreeHonorsAdditionalIgnoreFile(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, ".brainignore", "generated/\n")
+	writeFile(t, repo, "generated/ignored.py", "def ignored():\n    return True\n")
+	writeFile(t, repo, "src/keep.py", "def keep():\n    return True\n")
+
+	snapshot, err := BuildProviderSnapshotWithOptions(t.Context(), repo, "test-version", ProviderSnapshotOptions{
+		Worktree:    true,
+		IgnoreFiles: []string{".brainignore"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !snapshotHasSymbol(snapshot, "keep") {
+		t.Fatalf("snapshot missing kept symbol: %#v", snapshot.Symbols)
+	}
+	assertSnapshotOmitsPathPrefix(t, snapshot, "generated/")
+}
+
+func TestBuildProviderSnapshotWorktreeCombinesMultipleIgnoreFiles(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, ".brainignore", "cache/\n")
+	writeFile(t, repo, ".semignore", "# comments and blanks are ignored\n\n**/generated.py\nbenchmarks/agent-brain/results/\n")
+	writeFile(t, repo, "cache/cache.py", "def cache():\n    return True\n")
+	writeFile(t, repo, "src/generated.py", "def generated():\n    return True\n")
+	writeFile(t, repo, "benchmarks/agent-brain/results/result.py", "def result():\n    return True\n")
+	writeFile(t, repo, "src/keep.py", "def keep():\n    return True\n")
+
+	snapshot, err := BuildProviderSnapshotWithOptions(t.Context(), repo, "test-version", ProviderSnapshotOptions{
+		Worktree:    true,
+		IgnoreFiles: []string{".brainignore", ".semignore"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !snapshotHasSymbol(snapshot, "keep") {
+		t.Fatalf("snapshot missing kept symbol: %#v", snapshot.Symbols)
+	}
+	for _, prefix := range []string{"cache/", "benchmarks/agent-brain/results/"} {
+		assertSnapshotOmitsPathPrefix(t, snapshot, prefix)
+	}
+	if snapshotHasPath(snapshot, "src/generated.py") {
+		t.Fatalf("snapshot included ignored recursive glob path: %#v", snapshot.Files)
+	}
+}
+
+func TestBuildProviderSnapshotWorktreeIncludeFileReopensIgnoredDirectory(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, ".gitignore", "cache/\n")
+	writeFile(t, repo, ".seminclude", "cache/\n")
+	writeFile(t, repo, "cache/included.py", "def included():\n    return True\n")
+	writeFile(t, repo, "src/keep.py", "def keep():\n    return True\n")
+
+	snapshot, err := BuildProviderSnapshotWithOptions(t.Context(), repo, "test-version", ProviderSnapshotOptions{
+		Worktree:     true,
+		IncludeFiles: []string{".seminclude"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !snapshotHasSymbol(snapshot, "included") {
+		t.Fatalf("snapshot did not include file from reopened directory: %#v", snapshot.Symbols)
+	}
+	if !snapshotHasSymbol(snapshot, "keep") {
+		t.Fatalf("snapshot missing kept symbol: %#v", snapshot.Symbols)
+	}
+}
+
+func TestBuildProviderSnapshotWorktreeIncludeFileWinsAfterIgnoreFile(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, ".brainignore", "generated/\n")
+	writeFile(t, repo, ".seminclude", "generated/\n")
+	writeFile(t, repo, "generated/included.py", "def included():\n    return True\n")
+
+	snapshot, err := BuildProviderSnapshotWithOptions(t.Context(), repo, "test-version", ProviderSnapshotOptions{
+		Worktree:     true,
+		IgnoreFiles:  []string{".brainignore"},
+		IncludeFiles: []string{".seminclude"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !snapshotHasSymbol(snapshot, "included") {
+		t.Fatalf("snapshot did not include file from include-file override: %#v", snapshot.Symbols)
+	}
+}
+
+func TestBuildProviderSnapshotWorktreeIncludeDirectoryKeepsSpecificFileIgnore(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, ".gitignore", "cache/\ncache/skip.py\n")
+	writeFile(t, repo, ".seminclude", "cache/\n")
+	writeFile(t, repo, "cache/include.py", "def include_me():\n    return True\n")
+	writeFile(t, repo, "cache/skip.py", "def skip_me():\n    return True\n")
+
+	snapshot, err := BuildProviderSnapshotWithOptions(t.Context(), repo, "test-version", ProviderSnapshotOptions{
+		Worktree:     true,
+		IncludeFiles: []string{".seminclude"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !snapshotHasSymbol(snapshot, "include_me") {
+		t.Fatalf("snapshot did not include file from reopened directory: %#v", snapshot.Symbols)
+	}
+	if snapshotHasPath(snapshot, "cache/skip.py") || snapshotHasSymbol(snapshot, "skip_me") {
+		t.Fatalf("snapshot included specifically ignored file: files=%#v symbols=%#v", snapshot.Files, snapshot.Symbols)
+	}
+}
+
+func TestBuildProviderSnapshotMissingIncludeFileFailsClosed(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "auth.py", "def validate_token(token):\n    return bool(token)\n")
+
+	_, err := BuildProviderSnapshotWithOptions(t.Context(), repo, "test-version", ProviderSnapshotOptions{
+		Worktree:     true,
+		IncludeFiles: []string{"does-not-exist"},
+	})
+	if err == nil {
+		t.Fatal("expected missing include file error")
+	}
+	if !strings.Contains(err.Error(), "include file") || !strings.Contains(err.Error(), "does-not-exist") {
+		t.Fatalf("missing include file error was not clear: %v", err)
+	}
+}
+
+func TestBuildProviderSnapshotIgnoredUnsupportedFilesDoNotProduceFailures(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, ".gitignore", "ignored/\n")
+	writeFile(t, repo, "ignored/Unsupported.dart", "class Ignored {}\n")
+	writeFile(t, repo, "Visible.dart", "class Visible {}\n")
+
+	snapshot, err := BuildProviderSnapshotWithOptions(t.Context(), repo, "test-version", ProviderSnapshotOptions{
+		Worktree: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var sawVisibleFailure bool
+	for _, failure := range snapshot.Header.PartialFailures {
+		if failure.FilePath == "ignored/Unsupported.dart" {
+			t.Fatalf("ignored unsupported file produced a partial failure: %#v", snapshot.Header.PartialFailures)
+		}
+		if failure.FilePath == "Visible.dart" && failure.Code == "E_UNSUPPORTED_LANGUAGE" {
+			sawVisibleFailure = true
+		}
+	}
+	if !sawVisibleFailure {
+		t.Fatalf("visible unsupported file did not produce a partial failure: %#v", snapshot.Header.PartialFailures)
+	}
+}
+
+func TestBuildProviderSnapshotMissingIgnoreFileFailsClosed(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "auth.py", "def validate_token(token):\n    return bool(token)\n")
+
+	_, err := BuildProviderSnapshotWithOptions(t.Context(), repo, "test-version", ProviderSnapshotOptions{
+		Worktree:    true,
+		IgnoreFiles: []string{"does-not-exist"},
+	})
+	if err == nil {
+		t.Fatal("expected missing ignore file error")
+	}
+	if !strings.Contains(err.Error(), "ignore file") || !strings.Contains(err.Error(), "does-not-exist") {
+		t.Fatalf("missing ignore file error was not clear: %v", err)
+	}
+}
+
+func TestBuildProviderSnapshotHeadDoesNotReadLiveIgnoreFiles(t *testing.T) {
+	repo := t.TempDir()
+	git(t, repo, "init")
+	git(t, repo, "config", "user.name", "Entire Sem Test")
+	git(t, repo, "config", "user.email", "sem@example.com")
+	writeFile(t, repo, "tracked.py", "def committed():\n    return True\n")
+	git(t, repo, "add", ".")
+	git(t, repo, "commit", "-m", "initial")
+
+	writeFile(t, repo, ".gitignore", "tracked.py\nignored/\n")
+	writeFile(t, repo, "ignored/worktree.py", "def worktree_only():\n    return True\n")
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !snapshotHasSymbol(snapshot, "committed") {
+		t.Fatalf("HEAD snapshot did not include committed tracked symbol: %#v", snapshot.Symbols)
+	}
+	if snapshotHasSymbol(snapshot, "worktree_only") {
+		t.Fatalf("HEAD snapshot included ignored untracked symbol: %#v", snapshot.Symbols)
+	}
+}
+
 func TestBuildProviderSnapshotWarnsWithoutGitHead(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "auth.py", "def validate_token(token):\n    return bool(token)\n")
@@ -618,6 +837,68 @@ func writeFile(t *testing.T, repo, path, content string) {
 	}
 	if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func snapshotHasSymbol(snapshot ProviderSnapshot, qualifiedName string) bool {
+	for _, symbol := range snapshot.Symbols {
+		if symbol.QualifiedName == qualifiedName {
+			return true
+		}
+	}
+	return false
+}
+
+func snapshotHasPath(snapshot ProviderSnapshot, path string) bool {
+	for _, file := range snapshot.Files {
+		if file.Path == path {
+			return true
+		}
+	}
+	for _, symbol := range snapshot.Symbols {
+		if symbol.FilePath == path {
+			return true
+		}
+	}
+	for _, failure := range snapshot.Header.PartialFailures {
+		if failure.FilePath == path {
+			return true
+		}
+	}
+	for _, warning := range snapshot.Header.Warnings {
+		if warning.FilePath == path {
+			return true
+		}
+	}
+	return false
+}
+
+func assertSnapshotOmitsPathPrefix(t *testing.T, snapshot ProviderSnapshot, prefix string) {
+	t.Helper()
+	for _, file := range snapshot.Files {
+		if strings.HasPrefix(file.Path, prefix) {
+			t.Fatalf("snapshot included ignored file record: %#v", file)
+		}
+	}
+	for _, symbol := range snapshot.Symbols {
+		if strings.HasPrefix(symbol.FilePath, prefix) {
+			t.Fatalf("snapshot included ignored symbol record: %#v", symbol)
+		}
+	}
+	for _, failure := range snapshot.Header.PartialFailures {
+		if strings.HasPrefix(failure.FilePath, prefix) {
+			t.Fatalf("snapshot included ignored partial failure: %#v", failure)
+		}
+	}
+	for _, warning := range snapshot.Header.Warnings {
+		if strings.HasPrefix(warning.FilePath, prefix) {
+			t.Fatalf("snapshot included ignored warning: %#v", warning)
+		}
+	}
+	for _, relation := range snapshot.Relations {
+		if strings.Contains(relation.FromID, prefix) || strings.Contains(relation.ToID, prefix) {
+			t.Fatalf("snapshot included ignored relation: %#v", relation)
+		}
 	}
 }
 
