@@ -42,6 +42,8 @@ review.
 | `rust-basic`        | Rust       | struct + impl method, functions, use import            |
 | `csharp-basic`      | C#         | namespace + class + methods, using import, intra-class call |
 | `php-basic`         | PHP        | namespace + class + methods, use import, `$this->` call |
+| `typescript-imports`| TypeScript | relative `./util` import resolved to a local file record   |
+| `python-imports`    | Python     | relative `.util` import resolved to a local file record    |
 
 All seven Priority-1 languages (per WP9) now have committed baselines.
 Boundary/IaC fixtures (Terraform, Kubernetes, GitHub Actions) follow in WP6/WP7.
@@ -91,6 +93,11 @@ False negatives:
 - **Imported-symbol calls.** Calls into imported modules (`strings.TrimSpace`,
   `json.dumps`, `readFileSync`) produce no `CALLS` edge to an external endpoint.
   (WP3/WP4.)
+- **Module-root import resolution.** Relative imports (`./util`, `.util`) now
+  resolve to local file records (`resolution: import_resolved`,
+  `target_kind: file`). Non-relative local imports that depend on a manifest
+  module root (`go.mod` path, `package.json` name, `tsconfig` paths) are not yet
+  resolved and remain external. (WP3 follow-up: manifest readers.)
 - **No OO/type relations.** `IMPLEMENTS`, `EXTENDS`, `OVERRIDES`, `USES_TYPE`,
   `PARAM_TYPE`, `RETURNS_TYPE` are not emitted. (WP5.)
 - **Rust calls are not captured (`rust-basic`).** `token.validate()`, the

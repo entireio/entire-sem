@@ -30,8 +30,10 @@ var goldenFixtures = []string{
 	"java-basic",
 	"php-basic",
 	"python-basic",
+	"python-imports",
 	"rust-basic",
 	"typescript-basic",
+	"typescript-imports",
 }
 
 func TestProviderGoldenSnapshots(t *testing.T) {

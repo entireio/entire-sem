@@ -90,6 +90,46 @@ def check_token(token):
 	}
 }
 
+func TestBuildProviderSnapshotResolvesRelativeImports(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "src/util.ts", "export function helper(v: string): string {\n  return v\n}\n")
+	writeFile(t, repo, "src/app.ts", `import { helper } from "./util"
+import { readFileSync } from "fs"
+
+export function run(): string {
+  return helper(readFileSync("c", "utf8"))
+}
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var resolved, external RelationRecord
+	for _, relation := range snapshot.Relations {
+		if relation.Type != "IMPORTS" {
+			continue
+		}
+		switch {
+		case relation.Resolution == "import_resolved":
+			resolved = relation
+		case strings.Contains(relation.ToID, "external:import:fs"):
+			external = relation
+		}
+	}
+
+	if resolved.ToID == "" {
+		t.Fatalf("relative import ./util was not resolved: %#v", snapshot.Relations)
+	}
+	if !strings.HasSuffix(resolved.ToID, ":file:src/util.ts") || resolved.TargetKind != "file" || resolved.RelationScope != "module" {
+		t.Fatalf("resolved import = %#v", resolved)
+	}
+	if external.ToID == "" || external.Resolution != "name_only" || external.TargetKind != "external" {
+		t.Fatalf("external import fs misclassified: %#v", external)
+	}
+}
+
 func TestBuildProviderSnapshotEmitsSchema11Fields(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "auth.go", `package auth

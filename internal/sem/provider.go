@@ -723,7 +723,9 @@ func buildRelations(repoKey string, files []FileRecord, recordsByFile map[string
 		}
 	}
 	handledRoutes := map[string]struct{}{}
+	knownFiles := map[string]bool{}
 	for _, file := range files {
+		knownFiles[file.Path] = true
 		if route := nextRouteBoundary(file.Path); route != "" {
 			handledRoutes[route] = struct{}{}
 		}
@@ -737,6 +739,30 @@ func buildRelations(repoKey string, files []FileRecord, recordsByFile map[string
 		lines := strings.Split(content, "\n")
 		fromID := fileID(repoKey, file.Path)
 		for _, imported := range importsFor(file.Path, content) {
+			if resolved, ok := resolveLocalImport(file.Path, imported, knownFiles); ok {
+				relations = append(relations, RelationRecord{
+					RecordType:    "relation",
+					FromID:        fromID,
+					ToID:          fileID(repoKey, resolved),
+					Type:          "IMPORTS",
+					Confidence:    0.95,
+					Reason:        "relative import resolved to local file",
+					RelationScope: "module",
+					Resolution:    "import_resolved",
+					TargetKind:    "file",
+					Evidence: []Evidence{{
+						Kind:     "import_statement",
+						FilePath: file.Path,
+						Detail:   imported,
+					}},
+					WarningCodes: []string{},
+				})
+				continue
+			}
+			warningCodes := []string{}
+			if isRelativeImportSpec(file.Path, imported) {
+				warningCodes = []string{"UNRESOLVED_RELATIVE_IMPORT"}
+			}
 			relations = append(relations, RelationRecord{
 				RecordType:    "relation",
 				FromID:        fromID,
@@ -752,7 +778,7 @@ func buildRelations(repoKey string, files []FileRecord, recordsByFile map[string
 					FilePath: file.Path,
 					Detail:   imported,
 				}},
-				WarningCodes: []string{},
+				WarningCodes: warningCodes,
 			})
 		}
 		importsByName := importedNamesFor(file.Path, content)
@@ -1044,6 +1070,74 @@ func importCapableExtension(ext string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+// isRelativeImportSpec reports whether an import spec is a repo-relative path
+// (rather than an external package) for the importing file's language.
+func isRelativeImportSpec(importingPath, spec string) bool {
+	switch strings.ToLower(filepath.Ext(importingPath)) {
+	case ".js", ".jsx", ".ts", ".tsx":
+		return strings.HasPrefix(spec, "./") || strings.HasPrefix(spec, "../")
+	case ".py":
+		return strings.HasPrefix(spec, ".")
+	default:
+		return false
+	}
+}
+
+// resolveLocalImport maps a relative import spec to a known repo file path. It
+// returns the resolved path and true when the import points at a file present
+// in the snapshot, so the IMPORTS edge can target a local file record instead
+// of an external endpoint. Only relative specs are resolved here; module-root
+// resolution via manifests is a later WP3 step.
+func resolveLocalImport(importingPath, spec string, knownFiles map[string]bool) (string, bool) {
+	switch strings.ToLower(filepath.Ext(importingPath)) {
+	case ".js", ".jsx", ".ts", ".tsx":
+		if !strings.HasPrefix(spec, "./") && !strings.HasPrefix(spec, "../") {
+			return "", false
+		}
+		base := filepath.ToSlash(filepath.Join(filepath.Dir(importingPath), spec))
+		exts := []string{".ts", ".tsx", ".js", ".jsx"}
+		var candidates []string
+		if filepath.Ext(base) != "" {
+			candidates = append(candidates, base)
+		}
+		for _, ext := range exts {
+			candidates = append(candidates, base+ext)
+		}
+		for _, ext := range exts {
+			candidates = append(candidates, filepath.ToSlash(filepath.Join(base, "index"+ext)))
+		}
+		for _, candidate := range candidates {
+			if knownFiles[candidate] {
+				return candidate, true
+			}
+		}
+		return "", false
+	case ".py":
+		if !strings.HasPrefix(spec, ".") {
+			return "", false
+		}
+		level := 0
+		for level < len(spec) && spec[level] == '.' {
+			level++
+		}
+		module := spec[level:]
+		dir := filepath.Dir(importingPath)
+		for i := 1; i < level; i++ {
+			dir = filepath.Dir(dir)
+		}
+		relPath := strings.ReplaceAll(module, ".", "/")
+		base := filepath.ToSlash(filepath.Join(dir, relPath))
+		for _, candidate := range []string{base + ".py", filepath.ToSlash(filepath.Join(base, "__init__.py"))} {
+			if knownFiles[candidate] {
+				return candidate, true
+			}
+		}
+		return "", false
+	default:
+		return "", false
 	}
 }
 
