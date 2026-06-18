@@ -1,0 +1,89 @@
+{
+  "_comment": "Popular GitHub repositories per language for the semantic benchmark. Entries are owner/name, optionally owner/name@ref to pin a tag/sha in the manifest. Commit pinning for reproducible runs is normally recorded in repos.lock.json via 'sem-bench -update-lock'.",
+  "languages": {
+    "Go": [
+      "gin-gonic/gin",
+      "spf13/cobra",
+      "sirupsen/logrus",
+      "gohugoio/hugo",
+      "junegunn/fzf",
+      "fatedier/frp",
+      "go-gorm/gorm",
+      "urfave/cli",
+      "labstack/echo",
+      "spf13/viper"
+    ],
+    "Python": [
+      "pallets/flask",
+      "psf/requests",
+      "tiangolo/fastapi",
+      "encode/httpx",
+      "python-poetry/poetry",
+      "tqdm/tqdm",
+      "psf/black",
+      "sqlalchemy/sqlalchemy",
+      "pydantic/pydantic",
+      "click-contrib/click"
+    ],
+    "TypeScript": [
+      "nestjs/nest",
+      "vitejs/vite",
+      "prettier/prettier",
+      "sveltejs/svelte",
+      "trpc/trpc",
+      "colinhacks/zod",
+      "pmndrs/zustand",
+      "vuejs/core",
+      "TanStack/query",
+      "type-challenges/type-challenges"
+    ],
+    "Java": [
+      "google/guava",
+      "square/retrofit",
+      "square/okhttp",
+      "ReactiveX/RxJava",
+      "netty/netty",
+      "google/gson",
+      "alibaba/fastjson",
+      "apache/dubbo",
+      "mybatis/mybatis-3",
+      "spring-projects/spring-framework"
+    ],
+    "Rust": [
+      "BurntSushi/ripgrep",
+      "sharkdp/bat",
+      "sharkdp/fd",
+      "alacritty/alacritty",
+      "serde-rs/serde",
+      "clap-rs/clap",
+      "rayon-rs/rayon",
+      "starship/starship",
+      "tokio-rs/tokio",
+      "rust-lang/rustlings"
+    ],
+    "C#": [
+      "JamesNK/Newtonsoft.Json",
+      "AvaloniaUI/Avalonia",
+      "jellyfin/jellyfin",
+      "files-community/Files",
+      "Radarr/Radarr",
+      "ShareX/ShareX",
+      "bitwarden/server",
+      "dotnet/efcore",
+      "App-vNext/Polly",
+      "quartznet/quartznet"
+    ],
+    "PHP": [
+      "laravel/framework",
+      "symfony/symfony",
+      "composer/composer",
+      "guzzle/guzzle",
+      "sebastianbergmann/phpunit",
+      "nikic/PHP-Parser",
+      "Seldaek/monolog",
+      "spatie/laravel-permission",
+      "phpstan/phpstan-src",
+      "briannesbitt/Carbon"
+    ]
+  }
+}

@@ -1,2 +1,5 @@
 /entire-sem
 /dist/
+
+# Benchmark working data: cloned external repos must never enter our commits.
+/bench/.cache/
