@@ -94,6 +94,45 @@ export function handleRoute() {
 	}
 }
 
+func TestChannelEventsShareNode(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "bus.js", `function publish(bus) {
+  bus.emit("order.placed", {})
+}
+
+function subscribe(bus) {
+  bus.on("order.placed", handle)
+}
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var emits, listens RelationRecord
+	for _, r := range snapshot.Relations {
+		switch r.Type {
+		case "EMITS":
+			emits = r
+		case "LISTENS_ON":
+			listens = r
+		}
+	}
+	if emits.ToID == "" || listens.ToID == "" {
+		t.Fatalf("missing channel edges in %#v", snapshot.Relations)
+	}
+	if emits.ToID != listens.ToID {
+		t.Fatalf("emit/listen should share a channel node: %q vs %q", emits.ToID, listens.ToID)
+	}
+	if !strings.HasSuffix(emits.ToID, "channel:order.placed") {
+		t.Fatalf("unexpected channel node %q", emits.ToID)
+	}
+	if !contains(emits.WarningCodes, "WEAK_PATTERN") {
+		t.Fatalf("channel edge should carry WEAK_PATTERN: %#v", emits)
+	}
+}
+
 func TestTestsRelationLinksTestToUnit(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "math.go", `package m

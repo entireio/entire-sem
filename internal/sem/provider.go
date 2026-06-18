@@ -39,6 +39,8 @@ var relationTypes = []string{
 	"USES_TYPE",
 	"HANDLES_ROUTE",
 	"HTTP_CALLS",
+	"EMITS",
+	"LISTENS_ON",
 	"HANDLES_TOOL",
 	"SIMILAR_TO",
 	"TESTS",
@@ -256,7 +258,7 @@ func Capabilities() CapabilityReport {
 		ParserVersions:                  parserVersions(),
 		SupportedRelationTypes:          append([]string(nil), relationTypes...),
 		RelationSupportByLanguage:       relationSupportByLanguage(),
-		HeuristicRelationTypes:          []string{"HANDLES_ROUTE", "HTTP_CALLS", "HANDLES_TOOL", "SIMILAR_TO", "TESTS"},
+		HeuristicRelationTypes:          []string{"HANDLES_ROUTE", "HTTP_CALLS", "EMITS", "LISTENS_ON", "HANDLES_TOOL", "SIMILAR_TO", "TESTS"},
 		OptionalLocalOnlyFeatures: map[string]bool{
 			"stable_symbol_ids":    true,
 			"semantic_diff":        true,
@@ -902,6 +904,27 @@ func buildRelations(repoKey string, files []FileRecord, recordsByFile map[string
 						Detail:    call.Method + " " + call.Path,
 					}},
 					WarningCodes: []string{},
+				})
+			}
+			for _, event := range channelEvents(block) {
+				relations = append(relations, RelationRecord{
+					RecordType:    "relation",
+					FromID:        from.ID,
+					ToID:          externalID("channel", event.Name),
+					Type:          event.Relation,
+					Confidence:    0.6,
+					Reason:        "event/channel name detected by emit/listen pattern",
+					RelationScope: "external",
+					Resolution:    "pattern",
+					TargetKind:    "channel",
+					Evidence: []Evidence{{
+						Kind:      "channel_call_site",
+						FilePath:  from.FilePath,
+						StartLine: from.StartLine,
+						EndLine:   from.EndLine,
+						Detail:    event.Name,
+					}},
+					WarningCodes: []string{"WEAK_PATTERN"},
 				})
 			}
 			relations = append(relations, receiverCallRelations(from, block, methodsByContainer, symbolsByShortName)...)

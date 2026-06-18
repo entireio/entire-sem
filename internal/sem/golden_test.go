@@ -41,6 +41,7 @@ var goldenFixtures = []string{
 	"rust-basic",
 	"rust-oo",
 	"typescript-basic",
+	"typescript-events",
 	"typescript-http",
 	"typescript-imports",
 	"typescript-oo",

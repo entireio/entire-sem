@@ -167,6 +167,41 @@ func isTestName(name string) bool {
 	return testSubjectName(name) != ""
 }
 
+// channelEvent is a pub/sub or event-emitter call to a named channel.
+type channelEvent struct {
+	Relation string // "EMITS" or "LISTENS_ON"
+	Name     string
+}
+
+var (
+	emitCallRe   = regexp.MustCompile(`(?i)\.\s*(?:emit|publish|dispatch|broadcast)\s*\(\s*["']([^"']+)["']`)
+	listenCallRe = regexp.MustCompile(`(?i)\.\s*(?:on|once|subscribe|addeventlistener|addlistener)\s*\(\s*["']([^"']+)["']`)
+)
+
+// channelEvents extracts emit/listen calls naming a channel from a code block.
+// These are weak, naming-pattern detections (EventEmitter/Socket.IO/pub-sub),
+// so callers emit them at low confidence with a warning code. Emitter and
+// listener of the same name share a channel endpoint for matching.
+func channelEvents(content string) []channelEvent {
+	var out []channelEvent
+	seen := map[string]bool{}
+	add := func(relation, name string) {
+		key := relation + " " + name
+		if name == "" || seen[key] {
+			return
+		}
+		seen[key] = true
+		out = append(out, channelEvent{Relation: relation, Name: name})
+	}
+	for _, m := range emitCallRe.FindAllStringSubmatch(content, -1) {
+		add("EMITS", m[1])
+	}
+	for _, m := range listenCallRe.FindAllStringSubmatch(content, -1) {
+		add("LISTENS_ON", m[1])
+	}
+	return out
+}
+
 // httpCall is an outbound HTTP client call to a (method, path).
 type httpCall struct {
 	Method   string

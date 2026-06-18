@@ -210,6 +210,10 @@ Relation vocabulary:
 - `HTTP_CALLS` — an outbound HTTP client call (fetch/axios/requests/httpx/http
   client) to a path. Client calls and route registrations to the same path
   share an `external:route:<path>` node, enabling client-to-route matching.
+- `EMITS` / `LISTENS_ON` — pub/sub and event-emitter calls
+  (`emit`/`publish`/`dispatch` and `on`/`subscribe`/`addEventListener`). Emitter
+  and listener of the same name share an `external:channel:<name>` node. Weak
+  naming-pattern detections: low confidence (0.6) with a `WEAK_PATTERN` code.
 - `HANDLES_TOOL`
 - `TESTS` — a test function maps to the unit it covers by naming convention
   (`TestFoo`/`testFoo` → `Foo`, `test_foo` → `foo`, `FooTest`/`FooSpec` → `Foo`)
