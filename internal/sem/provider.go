@@ -312,10 +312,150 @@ func BuildProviderSnapshot(ctx context.Context, repo, providerVersion string) (P
 	return BuildProviderSnapshotWithOptions(ctx, repo, providerVersion, ProviderSnapshotOptions{})
 }
 
+// snapshotInputs holds the parsed, pre-relation state shared by the in-memory
+// and streaming snapshot paths.
+type snapshotInputs struct {
+	absRepo       string
+	key           string
+	commit        string
+	tree          string
+	warnings      []ProviderWarning
+	failures      []PartialFailure
+	files         []FileRecord
+	symbols       []SymbolRecord
+	recordsByFile map[string][]SymbolRecord
+	contentByFile map[string]string
+	languages     []string
+}
+
+// header builds the snapshot header. relations is the relation count to record
+// in stats and the relation set to break down in completeness; pass nil for the
+// streaming path, which reports relation totals in a trailing summary record.
+func (in snapshotInputs) header(providerVersion string, relations []RelationRecord) SnapshotHeader {
+	return SnapshotHeader{
+		SchemaVersion:    SchemaVersion,
+		Provider:         ProviderName,
+		ProviderVersion:  providerVersion,
+		RepoRoot:         in.absRepo,
+		RepoKey:          in.key,
+		Commit:           in.commit,
+		Tree:             in.tree,
+		Languages:        in.languages,
+		Capabilities:     []string{"ndjson", "stable-symbol-id-v1", "local-only", "partial-failures"},
+		SchemaFeatures:   append([]string(nil), schemaFeatures...),
+		LanguageVersions: parserVersions(),
+		Warnings:         in.warnings,
+		PartialFailures:  in.failures,
+		Stats: ProviderStats{
+			Files:             len(in.files),
+			ParsedFiles:       len(in.recordsByFile),
+			Symbols:           len(in.symbols),
+			Relations:         len(relations),
+			PartialFailures:   len(in.failures),
+			CompletenessLevel: completenessLevel(len(in.failures), len(in.files)),
+		},
+		Completeness: buildCompleteness(in.files, in.symbols, relations),
+	}
+}
+
 func BuildProviderSnapshotWithOptions(ctx context.Context, repo, providerVersion string, options ProviderSnapshotOptions) (ProviderSnapshot, error) {
-	absRepo, err := filepath.Abs(repo)
+	in, err := prepareSnapshot(ctx, repo, options)
 	if err != nil {
 		return ProviderSnapshot{}, err
+	}
+	relations := buildRelations(in.key, in.files, in.recordsByFile, in.contentByFile)
+	externals := externalRecords(relations, in.files, in.recordsByFile)
+	return ProviderSnapshot{
+		Header:    in.header(providerVersion, relations),
+		Files:     in.files,
+		Externals: externals,
+		Symbols:   in.symbols,
+		Relations: relations,
+	}, nil
+}
+
+// StreamSnapshot performs the same analysis as BuildProviderSnapshotWithOptions
+// but emits records as they are produced instead of accumulating them, so peak
+// memory does not scale with the relation count. emit receives the header, then
+// file and symbol records, then relation and external records, then a trailing
+// SnapshotSummary carrying the relation total (unknown when the header is
+// emitted). Records may arrive in a different order than the in-memory snapshot;
+// the set is identical.
+func StreamSnapshot(ctx context.Context, repo, providerVersion string, options ProviderSnapshotOptions, emit func(record any) error) error {
+	in, err := prepareSnapshot(ctx, repo, options)
+	if err != nil {
+		return err
+	}
+	if err := emit(in.header(providerVersion, nil)); err != nil {
+		return err
+	}
+	for _, file := range in.files {
+		if err := emit(file); err != nil {
+			return err
+		}
+	}
+	for _, symbol := range in.symbols {
+		if err := emit(symbol); err != nil {
+			return err
+		}
+	}
+
+	symbolsByID, filesByID := recordIndexes(in.files, in.recordsByFile)
+	seenRelation := map[string]bool{}
+	externalsByID := map[string]ExternalRecord{}
+	relationCount := 0
+	var emitErr error
+	forEachRelation(in.key, in.files, in.recordsByFile, in.contentByFile, func(r RelationRecord) {
+		if emitErr != nil {
+			return
+		}
+		dedupKey := r.FromID + "\x00" + r.ToID + "\x00" + r.Type
+		if seenRelation[dedupKey] {
+			return
+		}
+		seenRelation[dedupKey] = true
+		for _, id := range []string{r.FromID, r.ToID} {
+			if strings.HasPrefix(id, "external:") {
+				mergeExternalRecord(externalsByID, externalRecordFor(r, id, symbolsByID, filesByID))
+			}
+		}
+		relationCount++
+		emitErr = emit(r)
+	})
+	if emitErr != nil {
+		return emitErr
+	}
+
+	externalIDs := make([]string, 0, len(externalsByID))
+	for id := range externalsByID {
+		externalIDs = append(externalIDs, id)
+	}
+	sort.Strings(externalIDs)
+	for _, id := range externalIDs {
+		if err := emit(externalsByID[id]); err != nil {
+			return err
+		}
+	}
+
+	return emit(SnapshotSummary{
+		RecordType:        "summary",
+		Relations:         relationCount,
+		CompletenessLevel: completenessLevel(len(in.failures), len(in.files)),
+	})
+}
+
+// SnapshotSummary is the trailing record of a streamed snapshot, carrying totals
+// that are only known after all records have been emitted.
+type SnapshotSummary struct {
+	RecordType        string `json:"record_type"`
+	Relations         int    `json:"relations"`
+	CompletenessLevel string `json:"completeness_level"`
+}
+
+func prepareSnapshot(ctx context.Context, repo string, options ProviderSnapshotOptions) (snapshotInputs, error) {
+	absRepo, err := filepath.Abs(repo)
+	if err != nil {
+		return snapshotInputs{}, err
 	}
 	key := repoKey(ctx, absRepo)
 	var warnings []ProviderWarning
@@ -328,7 +468,7 @@ func BuildProviderSnapshotWithOptions(ctx context.Context, repo, providerVersion
 	useHead := !options.Worktree && commitErr == nil && treeErr == nil
 	paths, contentByFile, err := snapshotSource(ctx, absRepo, useHead, options.IgnoreFiles, options.IncludeFiles)
 	if err != nil {
-		return ProviderSnapshot{}, err
+		return snapshotInputs{}, err
 	}
 	if options.Worktree {
 		warnings = append(warnings, ProviderWarning{
@@ -411,8 +551,6 @@ func BuildProviderSnapshotWithOptions(ctx context.Context, repo, providerVersion
 		recordsByFile[path] = fileSymbols
 	}
 
-	relations := buildRelations(key, files, recordsByFile, contentByFile)
-	externals := externalRecords(relations, files, recordsByFile)
 	languages := sortedKeys(languageSet)
 	if warnings == nil {
 		warnings = []ProviderWarning{}
@@ -420,31 +558,19 @@ func BuildProviderSnapshotWithOptions(ctx context.Context, repo, providerVersion
 	if failures == nil {
 		failures = []PartialFailure{}
 	}
-	header := SnapshotHeader{
-		SchemaVersion:    SchemaVersion,
-		Provider:         ProviderName,
-		ProviderVersion:  providerVersion,
-		RepoRoot:         absRepo,
-		RepoKey:          key,
-		Commit:           commit,
-		Tree:             tree,
-		Languages:        languages,
-		Capabilities:     []string{"ndjson", "stable-symbol-id-v1", "local-only", "partial-failures"},
-		SchemaFeatures:   append([]string(nil), schemaFeatures...),
-		LanguageVersions: parserVersions(),
-		Warnings:         warnings,
-		PartialFailures:  failures,
-		Stats: ProviderStats{
-			Files:             len(files),
-			ParsedFiles:       len(recordsByFile),
-			Symbols:           len(symbols),
-			Relations:         len(relations),
-			PartialFailures:   len(failures),
-			CompletenessLevel: completenessLevel(len(failures), len(files)),
-		},
-		Completeness: buildCompleteness(files, symbols, relations),
-	}
-	return ProviderSnapshot{Header: header, Files: files, Externals: externals, Symbols: symbols, Relations: relations}, nil
+	return snapshotInputs{
+		absRepo:       absRepo,
+		key:           key,
+		commit:        commit,
+		tree:          tree,
+		warnings:      warnings,
+		failures:      failures,
+		files:         files,
+		symbols:       symbols,
+		recordsByFile: recordsByFile,
+		contentByFile: contentByFile,
+		languages:     languages,
+	}, nil
 }
 
 func WriteSnapshotNDJSON(out io.Writer, snapshot ProviderSnapshot) error {
@@ -1411,44 +1537,14 @@ func minFloat(a, b float64) float64 {
 }
 
 func externalRecords(relations []RelationRecord, files []FileRecord, recordsByFile map[string][]SymbolRecord) []ExternalRecord {
+	symbolsByID, filesByID := recordIndexes(files, recordsByFile)
 	seen := map[string]ExternalRecord{}
-	filesByID := map[string]FileRecord{}
-	for _, file := range files {
-		filesByID[file.ID] = file
-	}
-	symbolsByID := map[string]SymbolRecord{}
-	for _, records := range recordsByFile {
-		for _, symbol := range records {
-			symbolsByID[symbol.ID] = symbol
-		}
-	}
 	for _, relation := range relations {
 		for _, id := range []string{relation.FromID, relation.ToID} {
 			if !strings.HasPrefix(id, "external:") {
 				continue
 			}
-			kind, value := externalParts(id)
-			record := ExternalRecord{
-				RecordType: "external",
-				ID:         id,
-				Kind:       kind,
-				Value:      value,
-				External:   true,
-			}
-			if source, ok := boundarySourceLocation(relation, id, symbolsByID, filesByID); ok {
-				record.FilePath = source.FilePath
-				record.StartLine = source.StartLine
-				record.EndLine = source.EndLine
-				record.Signature = source.Signature
-				record.Language = source.Language
-				record.External = false
-				record.SourceSymbol = source.SourceSymbol
-				record.SourceDetails = relation.Reason
-			}
-			if existing, ok := seen[id]; ok && existing.FilePath != "" {
-				continue
-			}
-			seen[id] = record
+			mergeExternalRecord(seen, externalRecordFor(relation, id, symbolsByID, filesByID))
 		}
 	}
 	ids := make([]string, 0, len(seen))
@@ -1461,6 +1557,49 @@ func externalRecords(relations []RelationRecord, files []FileRecord, recordsByFi
 		out = append(out, seen[id])
 	}
 	return out
+}
+
+// recordIndexes builds id lookups for file and symbol records.
+func recordIndexes(files []FileRecord, recordsByFile map[string][]SymbolRecord) (map[string]SymbolRecord, map[string]FileRecord) {
+	filesByID := make(map[string]FileRecord, len(files))
+	for _, file := range files {
+		filesByID[file.ID] = file
+	}
+	symbolsByID := map[string]SymbolRecord{}
+	for _, records := range recordsByFile {
+		for _, symbol := range records {
+			symbolsByID[symbol.ID] = symbol
+		}
+	}
+	return symbolsByID, filesByID
+}
+
+// externalRecordFor builds the external endpoint record implied by one relation
+// endpoint id, attaching a boundary source location when the relation provides
+// one.
+func externalRecordFor(relation RelationRecord, id string, symbolsByID map[string]SymbolRecord, filesByID map[string]FileRecord) ExternalRecord {
+	kind, value := externalParts(id)
+	record := ExternalRecord{RecordType: "external", ID: id, Kind: kind, Value: value, External: true}
+	if source, ok := boundarySourceLocation(relation, id, symbolsByID, filesByID); ok {
+		record.FilePath = source.FilePath
+		record.StartLine = source.StartLine
+		record.EndLine = source.EndLine
+		record.Signature = source.Signature
+		record.Language = source.Language
+		record.External = false
+		record.SourceSymbol = source.SourceSymbol
+		record.SourceDetails = relation.Reason
+	}
+	return record
+}
+
+// mergeExternalRecord keeps the best record per id: a source-located record
+// wins over a bare external endpoint.
+func mergeExternalRecord(seen map[string]ExternalRecord, record ExternalRecord) {
+	if existing, ok := seen[record.ID]; ok && existing.FilePath != "" {
+		return
+	}
+	seen[record.ID] = record
 }
 
 type boundarySource struct {

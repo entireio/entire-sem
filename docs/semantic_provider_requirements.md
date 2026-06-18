@@ -61,6 +61,17 @@ produce hundreds of megabytes of semantic facts, so a single whole-repo JSON
 document should be treated as a debug/compatibility mode rather than the primary
 integration format.
 
+The `snapshot`/`symbols`/`edges` commands stream records to stdout as they are
+produced (via the provider's streaming path), so peak memory does not scale with
+the relation count on large repositories. Consequences for consumers:
+
+- The header is emitted first but its `stats.relations` is `0` and its
+  `completeness.relations` breakdown is empty, because the relation total is not
+  known until the stream ends. A trailing `{"record_type":"summary", ...}`
+  record carries the authoritative `relations` count and `completeness_level`.
+- Record order is not globally sorted (the in-memory `BuildProviderSnapshot`
+  path still sorts). Consumers should key on record `id`, not order.
+
 Worktree provider snapshots should honor the repository root `.gitignore` before
 walking or reading files. Callers may pass repeatable `--ignore-file <path>`
 flags for additional gitignore-style exclusions such as `.brainignore`; relative

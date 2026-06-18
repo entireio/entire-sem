@@ -2,12 +2,77 @@ package sem
 
 import (
 	"bytes"
+	"encoding/json"
 	"flag"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 )
+
+// TestStreamSnapshotMatchesBuild asserts the streaming path emits the same set
+// of file/symbol/external/relation records as the in-memory path for every
+// fixture (order aside, which the streaming contract does not promise).
+func TestStreamSnapshotMatchesBuild(t *testing.T) {
+	for _, name := range goldenFixtures {
+		t.Run(name, func(t *testing.T) {
+			dir := filepath.Join(t.TempDir(), name)
+			copyFixtureTree(t, filepath.Join("testdata", "fixtures", name), dir)
+			opts := ProviderSnapshotOptions{Worktree: true}
+
+			snapshot, err := BuildProviderSnapshotWithOptions(t.Context(), dir, "0.0.0-test", opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var want []string
+			for _, r := range snapshot.Files {
+				want = append(want, marshalRecord(t, r))
+			}
+			for _, r := range snapshot.Externals {
+				want = append(want, marshalRecord(t, r))
+			}
+			for _, r := range snapshot.Symbols {
+				want = append(want, marshalRecord(t, r))
+			}
+			for _, r := range snapshot.Relations {
+				want = append(want, marshalRecord(t, r))
+			}
+
+			var got []string
+			err = StreamSnapshot(t.Context(), dir, "0.0.0-test", opts, func(rec any) error {
+				switch rec.(type) {
+				case FileRecord, ExternalRecord, SymbolRecord, RelationRecord:
+					got = append(got, marshalRecord(t, rec))
+				}
+				return nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			sort.Strings(want)
+			sort.Strings(got)
+			if len(want) != len(got) {
+				t.Fatalf("record count: build=%d stream=%d", len(want), len(got))
+			}
+			for i := range want {
+				if want[i] != got[i] {
+					t.Fatalf("record mismatch at %d:\n build:  %s\n stream: %s", i, want[i], got[i])
+				}
+			}
+		})
+	}
+}
+
+func marshalRecord(t *testing.T, rec any) string {
+	t.Helper()
+	b, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
 
 // updateGolden regenerates the committed NDJSON baselines instead of asserting
 // against them. Run:

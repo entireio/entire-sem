@@ -138,7 +138,7 @@ def check_token(token):
 			t.Fatalf("%s header = %#v", tt.command, header)
 		}
 		seenTypes := map[string]bool{}
-		allowedTypes := map[string]bool{}
+		allowedTypes := map[string]bool{"summary": true} // streaming trailer, always allowed
 		for _, recordType := range tt.wantRecordTypes {
 			allowedTypes[recordType] = true
 		}
