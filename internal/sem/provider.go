@@ -473,7 +473,7 @@ func WriteRelationsNDJSON(out io.Writer, snapshot ProviderSnapshot) error {
 func entitySymbols(repoKey, path, language string, entities []Entity) []SymbolRecord {
 	byName := map[string]string{}
 	baseCounts := map[string]int{}
-	seenDuplicateIDs := map[string]int{}
+	sigOrdinals := map[string]int{}
 	for _, entity := range entities {
 		baseCounts[symbolID(repoKey, language, path, entity.Kind, entity.Name)]++
 	}
@@ -482,10 +482,17 @@ func entitySymbols(repoKey, path, language string, entities []Entity) []SymbolRe
 		qualified := entity.Name
 		id := symbolID(repoKey, language, path, entity.Kind, qualified)
 		if baseCounts[id] > 1 {
-			id = symbolID(repoKey, language, path, entity.Kind, duplicateSymbolName(qualified, entity))
-			seenDuplicateIDs[id]++
-			if seenDuplicateIDs[id] > 1 {
-				id = fmt.Sprintf("%s#%d", id, seenDuplicateIDs[id])
+			// Disambiguate same-name symbols by signature hash plus an ordinal
+			// within the matching-signature group. This is stable across edits
+			// that shift line numbers, unlike the previous line-range scheme;
+			// overloads with distinct signatures get distinct, stable IDs, and
+			// genuine duplicates fall back to a stable definition ordinal.
+			signatureHash := hash(entity.Signature)
+			ordinalKey := id + "\x00" + signatureHash
+			sigOrdinals[ordinalKey]++
+			id = fmt.Sprintf("%s#sig:%s", id, signatureHash)
+			if ordinal := sigOrdinals[ordinalKey]; ordinal > 1 {
+				id = fmt.Sprintf("%s#%d", id, ordinal)
 			}
 		}
 		containerID := ""
@@ -513,10 +520,6 @@ func entitySymbols(repoKey, path, language string, entities []Entity) []SymbolRe
 		byName[qualified] = id
 	}
 	return symbols
-}
-
-func duplicateSymbolName(qualified string, entity Entity) string {
-	return fmt.Sprintf("%s#L%d-%d", qualified, entity.StartLine, entity.EndLine)
 }
 
 func syntheticBoundarySymbols(repoKey, path, language, content string, fileSymbols []SymbolRecord) []SymbolRecord {

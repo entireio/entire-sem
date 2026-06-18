@@ -137,8 +137,11 @@ The first stable symbol ID version should use a documented compound identity:
 <repo-key>:<language>:<file-path>:<kind>:<qualified-name>
 ```
 
-This is stable across ordinary content edits but breaks across file moves, some
-renames, and duplicate same-name symbols that need source-range disambiguation.
+This is stable across ordinary content edits. Duplicate same-name symbols are
+disambiguated by signature hash plus a definition ordinal
+(`...#sig:<hash>[#<n>]`) rather than source line ranges, so overloads keep
+stable IDs across edits that shift line numbers. File moves and some renames are
+reconciled in the semantic diff (see below) rather than in the snapshot ID.
 `entire-sem` should document that breakage and emit enough diff data for later
 rename reconciliation using body hash, signature similarity, and semantic diff
 records.

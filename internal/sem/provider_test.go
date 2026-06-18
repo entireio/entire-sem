@@ -527,6 +527,35 @@ func TestEntitySymbolsDisambiguatesDuplicateNames(t *testing.T) {
 	}
 }
 
+func TestEntitySymbolsDisambiguatesOverloadsStablyAcrossLineShifts(t *testing.T) {
+	// Two same-name overloads with distinct signatures must get distinct,
+	// signature-derived IDs that do not depend on line numbers.
+	build := func(firstStart, secondStart int) []SymbolRecord {
+		return entitySymbols("gh/example/repo", "src/calc.cs", "C#", []Entity{
+			{Kind: "method", Name: "Calc.Add", StartLine: firstStart, EndLine: firstStart + 2, Signature: "int Add(int a, int b)"},
+			{Kind: "method", Name: "Calc.Add", StartLine: secondStart, EndLine: secondStart + 2, Signature: "double Add(double a, double b)"},
+		})
+	}
+	before := build(10, 20)
+	after := build(40, 55)
+
+	if before[0].ID == before[1].ID {
+		t.Fatalf("overloads share id: %#v", before)
+	}
+	if before[0].ID != after[0].ID || before[1].ID != after[1].ID {
+		t.Fatalf("overload ids shifted with line numbers: before=%v after=%v",
+			[]string{before[0].ID, before[1].ID}, []string{after[0].ID, after[1].ID})
+	}
+	for _, symbol := range before {
+		if strings.Contains(symbol.ID, "#L") {
+			t.Fatalf("id still uses line-range disambiguation: %q", symbol.ID)
+		}
+		if !strings.Contains(symbol.ID, "#sig:") {
+			t.Fatalf("id missing signature disambiguation: %q", symbol.ID)
+		}
+	}
+}
+
 func TestEntitySymbolsKeepCompoundIDStableAcrossBodyEdits(t *testing.T) {
 	before := entitySymbols("gh/example/repo", "src/auth.py", "Python", []Entity{
 		{Kind: "function", Name: "validate_token", StartLine: 1, EndLine: 2, Signature: "def validate_token(token):", BodyHash: "old"},
