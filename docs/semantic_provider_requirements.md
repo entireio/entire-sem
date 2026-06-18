@@ -211,6 +211,9 @@ Relation vocabulary:
   client) to a path. Client calls and route registrations to the same path
   share an `external:route:<path>` node, enabling client-to-route matching.
 - `HANDLES_TOOL`
+- `TESTS` — a test function maps to the unit it covers by naming convention
+  (`TestFoo`/`testFoo` → `Foo`, `test_foo` → `foo`, `FooTest`/`FooSpec` → `Foo`)
+  when the subject resolves to a non-test function/method/type.
 - `SIMILAR_TO` — near-duplicate symbol bodies, found by MinHash+LSH over
   normalized function/method bodies. Tiny bodies are suppressed and only pairs
   above an estimated-Jaccard threshold are emitted, with the estimate as

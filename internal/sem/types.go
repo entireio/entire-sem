@@ -139,6 +139,34 @@ func rustSupertypeEdges(content string) []rustSupertypeEdge {
 	return edges
 }
 
+// testSubjectName derives the name of the unit a test symbol covers from the
+// test's name, following common conventions: TestFoo/testFoo -> Foo,
+// test_foo -> foo, FooTest/FooTests/FooSpec -> Foo. Returns "" when the name is
+// not a recognizable test name.
+func testSubjectName(name string) string {
+	upper := func(b byte) bool { return b >= 'A' && b <= 'Z' }
+	switch {
+	case strings.HasPrefix(name, "Test") && len(name) > 4 && upper(name[4]):
+		return name[4:]
+	case strings.HasPrefix(name, "test_") && len(name) > 5:
+		return name[5:]
+	case strings.HasPrefix(name, "test") && len(name) > 4 && upper(name[4]):
+		return name[4:]
+	case strings.HasSuffix(name, "Tests") && len(name) > 5:
+		return name[:len(name)-5]
+	case strings.HasSuffix(name, "Test") && len(name) > 4:
+		return name[:len(name)-4]
+	case strings.HasSuffix(name, "Spec") && len(name) > 4:
+		return name[:len(name)-4]
+	}
+	return ""
+}
+
+// isTestName reports whether a symbol name is a test name.
+func isTestName(name string) bool {
+	return testSubjectName(name) != ""
+}
+
 // httpCall is an outbound HTTP client call to a (method, path).
 type httpCall struct {
 	Method   string

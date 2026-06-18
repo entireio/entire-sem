@@ -94,6 +94,43 @@ export function handleRoute() {
 	}
 }
 
+func TestTestsRelationLinksTestToUnit(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "math.go", `package m
+
+func Add(a int, b int) int { return a + b }
+`)
+	writeFile(t, repo, "math_test.go", `package m
+
+import "testing"
+
+func TestAdd(t *testing.T) {
+	_ = Add(1, 2)
+}
+
+func TestNothingHere(t *testing.T) {}
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var tests [][2]string
+	for _, r := range snapshot.Relations {
+		if r.Type == "TESTS" {
+			tests = append(tests, [2]string{lastSegment(r.FromID), lastSegment(r.ToID)})
+		}
+	}
+	if len(tests) != 1 {
+		t.Fatalf("want exactly one TESTS edge (TestAdd->Add), got %v", tests)
+	}
+	if tests[0][0] != "TestAdd" || tests[0][1] != "Add" {
+		t.Fatalf("unexpected TESTS edge %v", tests[0])
+	}
+	// TestNothingHere has no matching subject -> no edge.
+}
+
 func TestUsesTypeLinksSignatureTypes(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "shop.go", `package shop

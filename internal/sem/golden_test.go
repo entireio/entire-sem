@@ -29,6 +29,7 @@ var goldenFixtures = []string{
 	"csharp-oo",
 	"go-basic",
 	"go-clones",
+	"go-tests",
 	"go-types",
 	"java-basic",
 	"java-oo",

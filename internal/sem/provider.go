@@ -41,6 +41,7 @@ var relationTypes = []string{
 	"HTTP_CALLS",
 	"HANDLES_TOOL",
 	"SIMILAR_TO",
+	"TESTS",
 }
 
 // ooRelationSupport lists the OO/type relation types the provider can extract
@@ -255,7 +256,7 @@ func Capabilities() CapabilityReport {
 		ParserVersions:                  parserVersions(),
 		SupportedRelationTypes:          append([]string(nil), relationTypes...),
 		RelationSupportByLanguage:       relationSupportByLanguage(),
-		HeuristicRelationTypes:          []string{"HANDLES_ROUTE", "HTTP_CALLS", "HANDLES_TOOL", "SIMILAR_TO"},
+		HeuristicRelationTypes:          []string{"HANDLES_ROUTE", "HTTP_CALLS", "HANDLES_TOOL", "SIMILAR_TO", "TESTS"},
 		OptionalLocalOnlyFeatures: map[string]bool{
 			"stable_symbol_ids":    true,
 			"semantic_diff":        true,
@@ -911,6 +912,7 @@ func buildRelations(repoKey string, files []FileRecord, recordsByFile map[string
 
 	relations = append(relations, overrideRelations(relations, methodsByContainer)...)
 	relations = append(relations, usesTypeRelations(recordsByFile, symbolsByFile, symbolsByShortName)...)
+	relations = append(relations, testRelations(recordsByFile, symbolsByShortName)...)
 	relations = append(relations, similarityRelations(recordsByFile, contentByFile)...)
 
 	sort.Slice(relations, func(i, j int) bool {
@@ -1048,6 +1050,69 @@ func receiverCallRelations(from SymbolRecord, block string, methodsByContainer m
 		})
 	}
 	return relations
+}
+
+// testRelations links a test function to the unit it covers, using the test
+// naming convention (TestFoo -> Foo, test_foo -> foo, FooTest -> Foo). The
+// subject must resolve to a non-test function/method/type symbol. This is a
+// high-precision convention match, not call-graph analysis.
+func testRelations(recordsByFile map[string][]SymbolRecord, symbolsByShortName map[string][]SymbolRecord) []RelationRecord {
+	paths := make([]string, 0, len(recordsByFile))
+	for path := range recordsByFile {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+
+	var relations []RelationRecord
+	for _, path := range paths {
+		for _, symbol := range recordsByFile[path] {
+			if symbol.Kind != "function" && symbol.Kind != "method" {
+				continue
+			}
+			subject := testSubjectName(symbol.Name)
+			if subject == "" {
+				continue
+			}
+			target, ok := firstTestSubject(symbolsByShortName[subject], symbol.ID)
+			if !ok {
+				continue
+			}
+			relations = append(relations, RelationRecord{
+				RecordType:    "relation",
+				FromID:        symbol.ID,
+				ToID:          target.ID,
+				Type:          "TESTS",
+				Confidence:    0.8,
+				Reason:        "test name maps to the unit under test by convention",
+				RelationScope: "module",
+				Resolution:    "name_only",
+				TargetKind:    "symbol",
+				Evidence: []Evidence{{
+					Kind:      "test_name",
+					FilePath:  symbol.FilePath,
+					StartLine: symbol.StartLine,
+					EndLine:   symbol.EndLine,
+					Detail:    subject,
+				}},
+				WarningCodes: []string{},
+			})
+		}
+	}
+	return relations
+}
+
+// firstTestSubject returns the first non-test function/method/type symbol with
+// the given name (other than the test itself), the unit a test covers.
+func firstTestSubject(candidates []SymbolRecord, testID string) (SymbolRecord, bool) {
+	for _, symbol := range candidates {
+		if symbol.ID == testID || isTestName(symbol.Name) {
+			continue
+		}
+		if symbol.Kind == "function" || symbol.Kind == "method" || typeLikeKind(symbol.Kind) {
+			return symbol, true
+		}
+	}
+	return SymbolRecord{}, false
 }
 
 // usesTypeRelations emits USES_TYPE from a function/method to each local type
