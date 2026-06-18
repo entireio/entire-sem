@@ -94,6 +94,48 @@ export function handleRoute() {
 	}
 }
 
+func TestUsesTypeLinksSignatureTypes(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "shop.go", `package shop
+
+type Cart struct{ n int }
+
+type Receipt struct{ total int }
+
+func Checkout(cart Cart) Receipt {
+	return Receipt{}
+}
+
+func label(name string) string {
+	return name
+}
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	uses := map[string]bool{}
+	for _, r := range snapshot.Relations {
+		if r.Type == "USES_TYPE" {
+			uses[lastSegment(r.FromID)+"->"+lastSegment(r.ToID)] = true
+			if r.TargetKind != "symbol" {
+				t.Fatalf("USES_TYPE should target a symbol: %#v", r)
+			}
+		}
+	}
+	if !uses["Checkout->Cart"] || !uses["Checkout->Receipt"] {
+		t.Fatalf("Checkout should use Cart and Receipt: %v", uses)
+	}
+	// A signature of only primitives links to no local type.
+	for key := range uses {
+		if strings.HasPrefix(key, "label->") {
+			t.Fatalf("primitive-only signature linked a type: %s", key)
+		}
+	}
+}
+
 func TestSimilarToLinksNearDuplicates(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "clones.go", `package c

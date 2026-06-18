@@ -36,6 +36,7 @@ var relationTypes = []string{
 	"EXTENDS",
 	"IMPLEMENTS",
 	"OVERRIDES",
+	"USES_TYPE",
 	"HANDLES_ROUTE",
 	"HTTP_CALLS",
 	"HANDLES_TOOL",
@@ -47,13 +48,14 @@ var relationTypes = []string{
 // a resolved supertype's methods, so it is advertised only for class-based
 // languages with clear method containers.
 var ooRelationSupport = map[string][]string{
-	"Java":       {"EXTENDS", "IMPLEMENTS", "OVERRIDES"},
-	"TypeScript": {"EXTENDS", "IMPLEMENTS", "OVERRIDES"},
+	"Java":       {"EXTENDS", "IMPLEMENTS", "OVERRIDES", "USES_TYPE"},
+	"TypeScript": {"EXTENDS", "IMPLEMENTS", "OVERRIDES", "USES_TYPE"},
 	"JavaScript": {"EXTENDS"},
-	"C#":         {"EXTENDS", "IMPLEMENTS", "OVERRIDES"},
-	"PHP":        {"EXTENDS", "IMPLEMENTS", "OVERRIDES"},
-	"Python":     {"EXTENDS", "OVERRIDES"},
-	"Rust":       {"EXTENDS", "IMPLEMENTS"},
+	"C#":         {"EXTENDS", "IMPLEMENTS", "OVERRIDES", "USES_TYPE"},
+	"PHP":        {"EXTENDS", "IMPLEMENTS", "OVERRIDES", "USES_TYPE"},
+	"Python":     {"EXTENDS", "OVERRIDES", "USES_TYPE"},
+	"Rust":       {"EXTENDS", "IMPLEMENTS", "USES_TYPE"},
+	"Go":         {"USES_TYPE"},
 }
 
 // schemaFeatures lists the optional schema 1.1 features this build emits. It
@@ -908,6 +910,7 @@ func buildRelations(repoKey string, files []FileRecord, recordsByFile map[string
 	}
 
 	relations = append(relations, overrideRelations(relations, methodsByContainer)...)
+	relations = append(relations, usesTypeRelations(recordsByFile, symbolsByFile, symbolsByShortName)...)
 	relations = append(relations, similarityRelations(recordsByFile, contentByFile)...)
 
 	sort.Slice(relations, func(i, j int) bool {
@@ -1045,6 +1048,76 @@ func receiverCallRelations(from SymbolRecord, block string, methodsByContainer m
 		})
 	}
 	return relations
+}
+
+// usesTypeRelations emits USES_TYPE from a function/method to each local type
+// symbol whose name appears in its signature. Resolving against known type
+// symbols means primitives and library types (which have no local symbol) are
+// naturally excluded, keeping the edges high-precision without per-language
+// signature grammar.
+func usesTypeRelations(recordsByFile map[string][]SymbolRecord, symbolsByFile, symbolsByShortName map[string][]SymbolRecord) []RelationRecord {
+	paths := make([]string, 0, len(recordsByFile))
+	for path := range recordsByFile {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+
+	var relations []RelationRecord
+	for _, path := range paths {
+		for _, symbol := range recordsByFile[path] {
+			if symbol.Kind != "function" && symbol.Kind != "method" || symbol.Signature == "" {
+				continue
+			}
+			names := make([]string, 0)
+			seen := map[string]bool{}
+			for name := range identifiersIn(symbol.Signature) {
+				if name == symbol.Name || seen[name] {
+					continue
+				}
+				seen[name] = true
+				names = append(names, name)
+			}
+			sort.Strings(names)
+			emitted := map[string]bool{}
+			for _, name := range names {
+				target, resolution, scope, confidence, ok := resolveTypeReference(name, symbol, symbolsByFile[path], symbolsByShortName)
+				if !ok || emitted[target.ID] {
+					continue
+				}
+				emitted[target.ID] = true
+				relations = append(relations, RelationRecord{
+					RecordType:    "relation",
+					FromID:        symbol.ID,
+					ToID:          target.ID,
+					Type:          "USES_TYPE",
+					Confidence:    confidence,
+					Reason:        "type referenced in signature",
+					RelationScope: scope,
+					Resolution:    resolution,
+					TargetKind:    "symbol",
+					Evidence: []Evidence{{
+						Kind:      "signature",
+						FilePath:  symbol.FilePath,
+						StartLine: symbol.StartLine,
+						EndLine:   symbol.EndLine,
+						Detail:    name,
+					}},
+					WarningCodes: []string{},
+				})
+			}
+		}
+	}
+	return relations
+}
+
+func resolveTypeReference(name string, from SymbolRecord, sameFile []SymbolRecord, symbolsByShortName map[string][]SymbolRecord) (SymbolRecord, string, string, float64, bool) {
+	if sym, ok := firstTypeLikeNamed(sameFile, name); ok && sym.ID != from.ID {
+		return sym, "exact", "file", 0.85, true
+	}
+	if sym, ok := firstTypeLikeNamed(symbolsByShortName[name], name); ok && sym.ID != from.ID {
+		return sym, "name_only", "module", 0.75, true
+	}
+	return SymbolRecord{}, "", "", 0, false
 }
 
 // overrideRelations derives OVERRIDES edges from resolved EXTENDS/IMPLEMENTS

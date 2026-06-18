@@ -201,6 +201,10 @@ Relation vocabulary:
 - `OVERRIDES` — a method that redefines a same-named method on a resolved
   supertype (derived from EXTENDS/IMPLEMENTS; only when both the supertype and
   its methods are known local symbols).
+- `USES_TYPE` — a function/method references a local type in its signature
+  (resolved against known type symbols, so primitives and library types are
+  excluded). Covers parameter and return types without per-language signature
+  parsing; positional `PARAM_TYPE`/`RETURNS_TYPE` remain a finer follow-up.
 - `HANDLES_ROUTE` — a handler registers an HTTP route (path on a line carrying
   routing context: a verb/route method call or mapping decorator).
 - `HTTP_CALLS` — an outbound HTTP client call (fetch/axios/requests/httpx/http
@@ -219,7 +223,7 @@ otherwise. C# cannot syntactically separate a base class from interfaces, so it
 uses the `I<Upper>` naming heuristic at lower confidence. Per-language support
 is reported in `capabilities` under `relation_support_by_language`.
 
-Relation extraction continues to grow. Still to come: `USES_TYPE`,
+Relation extraction continues to grow. Still to come: positional
 `PARAM_TYPE`/`RETURNS_TYPE`, and data-flow relations such as `ACCESSES`.
 
 ## Warnings And Partial Failures
