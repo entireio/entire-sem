@@ -190,20 +190,26 @@ The snapshot header also carries optional `schema_features` (features present in
 the stream), `language_versions` (parser/grammar versions), and `completeness`
 (coverage by language and relation type).
 
-Initial relation vocabulary:
+Relation vocabulary:
 
 - `DEFINES`
 - `CONTAINS`
 - `IMPORTS`
 - `CALLS`
+- `EXTENDS` — class extends class, interface extends interface, Rust supertrait.
+- `IMPLEMENTS` — class implements interface, Rust `impl Trait for Type`.
 - `HANDLES_ROUTE`
 - `HANDLES_TOOL`
 
-Relation extraction should grow beyond heuristic dependent counts. Phase 1
-should prioritize containment, definitions, imports, calls, and enough route/tool
-handler extraction to support local impact analysis. Later phases can add typed
-object-oriented and data-flow relations such as `IMPLEMENTS`, `EXTENDS`,
-`OVERRIDES`, and `ACCESSES` once the parser model can support them consistently.
+`EXTENDS`/`IMPLEMENTS` are extracted from class/interface headers (Java,
+TypeScript, JavaScript, C#, PHP, Python) and from Rust impl/supertrait syntax,
+resolved to a local type symbol when one exists or an external `type` endpoint
+otherwise. C# cannot syntactically separate a base class from interfaces, so it
+uses the `I<Upper>` naming heuristic at lower confidence. Per-language support
+is reported in `capabilities` under `relation_support_by_language`.
+
+Relation extraction continues to grow. Still to come: `OVERRIDES`, `USES_TYPE`,
+`PARAM_TYPE`/`RETURNS_TYPE`, and data-flow relations such as `ACCESSES`.
 
 ## Warnings And Partial Failures
 

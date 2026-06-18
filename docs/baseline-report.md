@@ -44,6 +44,12 @@ review.
 | `php-basic`         | PHP        | namespace + class + methods, use import, `$this->` call |
 | `typescript-imports`| TypeScript | relative `./util` import resolved to a local file record   |
 | `python-imports`    | Python     | relative `.util` import resolved to a local file record    |
+| `java-oo`           | Java       | extends/implements, interface-extends hierarchy            |
+| `typescript-oo`     | TypeScript | class extends + implements, interface extends              |
+| `csharp-oo`         | C#         | `:` base list split via `I`-prefix heuristic               |
+| `php-oo`            | PHP        | class extends + implements                                 |
+| `python-oo`         | Python     | multiple inheritance via base list                         |
+| `rust-oo`           | Rust       | `impl Trait for Type`, supertrait bounds                   |
 
 All seven Priority-1 languages (per WP9) now have committed baselines.
 Boundary/IaC fixtures (Terraform, Kubernetes, GitHub Actions) follow in WP6/WP7.
@@ -103,8 +109,13 @@ False negatives:
   `target_kind: file`). Non-relative local imports that depend on a manifest
   module root (`go.mod` path, `package.json` name, `tsconfig` paths) are not yet
   resolved and remain external. (WP3 follow-up: manifest readers.)
-- **No OO/type relations.** `IMPLEMENTS`, `EXTENDS`, `OVERRIDES`, `USES_TYPE`,
-  `PARAM_TYPE`, `RETURNS_TYPE` are not emitted. (WP5.)
+- **Partial OO/type relations.** `EXTENDS` and `IMPLEMENTS` are now emitted
+  (Java, TypeScript, JavaScript, C#, PHP, Python, Rust). Still missing:
+  `OVERRIDES`, `USES_TYPE`, `PARAM_TYPE`, `RETURNS_TYPE`. (WP5 follow-up.)
+- **Abstract classes not always captured.** The TypeScript parser does not emit
+  a symbol for `export abstract class Base`, so an `EXTENDS` to it falls back to
+  an external type endpoint rather than resolving locally. This is a parser
+  entity-extraction gap, not a relation bug. (Parser follow-up.)
 - **Rust calls are not captured (`rust-basic`).** `token.validate()`, the
   `Token { .. }` literal, and `HashMap::new()` produce no `CALLS` edges, so the
   fixture emits zero calls today. Java/C#/PHP do capture intra-class calls, but

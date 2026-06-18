@@ -26,14 +26,20 @@ var updateGolden = flag.Bool("update", false, "regenerate golden NDJSON baseline
 // its name here, and running the test with -update to create the baseline.
 var goldenFixtures = []string{
 	"csharp-basic",
+	"csharp-oo",
 	"go-basic",
 	"java-basic",
+	"java-oo",
 	"php-basic",
+	"php-oo",
 	"python-basic",
 	"python-imports",
+	"python-oo",
 	"rust-basic",
+	"rust-oo",
 	"typescript-basic",
 	"typescript-imports",
+	"typescript-oo",
 }
 
 func TestProviderGoldenSnapshots(t *testing.T) {

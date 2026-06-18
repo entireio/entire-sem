@@ -33,8 +33,22 @@ var relationTypes = []string{
 	"CONTAINS",
 	"IMPORTS",
 	"CALLS",
+	"EXTENDS",
+	"IMPLEMENTS",
 	"HANDLES_ROUTE",
 	"HANDLES_TOOL",
+}
+
+// ooRelationSupport lists the OO/type relation types the provider can extract
+// for each language, used by the capabilities matrix.
+var ooRelationSupport = map[string][]string{
+	"Java":       {"EXTENDS", "IMPLEMENTS"},
+	"TypeScript": {"EXTENDS", "IMPLEMENTS"},
+	"JavaScript": {"EXTENDS"},
+	"C#":         {"EXTENDS", "IMPLEMENTS"},
+	"PHP":        {"EXTENDS", "IMPLEMENTS"},
+	"Python":     {"EXTENDS"},
+	"Rust":       {"EXTENDS", "IMPLEMENTS"},
 }
 
 // schemaFeatures lists the optional schema 1.1 features this build emits. It
@@ -274,6 +288,7 @@ func relationSupportByLanguage() map[string][]string {
 		if importCapable[spec.language] {
 			types = append(types, "IMPORTS")
 		}
+		types = append(types, ooRelationSupport[spec.language]...)
 		sort.Strings(types)
 		support[spec.language] = types
 	}
@@ -849,6 +864,8 @@ func buildRelations(repoKey string, files []FileRecord, recordsByFile map[string
 				})
 			}
 		}
+
+		relations = append(relations, typeRelationsForFile(repoKey, file, content, recordsByFile[file.Path], symbolsByFile[file.Path], symbolsByShortName)...)
 	}
 
 	sort.Slice(relations, func(i, j int) bool {
@@ -857,6 +874,91 @@ func buildRelations(repoKey string, files []FileRecord, recordsByFile map[string
 		return left < right
 	})
 	return dedupeRelations(relations)
+}
+
+// typeRelationsForFile emits EXTENDS/IMPLEMENTS relations for the type symbols
+// in a file. Most languages declare supertypes in the class/interface header,
+// which the parser captured in the symbol signature; Rust states them in impl
+// blocks and supertrait bounds, scanned from content. Each supertype is
+// resolved to a local type symbol when possible, otherwise to an external type
+// endpoint.
+func typeRelationsForFile(repoKey string, file FileRecord, content string, fileSymbols, sameFileSymbols []SymbolRecord, symbolsByShortName map[string][]SymbolRecord) []RelationRecord {
+	var relations []RelationRecord
+	for _, symbol := range fileSymbols {
+		if !typeLikeKind(symbol.Kind) {
+			continue
+		}
+		for _, edge := range supertypesFromSignature(symbol.Language, symbol.Signature) {
+			relations = append(relations, buildTypeRelation(repoKey, symbol, edge.Super, edge.Relation, edge.Confidence, sameFileSymbols, symbolsByShortName))
+		}
+	}
+	if file.Language == "Rust" {
+		for _, edge := range rustSupertypeEdges(content) {
+			anchor, ok := firstTypeLikeNamed(fileSymbols, edge.Anchor)
+			if !ok {
+				continue
+			}
+			relations = append(relations, buildTypeRelation(repoKey, anchor, edge.Super, edge.Relation, edge.Confidence, sameFileSymbols, symbolsByShortName))
+		}
+	}
+	return relations
+}
+
+func buildTypeRelation(repoKey string, anchor SymbolRecord, super, relation string, baseConfidence float64, sameFileSymbols []SymbolRecord, symbolsByShortName map[string][]SymbolRecord) RelationRecord {
+	toID := externalID("type", super)
+	targetKind, resolution, scope := "external", "name_only", "external"
+	confidence := minFloat(baseConfidence, 0.8)
+	if sym, ok := firstTypeLikeNamed(sameFileSymbols, super); ok && sym.ID != anchor.ID {
+		toID, targetKind, resolution, scope, confidence = sym.ID, "symbol", "exact", "file", baseConfidence
+	} else if sym, ok := firstTypeLikeNamed(symbolsByShortName[super], super); ok && sym.ID != anchor.ID {
+		toID, targetKind, resolution, scope, confidence = sym.ID, "symbol", "name_only", "module", minFloat(baseConfidence, 0.85)
+	}
+	return RelationRecord{
+		RecordType:    "relation",
+		FromID:        anchor.ID,
+		ToID:          toID,
+		Type:          relation,
+		Confidence:    confidence,
+		Reason:        typeRelationReason(relation, resolution),
+		RelationScope: scope,
+		Resolution:    resolution,
+		TargetKind:    targetKind,
+		Evidence: []Evidence{{
+			Kind:      "type_declaration",
+			FilePath:  anchor.FilePath,
+			StartLine: anchor.StartLine,
+			EndLine:   anchor.EndLine,
+			Detail:    super,
+		}},
+		WarningCodes: []string{},
+	}
+}
+
+func firstTypeLikeNamed(records []SymbolRecord, name string) (SymbolRecord, bool) {
+	for _, symbol := range records {
+		if symbol.Name == name && typeLikeKind(symbol.Kind) {
+			return symbol, true
+		}
+	}
+	return SymbolRecord{}, false
+}
+
+func typeRelationReason(relation, resolution string) string {
+	switch resolution {
+	case "exact":
+		return relation + " resolved to local type declaration"
+	case "name_only":
+		return relation + " matched a type by name"
+	default:
+		return relation + " references an external type"
+	}
+}
+
+func minFloat(a, b float64) float64 {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func externalRecords(relations []RelationRecord, files []FileRecord, recordsByFile map[string][]SymbolRecord) []ExternalRecord {

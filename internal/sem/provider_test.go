@@ -90,6 +90,75 @@ def check_token(token):
 	}
 }
 
+func TestBuildProviderSnapshotEmitsTypeRelations(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "Animals.java", `package zoo;
+
+interface Named {}
+
+class Animal implements Named {}
+
+public class Dog extends Animal implements Named {}
+`)
+	// C# uses ':' for both base class and interfaces; the I-prefix heuristic
+	// distinguishes them, and an unknown supertype falls back to external.
+	writeFile(t, repo, "Shapes.cs", `namespace S {
+    interface IShape {}
+    class Circle : Base, IShape {}
+}
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	seen := map[string]RelationRecord{}
+	for _, r := range snapshot.Relations {
+		if r.Type != "EXTENDS" && r.Type != "IMPLEMENTS" {
+			continue
+		}
+		key := r.Type + " " + lastSegment(r.FromID) + "->" + lastSegment(r.ToID) + " " + r.Resolution
+		seen[key] = r
+	}
+	keys := func() []string {
+		out := make([]string, 0, len(seen))
+		for k := range seen {
+			out = append(out, k)
+		}
+		return out
+	}
+
+	// Java: Dog extends Animal (local), Dog implements Named (local), Animal
+	// implements Named (local).
+	for _, want := range []string{
+		"EXTENDS Dog->Animal exact",
+		"IMPLEMENTS Dog->Named exact",
+		"IMPLEMENTS Animal->Named exact",
+	} {
+		if _, ok := seen[want]; !ok {
+			t.Fatalf("missing %q in %v", want, keys())
+		}
+	}
+
+	// C#: Circle implements IShape (I-prefix heuristic), Circle extends Base
+	// (unknown -> external endpoint).
+	if _, ok := seen["IMPLEMENTS Circle->IShape exact"]; !ok {
+		t.Fatalf("C# IShape not classified as IMPLEMENTS: %v", keys())
+	}
+	ext, ok := seen["EXTENDS Circle->Base name_only"]
+	if !ok || ext.TargetKind != "external" {
+		t.Fatalf("C# unknown base should be external EXTENDS: %v", keys())
+	}
+}
+
+func lastSegment(id string) string {
+	if i := strings.LastIndex(id, ":"); i >= 0 {
+		return id[i+1:]
+	}
+	return id
+}
+
 func TestBuildRelationsDoesNotCreditContainerAsCaller(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "auth.py", `class AuthService:
