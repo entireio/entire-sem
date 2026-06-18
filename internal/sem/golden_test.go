@@ -2,12 +2,73 @@ package sem
 
 import (
 	"bytes"
+	"encoding/json"
 	"flag"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// TestStreamSnapshotOrderIsDeterministic confirms that streaming a fixed input
+// twice produces a byte-identical record sequence — file, symbol, and relation
+// order are all stable. It stresses the orderings that derive from Go maps
+// (a caller invoking several functions; a subclass overriding several methods).
+func TestStreamSnapshotOrderIsDeterministic(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "calls.go", `package p
+
+func driver() {
+	alpha()
+	bravo()
+	charlie()
+	delta()
+}
+
+func alpha()   {}
+func bravo()   {}
+func charlie() {}
+func delta()   {}
+`)
+	writeFile(t, repo, "Animals.java", `class Animal {
+	String describe() { return "animal"; }
+	String sound() { return "?"; }
+	String legs() { return "4"; }
+}
+
+class Dog extends Animal {
+	String describe() { return "dog"; }
+	String sound() { return "woof"; }
+	String legs() { return "4"; }
+}
+`)
+
+	capture := func() string {
+		var buf bytes.Buffer
+		err := StreamSnapshot(t.Context(), repo, "v", ProviderSnapshotOptions{Worktree: true}, func(rec any) error {
+			data, marshalErr := json.Marshal(rec)
+			if marshalErr != nil {
+				return marshalErr
+			}
+			buf.Write(data)
+			buf.WriteByte('\n')
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return buf.String()
+	}
+
+	first, second := capture(), capture()
+	if first != second {
+		t.Fatalf("stream output is not deterministic across runs")
+	}
+	// Sanity: the fixture actually produced the relation kinds we want stable.
+	if !strings.Contains(first, `"type":"CALLS"`) || !strings.Contains(first, `"type":"OVERRIDES"`) {
+		t.Fatalf("fixture did not exercise CALLS/OVERRIDES ordering")
+	}
+}
 
 // TestStreamSnapshotStreamsIncrementally proves the streaming contract: a lean
 // header is emitted first (before parsing finishes), file and symbol records are

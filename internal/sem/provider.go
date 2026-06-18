@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"io/fs"
 	"os"
@@ -613,7 +614,12 @@ func StreamSnapshot(ctx context.Context, repo, providerVersion string, options P
 
 	// Phase 2: resolve relations from indexes, re-reading content per file.
 	symbolsByID, filesByID := recordIndexes(files, recordsByFile)
-	seenRelation := map[string]bool{}
+	// Relation dedup uses compact 64-bit hashed keys rather than the full
+	// from+to+type string, so the set's memory is ~one machine word per unique
+	// relation instead of a ~100-byte key. The set is bounded by the unique
+	// relation count (== the relations reported in the summary). FNV-1a/64
+	// collisions across realistic relation counts are negligible.
+	seenRelation := map[uint64]struct{}{}
 	externalsByID := map[string]ExternalRecord{}
 	relationsByType := map[string]int{}
 	relationCount := 0
@@ -634,11 +640,11 @@ func StreamSnapshot(ctx context.Context, repo, providerVersion string, options P
 		if !spec.includeEvidence {
 			r.Evidence = nil
 		}
-		dedupKey := r.FromID + "\x00" + r.ToID + "\x00" + r.Type
-		if seenRelation[dedupKey] {
+		dedupKey := relationDedupKey(r)
+		if _, seen := seenRelation[dedupKey]; seen {
 			return
 		}
-		seenRelation[dedupKey] = true
+		seenRelation[dedupKey] = struct{}{}
 		for _, id := range []string{r.FromID, r.ToID} {
 			if strings.HasPrefix(id, "external:") {
 				mergeExternalRecord(externalsByID, externalRecordFor(r, id, symbolsByID, filesByID))
@@ -685,6 +691,19 @@ func StreamSnapshot(ctx context.Context, repo, providerVersion string, options P
 		},
 		Completeness: CompletenessReport{Languages: completenessLangs, Relations: relationsByType},
 	})
+}
+
+// relationDedupKey hashes a relation's identity (from, to, type) to a compact
+// 64-bit key for the streaming dedup set, keeping that set's memory small on
+// large repositories.
+func relationDedupKey(r RelationRecord) uint64 {
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(r.FromID))
+	_, _ = h.Write([]byte{0})
+	_, _ = h.Write([]byte(r.ToID))
+	_, _ = h.Write([]byte{0})
+	_, _ = h.Write([]byte(r.Type))
+	return h.Sum64()
 }
 
 // SnapshotSummary is the trailing record of a streamed snapshot. It carries the
@@ -1020,7 +1039,10 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 	methodsByContainer := map[string]map[string]SymbolRecord{}
 	fieldsByContainer := map[string]map[string]SymbolRecord{}
 	var inheritanceEdges []RelationRecord // captured for OVERRIDES derivation
-	for _, records := range recordsByFile {
+	// Iterate files in their (stable) slice order, not the recordsByFile map, so
+	// structural relations stream deterministically.
+	for _, file := range files {
+		records := recordsByFile[file.Path]
 		for _, symbol := range records {
 			emit(RelationRecord{
 				RecordType:    "relation",
@@ -1156,7 +1178,7 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 		importsByName := importedNamesFor(file.Path, content)
 		for _, from := range recordsByFile[file.Path] {
 			block := symbolBlockFromLines(lines, from)
-			for name := range callLikeIdentifiers(block) {
+			for _, name := range sortedKeysOf(callLikeIdentifiers(block)) {
 				if name == from.Name {
 					continue
 				}
@@ -1768,7 +1790,8 @@ func overrideRelations(relations []RelationRecord, methodsByContainer map[string
 		if len(subMethods) == 0 || len(superMethods) == 0 {
 			continue
 		}
-		for name, subMethod := range subMethods {
+		for _, name := range sortedKeysOf(subMethods) {
+			subMethod := subMethods[name]
 			superMethod, ok := superMethods[name]
 			if !ok || superMethod.ID == subMethod.ID {
 				continue
@@ -2626,6 +2649,17 @@ func contentHash(content []byte) string {
 func sortedKeys(set map[string]struct{}) []string {
 	out := make([]string, 0, len(set))
 	for key := range set {
+		out = append(out, key)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// sortedKeysOf returns a map's string keys in sorted order, so iterating them
+// yields a deterministic stream order regardless of Go's randomized map order.
+func sortedKeysOf[V any](m map[string]V) []string {
+	out := make([]string, 0, len(m))
+	for key := range m {
 		out = append(out, key)
 	}
 	sort.Strings(out)
