@@ -25,8 +25,12 @@ var updateGolden = flag.Bool("update", false, "regenerate golden NDJSON baseline
 // Adding a fixture is just dropping a directory under testdata/fixtures, listing
 // its name here, and running the test with -update to create the baseline.
 var goldenFixtures = []string{
+	"csharp-basic",
 	"go-basic",
+	"java-basic",
+	"php-basic",
 	"python-basic",
+	"rust-basic",
 	"typescript-basic",
 }
 

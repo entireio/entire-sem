@@ -38,8 +38,12 @@ review.
 | `go-basic`          | Go         | type + method, function, imports, call, HTTP route     |
 | `python-basic`      | Python     | class + methods, function, import, constructor/method calls |
 | `typescript-basic`  | TypeScript | exported functions, import, intra-file call, route literal |
+| `java-basic`        | Java       | class + methods, import, intra-class call              |
+| `rust-basic`        | Rust       | struct + impl method, functions, use import            |
+| `csharp-basic`      | C#         | namespace + class + methods, using import, intra-class call |
+| `php-basic`         | PHP        | namespace + class + methods, use import, `$this->` call |
 
-Priority-1 languages still pending fixtures (per WP9): Java, Rust, C#, PHP.
+All seven Priority-1 languages (per WP9) now have committed baselines.
 Boundary/IaC fixtures (Terraform, Kubernetes, GitHub Actions) follow in WP6/WP7.
 
 ## Relation Coverage Today
@@ -89,6 +93,11 @@ False negatives:
   (WP3/WP4.)
 - **No OO/type relations.** `IMPLEMENTS`, `EXTENDS`, `OVERRIDES`, `USES_TYPE`,
   `PARAM_TYPE`, `RETURNS_TYPE` are not emitted. (WP5.)
+- **Rust calls are not captured (`rust-basic`).** `token.validate()`, the
+  `Token { .. }` literal, and `HashMap::new()` produce no `CALLS` edges, so the
+  fixture emits zero calls today. Java/C#/PHP do capture intra-class calls, but
+  via the same name-based heuristic (the class is sometimes credited as the
+  caller, as in Python). (WP4: per-language call extraction.)
 
 ## Header Stats
 
