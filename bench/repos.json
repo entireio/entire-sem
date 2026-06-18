@@ -92,7 +92,7 @@
       "gradle/gradle",
       "ratpack/ratpack",
       "grails/grails-core",
-      "spring-projects/spring-boot",
+      "spinnaker/orca",
       "micronaut-projects/micronaut-core",
       "nextflow-io/nextflow",
       "jenkinsci/pipeline-examples"
