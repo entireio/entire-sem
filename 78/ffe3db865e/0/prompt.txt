@@ -1,0 +1,2 @@
+Create a benchmark that clones 10
+popular repositories per language from GitHub and runs the semantic analyses on it. Make sure that those repositories don’t land in our own commits. Make the benchmark repeatable, so we can analyze performance and quality over future work phases.
