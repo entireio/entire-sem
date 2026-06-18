@@ -1,0 +1,29 @@
+{
+  "_comment": "Fast tier: a curated subset of repos.json (3 small/medium repos per language, no mega-repos) for quick per-phase runs. Every entry is also in repos.json, so it is pinned by the shared repos.lock.json and reuses the same clone cache. Run: sem-bench -manifest bench/repos.fast.json",
+  "languages": {
+    "Bash": ["rbenv/rbenv", "tj/n", "pyenv/pyenv"],
+    "C": ["wg/wrk", "redis/redis", "curl/curl"],
+    "C#": ["JamesNK/Newtonsoft.Json", "Radarr/Radarr", "bitwarden/server"],
+    "C++": ["nlohmann/json", "fmtlib/fmt", "gabime/spdlog"],
+    "CUE": ["cue-lang/cue", "holos-run/holos", "cue-labs/cue-by-example"],
+    "Elixir": ["elixir-ecto/ecto", "sorentwo/oban", "thoughtbot/ex_machina"],
+    "Go": ["gin-gonic/gin", "spf13/cobra", "fatedier/frp"],
+    "Groovy": ["spockframework/spock", "ratpack/ratpack", "jenkinsci/pipeline-examples"],
+    "HCL": ["terraform-aws-modules/terraform-aws-vpc", "terraform-aws-modules/terraform-aws-security-group", "terraform-aws-modules/terraform-aws-rds"],
+    "Java": ["google/gson", "square/retrofit", "square/okhttp"],
+    "JavaScript": ["expressjs/express", "axios/axios", "lodash/lodash"],
+    "Kotlin": ["mockk/mockk", "InsertKoinIO/koin", "square/leakcanary"],
+    "Lua": ["nvim-lua/kickstart.nvim", "nvim-lualine/lualine.nvim", "hrsh7th/nvim-cmp"],
+    "OCaml": ["ocaml/dune", "ocsigen/js_of_ocaml", "mirage/mirage"],
+    "PHP": ["guzzle/guzzle", "nikic/PHP-Parser", "Seldaek/monolog"],
+    "Protocol Buffers": ["open-telemetry/opentelemetry-proto", "temporalio/api", "grpc-ecosystem/grpc-gateway"],
+    "Python": ["pallets/flask", "psf/requests", "psf/black"],
+    "Ruby": ["sinatra/sinatra", "Shopify/liquid", "jekyll/jekyll"],
+    "Rust": ["BurntSushi/ripgrep", "serde-rs/serde", "clap-rs/clap"],
+    "SQL": ["lerocha/chinook-database", "datacharmer/test_db", "tobymao/sqlglot"],
+    "Scala": ["typelevel/cats", "sbt/sbt", "gatling/gatling"],
+    "Swift": ["SwiftyJSON/SwiftyJSON", "SnapKit/SnapKit", "Alamofire/Alamofire"],
+    "TypeScript": ["trpc/trpc", "vitejs/vite", "nestjs/nest"],
+    "YAML": ["kubernetes-sigs/kustomize", "argoproj/argo-cd", "github/super-linter"]
+  }
+}

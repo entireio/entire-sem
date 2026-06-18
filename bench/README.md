@@ -17,27 +17,43 @@ work phase to track regressions and quality gains.
   pins each to an exact commit. Commit the lock file so every phase analyzes the
   same source and the numbers are comparable.
 
+## Tiers
+
+| Tier | Manifest               | Repos               | When                                          |
+| ---- | ---------------------- | ------------------- | --------------------------------------------- |
+| Fast | `bench/repos.fast.json`| 3/language (72)     | Routine per-phase tracking; runs in minutes.  |
+| Full | `bench/repos.json`     | 10/language (240)   | Occasional deep runs; includes mega-repos.    |
+
+The fast tier is a curated subset of the full manifest (no mega-repos like
+linux/tensorflow/vscode), so its repos share the same `repos.lock.json` pins and
+clone cache — no separate lock needed. The full tier is comprehensive but gated
+by a handful of giant repositories and can take 1.5-3 hours.
+
 ## Layout
 
-| Path                     | Purpose                                              |
-| ------------------------ | ---------------------------------------------------- |
-| `bench/repos.json`       | Manifest: 10 popular repos per language (committed). |
-| `bench/repos.lock.json`  | Commit pins for reproducibility (committed).         |
-| `bench/.cache/`          | Cloned repositories (gitignored).                    |
-| `bench/results/`         | JSON reports, one per run (committable for trends).  |
-| `internal/bench`         | Measurement core (unit-tested, no network).          |
-| `cmd/sem-bench`          | CLI driver (clone + measure + report).               |
+| Path                     | Purpose                                                |
+| ------------------------ | ------------------------------------------------------ |
+| `bench/repos.json`       | Full manifest: 10 popular repos per language.          |
+| `bench/repos.fast.json`  | Fast manifest: 3 repos per language (subset of full).  |
+| `bench/repos.lock.json`  | Commit pins for reproducibility (covers both tiers).   |
+| `bench/.cache/`          | Cloned repositories (gitignored).                      |
+| `bench/results/`         | JSON reports, one per run (committable for trends).    |
+| `internal/bench`         | Measurement core (unit-tested, no network).            |
+| `cmd/sem-bench`          | CLI driver (clone + measure + report).                 |
 
 ## Usage
 
 ```sh
-# 1. Pin commits once (writes bench/repos.lock.json) — commit the result.
-go run ./cmd/sem-bench -update-lock
+# Fast tier — routine per-phase run (minutes):
+go run ./cmd/sem-bench -manifest bench/repos.fast.json
 
-# 2. Full run using the pinned commits.
+# Full tier — comprehensive run (slow; includes mega-repos):
 go run ./cmd/sem-bench
 
-# Subset while iterating (fast):
+# Pin commits once (writes bench/repos.lock.json) — commit the result.
+go run ./cmd/sem-bench -update-lock
+
+# Subset while iterating:
 go run ./cmd/sem-bench -languages Go,Rust -limit 3
 
 # Offline: measure repos already in the cache, no cloning.
@@ -46,6 +62,9 @@ go run ./cmd/sem-bench -skip-clone
 # Print the report to stdout instead of bench/results/.
 go run ./cmd/sem-bench -out -
 ```
+
+Both tiers share `bench/repos.lock.json`. After changing the manifests, refresh
+pins with `-update-lock` (it records a SHA for every repo across both tiers).
 
 Flags: `-manifest`, `-cache`, `-out`, `-lock`, `-languages`, `-limit`, `-jobs`,
 `-depth`, `-skip-clone`, `-update-lock`, `-provider-version`.
