@@ -214,6 +214,14 @@ report enough aggregate stats to classify downstream reports as `ok`,
 - supported languages
 - parser versions
 - supported relation types
+- relation support per language (`relation_support_by_language`): the relation
+  types extractable for each language. DEFINES, CONTAINS, and CALLS are
+  structural for every language; IMPORTS is listed only where a language-specific
+  import scanner exists.
+- heuristic relation types (`heuristic_relation_types`): relations such as
+  `HANDLES_ROUTE` and `HANDLES_TOOL` that are detected by file-path and body
+  patterns rather than per-language grammar, so they are not attributed to a
+  single language.
 - unsupported-but-detected language hints when available
 - whether optional local-only features are available
 - whether any feature would require network access

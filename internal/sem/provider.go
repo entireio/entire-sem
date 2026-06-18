@@ -183,15 +183,17 @@ type Evidence struct {
 }
 
 type CapabilityReport struct {
-	SchemaVersion                   string            `json:"schema_version"`
-	Provider                        string            `json:"provider"`
-	SupportedFileExtensions         []string          `json:"supported_file_extensions"`
-	SupportedLanguages              []string          `json:"supported_languages"`
-	ParserVersions                  map[string]string `json:"parser_versions"`
-	SupportedRelationTypes          []string          `json:"supported_relation_types"`
-	UnsupportedButDetectedLanguages []string          `json:"unsupported_but_detected_language_hints"`
-	OptionalLocalOnlyFeatures       map[string]bool   `json:"optional_local_only_features"`
-	FeaturesRequiringNetworkAccess  map[string]bool   `json:"features_requiring_network_access"`
+	SchemaVersion                   string              `json:"schema_version"`
+	Provider                        string              `json:"provider"`
+	SupportedFileExtensions         []string            `json:"supported_file_extensions"`
+	SupportedLanguages              []string            `json:"supported_languages"`
+	ParserVersions                  map[string]string   `json:"parser_versions"`
+	SupportedRelationTypes          []string            `json:"supported_relation_types"`
+	RelationSupportByLanguage       map[string][]string `json:"relation_support_by_language"`
+	HeuristicRelationTypes          []string            `json:"heuristic_relation_types"`
+	UnsupportedButDetectedLanguages []string            `json:"unsupported_but_detected_language_hints"`
+	OptionalLocalOnlyFeatures       map[string]bool     `json:"optional_local_only_features"`
+	FeaturesRequiringNetworkAccess  map[string]bool     `json:"features_requiring_network_access"`
 }
 
 type ProviderSnapshot struct {
@@ -231,6 +233,8 @@ func Capabilities() CapabilityReport {
 		UnsupportedButDetectedLanguages: []string{},
 		ParserVersions:                  parserVersions(),
 		SupportedRelationTypes:          append([]string(nil), relationTypes...),
+		RelationSupportByLanguage:       relationSupportByLanguage(),
+		HeuristicRelationTypes:          []string{"HANDLES_ROUTE", "HANDLES_TOOL"},
 		OptionalLocalOnlyFeatures: map[string]bool{
 			"stable_symbol_ids": true,
 			"semantic_diff":     true,
@@ -245,6 +249,35 @@ func Capabilities() CapabilityReport {
 			"network_discovery": false,
 		},
 	}
+}
+
+// relationSupportByLanguage reports which relation types the provider can
+// extract for each supported language. DEFINES, CONTAINS, and CALLS are
+// produced structurally from parsed entities for every language; IMPORTS is
+// added only where importsFor has a language-specific scanner. HANDLES_ROUTE
+// and HANDLES_TOOL are reported separately in HeuristicRelationTypes because
+// they are detected by file-path and body patterns rather than per-language
+// grammar, so they are not attributed to individual languages here.
+func relationSupportByLanguage() map[string][]string {
+	importCapable := map[string]bool{}
+	for ext, spec := range treeSitterLanguages {
+		if importCapableExtension(ext) {
+			importCapable[spec.language] = true
+		}
+	}
+	support := map[string][]string{}
+	for _, spec := range treeSitterLanguages {
+		if _, done := support[spec.language]; done {
+			continue
+		}
+		types := []string{"CALLS", "CONTAINS", "DEFINES"}
+		if importCapable[spec.language] {
+			types = append(types, "IMPORTS")
+		}
+		sort.Strings(types)
+		support[spec.language] = types
+	}
+	return support
 }
 
 func BuildProviderSnapshot(ctx context.Context, repo, providerVersion string) (ProviderSnapshot, error) {
@@ -990,6 +1023,25 @@ func firstError(errs ...error) error {
 		}
 	}
 	return nil
+}
+
+// importCapableExtension reports whether importsFor has a dedicated import
+// scanner for the extension. It must mirror the non-nil cases in importsFor;
+// TestCapabilitiesReportRelationSupportPerLanguage guards key cases against
+// drift. Extensions that fall through importsFor's default (or explicitly
+// return nil, like .hcl/.tf/.tfvars/.sql/.yaml) are not import-capable.
+func importCapableExtension(ext string) bool {
+	switch ext {
+	case ".bash", ".sh", ".zsh",
+		".c", ".h", ".cc", ".cpp", ".cxx", ".hh", ".hpp", ".hxx",
+		".cs", ".cue", ".ex", ".exs", ".go", ".gradle", ".groovy",
+		".java", ".kt", ".kts", ".scala", ".sc", ".sbt", ".py",
+		".js", ".jsx", ".ts", ".tsx", ".lua", ".ml", ".mli", ".php",
+		".proto", ".rb", ".rs", ".swift":
+		return true
+	default:
+		return false
+	}
 }
 
 func importsFor(path, content string) []string {

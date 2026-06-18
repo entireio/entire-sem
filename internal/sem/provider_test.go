@@ -260,6 +260,56 @@ func TestCapabilitiesAdvertiseExpandedLanguageSet(t *testing.T) {
 	}
 }
 
+func TestCapabilitiesReportRelationSupportPerLanguage(t *testing.T) {
+	caps := Capabilities()
+
+	// Every supported language reports the structural relations and nothing
+	// outside the documented vocabulary.
+	if len(caps.RelationSupportByLanguage) != len(caps.SupportedLanguages) {
+		t.Fatalf("relation matrix covers %d languages, want %d", len(caps.RelationSupportByLanguage), len(caps.SupportedLanguages))
+	}
+	for language, types := range caps.RelationSupportByLanguage {
+		for _, base := range []string{"DEFINES", "CONTAINS", "CALLS"} {
+			if !contains(types, base) {
+				t.Fatalf("language %q missing structural relation %q: %#v", language, base, types)
+			}
+		}
+		for _, relation := range types {
+			if !contains(relationTypes, relation) {
+				t.Fatalf("language %q reports unknown relation %q", language, relation)
+			}
+		}
+	}
+
+	// IMPORTS is reported exactly where importsFor has a scanner.
+	importsFound := func(language string) bool {
+		return contains(caps.RelationSupportByLanguage[language], "IMPORTS")
+	}
+	for _, language := range []string{"Go", "Python", "TypeScript", "Java", "Rust", "C#", "PHP"} {
+		if !importsFound(language) {
+			t.Fatalf("language %q should support IMPORTS: %#v", language, caps.RelationSupportByLanguage[language])
+		}
+	}
+	for _, language := range []string{"HCL", "SQL", "YAML"} {
+		if importsFound(language) {
+			t.Fatalf("language %q should not support IMPORTS: %#v", language, caps.RelationSupportByLanguage[language])
+		}
+	}
+
+	// Heuristic, path/pattern-driven relations are reported separately and not
+	// attributed to individual languages.
+	for _, relation := range []string{"HANDLES_ROUTE", "HANDLES_TOOL"} {
+		if !contains(caps.HeuristicRelationTypes, relation) {
+			t.Fatalf("heuristic relation %q not reported: %#v", relation, caps.HeuristicRelationTypes)
+		}
+		for language, types := range caps.RelationSupportByLanguage {
+			if contains(types, relation) {
+				t.Fatalf("heuristic relation %q should not be attributed to %q", relation, language)
+			}
+		}
+	}
+}
+
 func TestWriteSnapshotNDJSON(t *testing.T) {
 	snapshot := ProviderSnapshot{
 		Header: SnapshotHeader{

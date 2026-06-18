@@ -48,6 +48,12 @@ The provider emits six relation types: `DEFINES`, `CONTAINS`, `IMPORTS`,
 `CALLS`, `HANDLES_ROUTE`, `HANDLES_TOOL`. Confidence bands follow the v2-plan
 schema section (`0.90-1.00 exact`, `0.70-0.89 strong`, `0.40-0.69 heuristic`).
 
+`capabilities --json` reports per-language relation support
+(`relation_support_by_language`): DEFINES/CONTAINS/CALLS for every language plus
+IMPORTS where a language-specific scanner exists (HCL, SQL, and YAML have none).
+HANDLES_ROUTE and HANDLES_TOOL are reported in `heuristic_relation_types`
+because they are path/pattern-driven, not per-language.
+
 Observed confidences:
 
 - `DEFINES`, `CONTAINS`: `1.0` (structural, exact).
