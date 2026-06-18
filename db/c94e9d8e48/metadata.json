@@ -1,0 +1,29 @@
+{
+  "cli_version": "0.6.3-nightly.202605190723.fd212937",
+  "checkpoint_id": "dbc94e9d8e48",
+  "strategy": "manual-commit",
+  "branch": "v2-foundation",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "docs/baseline-report.md",
+    "docs/semantic_provider_requirements.md",
+    "internal/sem/golden_test.go",
+    "internal/sem/provider.go",
+    "internal/sem/provider_test.go"
+  ],
+  "sessions": [
+    {
+      "metadata": "/db/c94e9d8e48/0/metadata.json",
+      "transcript": "/db/c94e9d8e48/0/full.jsonl",
+      "content_hash": "/db/c94e9d8e48/0/content_hash.txt",
+      "prompt": "/db/c94e9d8e48/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 15321,
+    "cache_creation_tokens": 934984,
+    "cache_read_tokens": 46020201,
+    "output_tokens": 237732,
+    "api_call_count": 254
+  }
+}
