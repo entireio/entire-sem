@@ -35,19 +35,22 @@ var relationTypes = []string{
 	"CALLS",
 	"EXTENDS",
 	"IMPLEMENTS",
+	"OVERRIDES",
 	"HANDLES_ROUTE",
 	"HANDLES_TOOL",
 }
 
 // ooRelationSupport lists the OO/type relation types the provider can extract
-// for each language, used by the capabilities matrix.
+// for each language, used by the capabilities matrix. OVERRIDES is derived from
+// a resolved supertype's methods, so it is advertised only for class-based
+// languages with clear method containers.
 var ooRelationSupport = map[string][]string{
-	"Java":       {"EXTENDS", "IMPLEMENTS"},
-	"TypeScript": {"EXTENDS", "IMPLEMENTS"},
+	"Java":       {"EXTENDS", "IMPLEMENTS", "OVERRIDES"},
+	"TypeScript": {"EXTENDS", "IMPLEMENTS", "OVERRIDES"},
 	"JavaScript": {"EXTENDS"},
-	"C#":         {"EXTENDS", "IMPLEMENTS"},
-	"PHP":        {"EXTENDS", "IMPLEMENTS"},
-	"Python":     {"EXTENDS"},
+	"C#":         {"EXTENDS", "IMPLEMENTS", "OVERRIDES"},
+	"PHP":        {"EXTENDS", "IMPLEMENTS", "OVERRIDES"},
+	"Python":     {"EXTENDS", "OVERRIDES"},
 	"Rust":       {"EXTENDS", "IMPLEMENTS"},
 }
 
@@ -685,6 +688,7 @@ func buildRelations(repoKey string, files []FileRecord, recordsByFile map[string
 	symbolsByShortName := map[string][]SymbolRecord{}
 	symbolsByFile := map[string][]SymbolRecord{}
 	childNamesByContainer := map[string]map[string]bool{}
+	methodsByContainer := map[string]map[string]SymbolRecord{}
 	for _, records := range recordsByFile {
 		for _, symbol := range records {
 			relations = append(relations, RelationRecord{
@@ -741,6 +745,12 @@ func buildRelations(repoKey string, files []FileRecord, recordsByFile map[string
 					childNamesByContainer[symbol.ContainerID] = map[string]bool{}
 				}
 				childNamesByContainer[symbol.ContainerID][symbol.Name] = true
+				if symbol.Kind == "method" {
+					if methodsByContainer[symbol.ContainerID] == nil {
+						methodsByContainer[symbol.ContainerID] = map[string]SymbolRecord{}
+					}
+					methodsByContainer[symbol.ContainerID][symbol.Name] = symbol
+				}
 			}
 		}
 	}
@@ -868,6 +878,8 @@ func buildRelations(repoKey string, files []FileRecord, recordsByFile map[string
 		relations = append(relations, typeRelationsForFile(repoKey, file, content, recordsByFile[file.Path], symbolsByFile[file.Path], symbolsByShortName)...)
 	}
 
+	relations = append(relations, overrideRelations(relations, methodsByContainer)...)
+
 	sort.Slice(relations, func(i, j int) bool {
 		left := relations[i].Type + relations[i].FromID + relations[i].ToID
 		right := relations[j].Type + relations[j].FromID + relations[j].ToID
@@ -932,6 +944,54 @@ func buildTypeRelation(repoKey string, anchor SymbolRecord, super, relation stri
 		}},
 		WarningCodes: []string{},
 	}
+}
+
+// overrideRelations derives OVERRIDES edges from resolved EXTENDS/IMPLEMENTS
+// relations: a method on the subtype that shares a name with a method on the
+// resolved supertype overrides it. It only fires when both the supertype and
+// its methods are known local symbols, so external base classes never produce
+// guessed overrides.
+func overrideRelations(relations []RelationRecord, methodsByContainer map[string]map[string]SymbolRecord) []RelationRecord {
+	var overrides []RelationRecord
+	for _, relation := range relations {
+		if relation.Type != "EXTENDS" && relation.Type != "IMPLEMENTS" {
+			continue
+		}
+		if relation.TargetKind != "symbol" {
+			continue
+		}
+		subMethods := methodsByContainer[relation.FromID]
+		superMethods := methodsByContainer[relation.ToID]
+		if len(subMethods) == 0 || len(superMethods) == 0 {
+			continue
+		}
+		for name, subMethod := range subMethods {
+			superMethod, ok := superMethods[name]
+			if !ok || superMethod.ID == subMethod.ID {
+				continue
+			}
+			overrides = append(overrides, RelationRecord{
+				RecordType:    "relation",
+				FromID:        subMethod.ID,
+				ToID:          superMethod.ID,
+				Type:          "OVERRIDES",
+				Confidence:    0.85,
+				Reason:        "method shares a name with a method on a resolved supertype",
+				RelationScope: "module",
+				Resolution:    "exact",
+				TargetKind:    "symbol",
+				Evidence: []Evidence{{
+					Kind:      "method_declaration",
+					FilePath:  subMethod.FilePath,
+					StartLine: subMethod.StartLine,
+					EndLine:   subMethod.EndLine,
+					Detail:    name,
+				}},
+				WarningCodes: []string{},
+			})
+		}
+	}
+	return overrides
 }
 
 func firstTypeLikeNamed(records []SymbolRecord, name string) (SymbolRecord, bool) {

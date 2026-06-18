@@ -198,6 +198,9 @@ Relation vocabulary:
 - `CALLS`
 - `EXTENDS` — class extends class, interface extends interface, Rust supertrait.
 - `IMPLEMENTS` — class implements interface, Rust `impl Trait for Type`.
+- `OVERRIDES` — a method that redefines a same-named method on a resolved
+  supertype (derived from EXTENDS/IMPLEMENTS; only when both the supertype and
+  its methods are known local symbols).
 - `HANDLES_ROUTE`
 - `HANDLES_TOOL`
 
@@ -208,7 +211,7 @@ otherwise. C# cannot syntactically separate a base class from interfaces, so it
 uses the `I<Upper>` naming heuristic at lower confidence. Per-language support
 is reported in `capabilities` under `relation_support_by_language`.
 
-Relation extraction continues to grow. Still to come: `OVERRIDES`, `USES_TYPE`,
+Relation extraction continues to grow. Still to come: `USES_TYPE`,
 `PARAM_TYPE`/`RETURNS_TYPE`, and data-flow relations such as `ACCESSES`.
 
 ## Warnings And Partial Failures

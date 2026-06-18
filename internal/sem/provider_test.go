@@ -159,6 +159,50 @@ func lastSegment(id string) string {
 	return id
 }
 
+func TestBuildProviderSnapshotEmitsOverrides(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "Shapes.java", `package s;
+
+class Base {
+    public String describe() { return "base"; }
+    public int unique() { return 1; }
+}
+
+public class Circle extends Base {
+    public String describe() { return "circle"; }
+}
+`)
+	// External/unknown supertype: no local methods are known, so no override.
+	writeFile(t, repo, "Ext.java", `package s;
+
+public class Widget extends javax.swing.JComponent {
+    public void paint() {}
+}
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var overrides []RelationRecord
+	for _, r := range snapshot.Relations {
+		if r.Type == "OVERRIDES" {
+			overrides = append(overrides, r)
+		}
+	}
+	if len(overrides) != 1 {
+		t.Fatalf("want exactly 1 override (Circle.describe -> Base.describe), got %d: %#v", len(overrides), overrides)
+	}
+	o := overrides[0]
+	if !strings.HasSuffix(o.FromID, "method:Circle.describe") || !strings.HasSuffix(o.ToID, "method:Base.describe") {
+		t.Fatalf("override edge = %s -> %s", o.FromID, o.ToID)
+	}
+	if o.TargetKind != "symbol" || o.Resolution != "exact" {
+		t.Fatalf("override classification = %#v", o)
+	}
+}
+
 func TestBuildRelationsDoesNotCreditContainerAsCaller(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "auth.py", `class AuthService:

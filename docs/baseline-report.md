@@ -109,9 +109,13 @@ False negatives:
   `target_kind: file`). Non-relative local imports that depend on a manifest
   module root (`go.mod` path, `package.json` name, `tsconfig` paths) are not yet
   resolved and remain external. (WP3 follow-up: manifest readers.)
-- **Partial OO/type relations.** `EXTENDS` and `IMPLEMENTS` are now emitted
-  (Java, TypeScript, JavaScript, C#, PHP, Python, Rust). Still missing:
-  `OVERRIDES`, `USES_TYPE`, `PARAM_TYPE`, `RETURNS_TYPE`. (WP5 follow-up.)
+- **Partial OO/type relations.** `EXTENDS`, `IMPLEMENTS`, and `OVERRIDES` are
+  now emitted (`EXTENDS`/`IMPLEMENTS` for Java, TypeScript, JavaScript, C#, PHP,
+  Python, Rust; `OVERRIDES` for the class-based languages with method symbols).
+  `OVERRIDES` only fires when the supertype resolves locally and its methods are
+  symbolized — so TypeScript interface methods and Rust trait-impl methods do
+  not yet yield overrides. Still missing: `USES_TYPE`, `PARAM_TYPE`,
+  `RETURNS_TYPE`. (WP5 follow-up.)
 - **Abstract classes not always captured.** The TypeScript parser does not emit
   a symbol for `export abstract class Base`, so an `EXTENDS` to it falls back to
   an external type endpoint rather than resolving locally. This is a parser
