@@ -1,0 +1,33 @@
+{
+  "cli_version": "0.6.3-nightly.202605190723.fd212937",
+  "checkpoint_id": "76e0b113a54b",
+  "strategy": "manual-commit",
+  "branch": "v2-foundation",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "docs/baseline-report.md",
+    "internal/sem/golden_test.go",
+    "internal/sem/testdata/fixtures/go-basic.ndjson.golden",
+    "internal/sem/testdata/fixtures/go-basic/auth.go",
+    "internal/sem/testdata/fixtures/go-basic/server.go",
+    "internal/sem/testdata/fixtures/python-basic.ndjson.golden",
+    "internal/sem/testdata/fixtures/python-basic/auth.py",
+    "internal/sem/testdata/fixtures/typescript-basic.ndjson.golden",
+    "internal/sem/testdata/fixtures/typescript-basic/server.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/76/e0b113a54b/0/metadata.json",
+      "transcript": "/76/e0b113a54b/0/full.jsonl",
+      "content_hash": "/76/e0b113a54b/0/content_hash.txt",
+      "prompt": "/76/e0b113a54b/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 3644,
+    "cache_creation_tokens": 122788,
+    "cache_read_tokens": 2399402,
+    "output_tokens": 22441,
+    "api_call_count": 42
+  }
+}

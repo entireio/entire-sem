@@ -1,0 +1,345 @@
+Create a new branch and start the work on the v2-plan in the docs folder.
+
+---
+
+<task-notification>
+<task-id>a92e91fc6ad75ef4a</task-id>
+<tool-use-id>toolu_016jfHmSggRcXeaotVPmVnai</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-thomi-Projects-entire-sem/5632e712-bdd3-4fd5-baac-7af16a8f7258/tasks/a92e91fc6ad75ef4a.output</output-file>
+<status>completed</status>
+<summary>Agent "Map current provider contract" came to rest</summary>
+<note>A task-notification fires each time this agent comes to rest with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>Perfect! Now I have all the information needed. Let me compile the comprehensive summary.
+
+## Semantic Provider Contract Mapping - `entire-sem`
+
+Based on thorough exploration of `/Users/thomi/Projects/entire-sem`, here is the precise current state:
+
+---
+
+### 1. **Schema Version String(s)**
+
+**Current version: `1.1`**
+
+- **Definition**: `/Users/thomi/Projects/entire-sem/internal/sem/provider.go:26`
+  ```go
+  SchemaVersion = "1.1"
+  ```
+  
+- **Comment context** (lines 22-25):
+  &gt; SchemaVersion is bumped to 1.1 for the additive snapshot fields introduced alongside boundary source locations (the `external` flag on external records and the per-symbol source-location fields). The shape is backward compatible for tolerant readers; the bump lets consumers detect the new fields.
+
+- **Where emitted**:
+  - `SnapshotHeader.SchemaVersion` – `/Users/thomi/Projects/entire-sem/internal/sem/provider.go:45`
+  - `CapabilityReport.SchemaVersion` – `/Users/thomi/Projects/entire-sem/internal/sem/provider.go:135`
+  - Populated in `BuildProviderSnapshotWithOptions()` – line 314
+  - Populated in `Capabilities()` – line 176
+
+---
+
+### 2. **CLI Commands**
+
+**All commands defined in**: `/Users/thomi/Projects/entire-sem/internal/cli/root.go:48-81`
+
+| Command | Line | Emits | Format |
+|---------|------|-------|--------|
+| `snapshot` | 61-62 | Full snapshot (header + files + externals + symbols + relations) | NDJSON |
+| `symbols` | 63-64 | Header + symbol records only | NDJSON |
+| `edges` | 65-66 | Header + relation records only | NDJSON |
+| `diff` | 49-50 | Semantic diff between two git refs | JSON (via `Result` struct) |
+| `commit` | 51-52 | Semantic diff for a single commit (base=first parent, head=rev) | JSON |
+| `checkpoint` | 53-54 | Semantic diff for a checkpoint ID | JSON |
+| `analyze` | 55-56 | Alias for `diff` | JSON |
+| `doctor` | 57-58 | Environment, repo, and network posture report | Plain text or JSON |
+| `capabilities` | 59-60 | Provider language/relation/feature support matrix | JSON |
+| `version` | 67-75 | Provider name and version | Plain text or JSON (with `--json` flag) |
+
+**Help text**: `/Users/thomi/Projects/entire-sem/internal/cli/root.go:84-97`
+
+---
+
+### 3. **Relation/Edge Vocabulary**
+
+**Definition location**: `/Users/thomi/Projects/entire-sem/internal/sem/provider.go:31-38`
+
+```go
+var relationTypes = []string{
+	"DEFINES",        // file DEFINES symbol
+	"CONTAINS",       // container symbol CONTAINS nested symbol
+	"IMPORTS",        // file IMPORTS module/package
+	"CALLS",          // function CALLS another function
+	"HANDLES_ROUTE",  // handler HANDLES_ROUTE HTTP path
+	"HANDLES_TOOL",   // function HANDLES_TOOL (AI tool boundary)
+}
+```
+
+**Emitted in**:
+- `buildRelations()` – `/Users/thomi/Projects/entire-sem/internal/sem/provider.go:572-680`
+  - DEFINES: line 582
+  - CONTAINS: line 592
+  - HANDLES_TOOL: line 603
+  - IMPORTS: line 632
+  - CALLS: line 650
+  - HANDLES_ROUTE: line 665
+
+**Boundary relation check** – line 774-780 (only `HANDLES_ROUTE` triggers boundary source locations)
+
+---
+
+### 4. **Provider Record Structs &amp; NDJSON Output Shape**
+
+**Key structs in** `/Users/thomi/Projects/entire-sem/internal/sem/provider.go`:
+
+#### **SnapshotHeader** (lines 44-57)
+| Field | Type | Required | Purpose |
+|-------|------|----------|---------|
+| `schema_version` | string | ✓ | "1.1" |
+| `provider` | string | ✓ | "entire-sem" |
+| `provider_version` | string | ✓ | Build version |
+| `repo_root` | string | ✓ | Absolute path |
+| `repo_key` | string | ✓ | "gh/owner/repo" or "local/..." |
+| `commit` | string | ✓ | HEAD SHA |
+| `tree` | string | ✓ | HEAD^{tree} SHA |
+| `languages` | []string | ✓ | Sorted unique language list |
+| `capabilities` | []string | ✓ | ["ndjson", "stable-symbol-id-v1", "local-only", "partial-failures"] (line 322) |
+| `warnings` | []ProviderWarning | ✓ | Init as empty array if nil (line 308) |
+| `partial_failures` | []PartialFailure | ✓ | Init as empty array if nil (line 311) |
+| `stats` | ProviderStats | ✓ | Aggregates |
+
+#### **ProviderStats** (lines 59-66)
+| Field | Type |
+|-------|------|
+| `files` | int |
+| `parsed_files` | int |
+| `symbols` | int |
+| `relations` | int |
+| `partial_failures` | int |
+| `completeness_level` | string ("ok" \| "degraded" \| "unsafe") |
+
+#### **ProviderWarning** (lines 68-74)
+| Field | Type | When Used |
+|-------|------|-----------|
+| `code` | string | e.g., "W_WORKTREE_SNAPSHOT", "E_NO_GIT_HEAD" |
+| `severity` | string | "warning" or "error" |
+| `file_path` | string (optional) | For file-specific warnings |
+| `effect_on_semantic_completeness` | string | Free-form description |
+| `detail` | string (optional) | Error message or hint |
+
+#### **PartialFailure** (lines 76-82)
+Same structure as `ProviderWarning`. Used for individual file parse failures:
+- `E_UNSUPPORTED_LANGUAGE` (line 249, 272)
+- `E_FILE_READ` (line 260)
+- `E_PARSE_ERROR` (line 281)
+
+#### **FileRecord** (lines 84-91)
+| Field | Type |
+|-------|------|
+| `record_type` | string ("file") |
+| `id` | string (`repoKey:file:path`) |
+| `path` | string |
+| `blob` | string (SHA256 hex of content) |
+| `language` | string (optional) |
+| `bytes` | int |
+
+#### **ExternalRecord** (lines 93-106)
+| Field | Type | Notes |
+|-------|------|-------|
+| `record_type` | string ("external") |
+| `id` | string (`external:kind:value`) |
+| `kind` | string ("import", "route", etc.) |
+| `value` | string |
+| `file_path` | string (optional) | **[Schema 1.1]** Source location when resolved |
+| `start_line` | int (optional) | **[Schema 1.1]** |
+| `end_line` | int (optional) | **[Schema 1.1]** |
+| `signature` | string (optional) | **[Schema 1.1]** |
+| `language` | string (optional) | **[Schema 1.1]** |
+| `external` | bool | **[Schema 1.1]** `true` if purely external, `false` if boundary-sourced |
+| `source_symbol` | string (optional) | **[Schema 1.1]** Qualified name of source |
+| `source_details` | string (optional) | **[Schema 1.1]** Reason/detail from relation |
+
+#### **SymbolRecord** (lines 108-122)
+| Field | Type |
+|-------|------|
+| `record_type` | string ("symbol") |
+| `id` | string (compound stable ID) |
+| `stable_id_version` | string ("compound-v1") |
+| `kind` | string (function, class, method, variable, route, tool, workflow, etc.) |
+| `name` | string (short name) |
+| `qualified_name` | string (fully qualified) |
+| `file_path` | string |
+| `start_line` | int |
+| `end_line` | int |
+| `signature` | string (language-specific signature) |
+| `body_hash` | string (SHA256 hex) |
+| `language` | string |
+| `container_id` | string (optional, parent symbol ID if nested) |
+
+#### **RelationRecord** (lines 124-132)
+| Field | Type | Value Example |
+|-------|------|---|
+| `record_type` | string | "relation" |
+| `from_id` | string | File, symbol, or external ID |
+| `to_id` | string | File, symbol, or external ID |
+| `type` | string | One of the 6 relation types |
+| `confidence` | float64 | 0.68–1.0; confidence bands: 0.90–1.0 exact, 0.70–0.89 strong, 0.40–0.69 heuristic, &lt;0.40 weak |
+| `reason` | string | "symbol parsed from file", "import declaration...", "direct call expression...", etc. |
+| `warning_codes` | []string | Empty array if no warnings; can hold codes like "LOW_CONFIDENCE" |
+
+**Confidence examples from code**:
+- DEFINES: 1.0 (line 583)
+- CONTAINS: 1.0 (line 593)
+- HANDLES_TOOL: 0.85 (line 604)
+- IMPORTS: 0.8 (line 634)
+- CALLS (local): 0.92 (line 531)
+- CALLS (imported): 0.86 (line 548)
+- CALLS (unique global): 0.68 (line 565)
+- HANDLES_ROUTE: 0.7 (line 666)
+
+#### **CapabilityReport** (lines 134-144)
+| Field | Type |
+|-------|------|
+| `schema_version` | string |
+| `provider` | string |
+| `supported_file_extensions` | []string (sorted) |
+| `supported_languages` | []string (sorted) |
+| `parser_versions` | map[string]string |
+| `supported_relation_types` | []string |
+| `unsupported_but_detected_language_hints` | []string |
+| `optional_local_only_features` | map[string]bool |
+| `features_requiring_network_access` | map[string]bool (all false) |
+
+---
+
+### 5. **Schema 1.1 Fields Status**
+
+**Already implemented** (from plan doc lines 52-64):
+- ✅ `external` flag on ExternalRecord (line 103)
+- ✅ `source_symbol` on ExternalRecord (line 104)
+- ✅ `source_details` on ExternalRecord (line 105)
+- ✅ `file_path`, `start_line`, `end_line`, `signature`, `language` on ExternalRecord (lines 98-102)
+- ✅ Backward-compatible with 1.0 consumers
+
+**NOT yet implemented** (from v2-plan.md Schema 1.1 section):
+- ❌ `relation_scope` (file, package, module, workspace, external)
+- ❌ `resolution` (exact, import_resolved, type_inferred, name_only, pattern, runtime_trace, unresolved)
+- ❌ `evidence` (array of {kind, file_path, start_line, end_line, detail})
+- ❌ `target_kind` on relations (symbol, file, external, route, resource, channel)
+- ❌ `schema_features` in header
+- ❌ `language_versions` in header
+- ❌ Per-language/per-relation-type completeness breakdown in header
+- ❌ `benchmark_profile` in header
+
+---
+
+### 6. **Capabilities Command Output**
+
+**Implementation**: `/Users/thomi/Projects/entire-sem/internal/sem/provider.go:161-199`
+**Called via**: `/Users/thomi/Projects/entire-sem/internal/cli/root.go:170-175`
+
+Currently reports:
+- File extensions and languages from `treeSitterLanguages` map
+- Parser versions: `{"go-tree-sitter": "github.com/smacker/go-tree-sitter"}`
+- Supported relation types: all 6 current types
+- Optional local-only features: `stable_symbol_ids`, `semantic_diff`, `ndjson_snapshot`
+- Network access required: all false (Phase 1 constraint)
+
+**Does NOT yet report**:
+- Per-language relation type support (planned for Phase B)
+- Specific relation confidence bands per type
+
+---
+
+### 7. **Test Structure**
+
+**No dedicated testdata/fixtures directory yet** (WP1 baseline audit not started).
+
+**Tests use inline repo setup** via `writeFile()` helper in test functions.
+
+**Test files**:
+- `/Users/thomi/Projects/entire-sem/internal/sem/provider_test.go` – 930 lines, 23 test functions
+- `/Users/thomi/Projects/entire-sem/internal/sem/parser_test.go` – ~11KB
+- `/Users/thomi/Projects/entire-sem/internal/sem/analyze_test.go` – ~6.4KB
+- `/Users/thomi/Projects/entire-sem/internal/sem/parser_postgres_regression_test.go` – ~4.1KB
+- `/Users/thomi/Projects/entire-sem/internal/sem/text_test.go` – ~1.7KB
+
+**Test structure** (provider_test.go):
+- **Line 13**: `TestBuildProviderSnapshotEmitsContractRecords()` – validates schema 1.1, all 6 relation types, boundary symbols
+- **Line 93**: `TestBuildProviderSnapshotAddsBoundarySourceLocations()` – validates external record source fields
+- **Line 143**: `TestCapabilitiesAdvertiseExpandedLanguageSet()` – language support check
+- **Line 206**: `TestWriteSnapshotNDJSON()` – output format validation
+- **Line 243**: `TestBuildProviderSnapshotReportsParseErrors()` – partial failure handling
+- **Line 276**: `TestBuildRelationsUsesSymbolBlockIdentifierLookup()` – call resolution accuracy
+- **Line 398**: `TestEntitySymbolsDisambiguatesDuplicateNames()` – duplicate handling
+- **Line 435**: `TestBuildProviderSnapshotReadsAdvertisedHeadTree()` – git HEAD reading
+- **Line 470+**: Worktree, gitignore, include-file tests
+
+**Test pattern**: Inline temp repos, assertions on snapshot/symbol/relation counts and values. No golden NDJSON files yet.
+
+---
+
+### 8. **Completeness / Warnings / Partial Failure Reporting**
+
+**Completeness level** – `/Users/thomi/Projects/entire-sem/internal/sem/provider.go:1294-1302`
+```go
+func completenessLevel(failures, files int) string {
+	switch {
+	case failures == 0:
+		return "ok"
+	case files == 0 || failures*4 &gt; files:
+		return "unsafe"
+	default:
+		return "degraded"
+	}
+}
+```
+
+**Failure codes emitted**:
+- `E_UNSUPPORTED_LANGUAGE` – file omitted (lines 248, 272)
+- `E_FILE_READ` – file unavailable (line 260)
+- `E_PARSE_ERROR` – file parsed with syntax errors (line 281)
+- `E_NO_GIT_HEAD` – warning, fallback to worktree (line 230)
+- `W_WORKTREE_SNAPSHOT` – warning, explicit worktree mode (line 224)
+
+**Each failure includes**:
+- Machine-readable `code`
+- `severity` ("warning" or "error")
+- Optional `file_path`
+- Human-readable `effect_on_semantic_completeness`
+- Optional `detail` (error text)
+
+**Aggregation in stats** – `/Users/thomi/Projects/entire-sem/internal/sem/provider.go:325-331`
+```json
+"stats": {
+  "files": 10,
+  "parsed_files": 8,
+  "symbols": 120,
+  "relations": 450,
+  "partial_failures": 2,
+  "completeness_level": "degraded"
+}
+```
+
+---
+
+### Summary Table: v2 Plan vs. Current Implementation
+
+| Area | Current | Planned (v2) | Status |
+|------|---------|--------------|--------|
+| Schema version | 1.1 | 1.1 (more fields) | ✅ Live, extensible |
+| Commands | 10 (snapshot, symbols, edges, diff, commit, checkpoint, analyze, doctor, capabilities, version) | Same | ✅ Complete |
+| Relation types | 6 | 20+ (Add 14 new types) | Phase B+ |
+| External record fields | 10 (with 1.1 boundary source) | Same + evidence | WP1+ |
+| Symbol record fields | 12 | Same | ✅ Complete |
+| Relation fields | 5 (no resolution, relation_scope, evidence, target_kind) | +4 fields | WP2+ |
+| Test fixtures | Inline repo setup | Dedicated testdata/ + golden NDJSON | WP1 |
+| Capabilities per-language reporting | No | Yes | WP1 |
+| Move/rename reconciliation | Basic body hash | Advanced with ordinal + signature hash | WP2 |
+| Import resolution | Syntax-based, heuristic | Manifest-aware per language | WP3 |
+| Call resolution | Name-only, global ambiguity | Scoped, import-aware, per-language | WP4 |
+| Performance benchmarks | None | go test -bench over fixtures | WP10 |
+
+---
+
+This snapshot captures the current semantic provider contract precisely and shows the gap to v2 requirements. Ready for Phase B implementation.</result>
+<usage><subagent_tokens>49847</subagent_tokens><tool_uses>27</tool_uses><duration_ms>122468</duration_ms></usage>
+</task-notification>

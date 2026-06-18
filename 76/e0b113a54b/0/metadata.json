@@ -1,0 +1,61 @@
+{
+  "cli_version": "0.6.3-nightly.202605190723.fd212937",
+  "checkpoint_id": "76e0b113a54b",
+  "session_id": "5632e712-bdd3-4fd5-baac-7af16a8f7258",
+  "strategy": "manual-commit",
+  "created_at": "2026-06-18T09:35:51.508019Z",
+  "branch": "v2-foundation",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "docs/baseline-report.md",
+    "internal/sem/golden_test.go",
+    "internal/sem/testdata/fixtures/go-basic.ndjson.golden",
+    "internal/sem/testdata/fixtures/go-basic/auth.go",
+    "internal/sem/testdata/fixtures/go-basic/server.go",
+    "internal/sem/testdata/fixtures/python-basic.ndjson.golden",
+    "internal/sem/testdata/fixtures/python-basic/auth.py",
+    "internal/sem/testdata/fixtures/typescript-basic.ndjson.golden",
+    "internal/sem/testdata/fixtures/typescript-basic/server.ts"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-opus-4-8[1m]",
+  "turn_id": "87f0b8b6affa",
+  "token_usage": {
+    "input_tokens": 3644,
+    "cache_creation_tokens": 122788,
+    "cache_read_tokens": 2399402,
+    "output_tokens": 22441,
+    "api_call_count": 42
+  },
+  "session_metrics": {
+    "turn_count": 3
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-06-18T09:35:51.478122Z",
+    "agent_lines": 304,
+    "agent_removed": 0,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 304,
+    "total_lines_changed": 304,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    },
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 304,
+      "agent_lines_removed": 0
+    }
+  ]
+}
