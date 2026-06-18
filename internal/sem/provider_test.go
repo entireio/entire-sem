@@ -24,8 +24,12 @@ def validate_token(token):
 def check_token(token):
     return validate_token(token)
 `)
-	writeFile(t, repo, "server.ts", `export function handleRoute() {
-  return "/users/{id}"
+	writeFile(t, repo, "server.ts", `export function register(app) {
+  app.get("/users/{id}", handleRoute)
+}
+
+export function handleRoute() {
+  return "ok"
 }
 `)
 
@@ -88,6 +92,42 @@ def check_token(token):
 	if len(snapshot.Externals) == 0 {
 		t.Fatalf("missing external endpoint records")
 	}
+}
+
+func TestRouteDetectionRequiresRoutingContext(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "server.js", `function register(app) {
+  app.get("/users/:id", show)
+}
+
+function loadFile() {
+  const path = "/var/log/app.log"
+  return readFileSync(path)
+}
+
+function buildUrl() {
+  return "/api/v1/widgets"
+}
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var routes []string
+	for _, r := range snapshot.Relations {
+		if r.Type == "HANDLES_ROUTE" {
+			routes = append(routes, r.ToID)
+		}
+	}
+	if len(routes) != 1 {
+		t.Fatalf("want exactly 1 route (the app.get registration), got %v", routes)
+	}
+	if !strings.HasSuffix(routes[0], "route:/users/:id") {
+		t.Fatalf("unexpected route %q", routes[0])
+	}
+	// The /var/log path and the returned /api path must NOT become routes.
 }
 
 func TestBuildProviderSnapshotResolvesReceiverCalls(t *testing.T) {

@@ -80,6 +80,11 @@ intentionally captured in the goldens so improvements show up as diffs.
 
 False positives:
 
+- **Route over-firing — fixed.** `HANDLES_ROUTE` previously fired for any
+  path-like string literal in any symbol (gin reported 1039 routes). A route is
+  now recorded only when its line carries routing context (an HTTP-verb/route
+  method call or mapping decorator), cutting gin to 206 and dropping path
+  returns and file paths. (WP6.)
 - **Global-unique name match (Go `go-basic`).** `LoginHandler CALLS CheckToken`
   is emitted at `0.68` purely because the name is unique repo-wide, not because
   the call was resolved through imports/scope. Correct here, but fragile.

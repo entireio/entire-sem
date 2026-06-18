@@ -1659,12 +1659,28 @@ func maskBytes(bytes []byte, start, end int) {
 	}
 }
 
+var (
+	routeLiteralRe = regexp.MustCompile(`["'](/[A-Za-z0-9_\-/{}:.]*)["']`)
+	// routingCallRe marks a line as a route registration: an HTTP-verb or
+	// routing method call, or a mapping decorator, immediately before "(".
+	// Requiring this context next to the path literal avoids treating every
+	// path-like string (URLs, file paths, test data) as a handled route.
+	routingCallRe = regexp.MustCompile(`(?i)\b(get|post|put|patch|delete|head|options|route|handle|handlefunc|group|mapping|getmapping|postmapping|putmapping|deletemapping|patchmapping|requestmapping)\s*\(`)
+)
+
+// routeLiterals extracts route paths that appear on a line carrying routing
+// context, so plain path-like string literals are not misreported as handled
+// routes.
 func routeLiterals(content string) []string {
-	re := regexp.MustCompile(`["'](/[A-Za-z0-9_\-/{}/:.]*)["']`)
 	seen := map[string]struct{}{}
-	for _, match := range re.FindAllStringSubmatch(content, -1) {
-		if len(match) > 1 {
-			seen[match[1]] = struct{}{}
+	for _, line := range strings.Split(content, "\n") {
+		if !routingCallRe.MatchString(line) {
+			continue
+		}
+		for _, match := range routeLiteralRe.FindAllStringSubmatch(line, -1) {
+			if len(match) > 1 {
+				seen[match[1]] = struct{}{}
+			}
 		}
 	}
 	return sortedKeys(seen)
