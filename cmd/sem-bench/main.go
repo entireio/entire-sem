@@ -74,16 +74,19 @@ func main() {
 		updateLock   = flag.Bool("update-lock", false, "resolve current commits and rewrite the lock file")
 		providerVer  = flag.String("provider-version", "dev", "provider version label recorded in the report")
 		profile      = flag.String("profile", "full", "indexing profile to measure: full, fast, or syntax-only")
+		progress     = flag.Bool("progress", false, "print provider phase progress to stderr")
+		minLOCPerSec = flag.Float64("min-loc-per-sec", 0, "fail if successful aggregate LOC/s is below this floor")
+		maxRSSBytes  = flag.Uint64("max-rss-bytes", 0, "fail if process peak RSS bytes exceeds this ceiling")
 	)
 	flag.Parse()
 
-	if err := run(*manifestPath, *cacheDir, *outDir, *lockPath, *languages, *profile, *limit, *jobs, *depth, *skipClone, *updateLock, *providerVer); err != nil {
+	if err := run(*manifestPath, *cacheDir, *outDir, *lockPath, *languages, *profile, *limit, *jobs, *depth, *skipClone, *updateLock, *providerVer, *progress, *minLOCPerSec, *maxRSSBytes); err != nil {
 		fmt.Fprintln(os.Stderr, "sem-bench:", err)
 		os.Exit(1)
 	}
 }
 
-func run(manifestPath, cacheDir, outDir, lockPath, languages, profileName string, limit, jobs, depth int, skipClone, updateLock bool, providerVer string) error {
+func run(manifestPath, cacheDir, outDir, lockPath, languages, profileName string, limit, jobs, depth int, skipClone, updateLock bool, providerVer string, progress bool, minLOCPerSec float64, maxRSSBytes uint64) error {
 	profile, err := parseProfile(profileName)
 	if err != nil {
 		return err
@@ -131,7 +134,23 @@ func run(manifestPath, cacheDir, outDir, lockPath, languages, profileName string
 			fmt.Fprintf(os.Stderr, "  skip %-40s (not cloned)\n", spec.repoPath)
 			continue
 		}
-		m, measureErr := bench.MeasureRepo(ctx, spec.repoPath, spec.language, dir, providerVer, profile)
+		var opts bench.MeasureOptions
+		if progress {
+			opts.Progress = func(event sem.ProgressEvent) {
+				fmt.Fprintf(os.Stderr, "  progress %-40s phase=%s files=%d/%d symbols=%d relations=%d heap=%d rss=%d elapsed=%s\n",
+					spec.repoPath,
+					event.Phase,
+					event.FilesDone,
+					event.FilesTotal,
+					event.Symbols,
+					event.Relations,
+					event.HeapAlloc,
+					event.MaxRSSBytes,
+					event.Elapsed.Round(time.Millisecond),
+				)
+			}
+		}
+		m, measureErr := bench.MeasureRepoWithOptions(ctx, spec.repoPath, spec.language, dir, providerVer, profile, opts)
 		if measureErr != nil {
 			fmt.Fprintf(os.Stderr, "  FAIL %-40s %v\n", spec.repoPath, measureErr)
 		} else {
@@ -145,6 +164,12 @@ func run(manifestPath, cacheDir, outDir, lockPath, languages, profileName string
 		return err
 	}
 	printSummary(report)
+	if minLOCPerSec > 0 && report.Totals.LOCPerSec < minLOCPerSec {
+		return fmt.Errorf("performance guardrail failed: total LOC/s %.2f below floor %.2f", report.Totals.LOCPerSec, minLOCPerSec)
+	}
+	if maxRSSBytes > 0 && report.MaxRSSBytes > maxRSSBytes {
+		return fmt.Errorf("memory guardrail failed: max RSS %d exceeds ceiling %d", report.MaxRSSBytes, maxRSSBytes)
+	}
 	return nil
 }
 

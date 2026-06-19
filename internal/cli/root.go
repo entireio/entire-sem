@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/suhaanthayyil/entire-sem/internal/gitutil"
 	"github.com/suhaanthayyil/entire-sem/internal/sem"
@@ -92,9 +93,9 @@ Usage:
   entire sem doctor [--json]
   entire sem version [--json]
   entire sem capabilities --json
-  entire sem snapshot --repo . --format ndjson [--worktree] [--ignore-file path] [--include-file path]
-  entire sem symbols --repo . --format ndjson [--worktree] [--ignore-file path] [--include-file path]
-  entire sem edges --repo . --format ndjson [--worktree] [--ignore-file path] [--include-file path]`)
+  entire sem snapshot --repo . --format ndjson [--worktree] [--progress] [--ignore-file path] [--include-file path]
+  entire sem symbols --repo . --format ndjson [--worktree] [--progress] [--ignore-file path] [--include-file path]
+  entire sem edges --repo . --format ndjson [--worktree] [--progress] [--ignore-file path] [--include-file path]`)
 }
 
 func runDoctor(ctx context.Context, opts Options, args []string) error {
@@ -203,6 +204,20 @@ func runProviderRecords(ctx context.Context, opts Options, args []string, mode s
 		IncludeFiles: flags.IncludeFiles,
 		Profile:      profile,
 	}
+	if flags.Progress {
+		options.Progress = func(event sem.ProgressEvent) {
+			fmt.Fprintf(opts.Stderr, "sem progress phase=%s files=%d/%d symbols=%d relations=%d heap=%d rss=%d elapsed=%s\n",
+				event.Phase,
+				event.FilesDone,
+				event.FilesTotal,
+				event.Symbols,
+				event.Relations,
+				event.HeapAlloc,
+				event.MaxRSSBytes,
+				event.Elapsed.Round(time.Millisecond),
+			)
+		}
+	}
 	// Stream records straight to stdout so peak memory does not scale with the
 	// relation count on large repositories.
 	encoder := json.NewEncoder(opts.Stdout)
@@ -241,6 +256,7 @@ type providerFlags struct {
 	Profile      string
 	NoNetwork    bool
 	Worktree     bool
+	Progress     bool
 	IgnoreFiles  []string
 	IncludeFiles []string
 }
@@ -286,6 +302,8 @@ func parseProviderFlags(args []string) (providerFlags, []string, error) {
 			flags.NoNetwork = true
 		case "--worktree":
 			flags.Worktree = true
+		case "--progress":
+			flags.Progress = true
 		case "--ignore-file":
 			i++
 			if i >= len(args) {

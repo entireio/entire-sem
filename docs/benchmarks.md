@@ -21,6 +21,15 @@ go run ./cmd/sem-bench -languages Go,Rust -limit 3
 go run ./cmd/sem-bench -skip-clone
 ```
 
+For long runs, add `-progress` to print provider phase telemetry to stderr
+without changing the JSON report. Guardrails can make local or CI runs fail
+after writing the report:
+
+```sh
+go run ./cmd/sem-bench -profile syntax-only -languages Go -limit 1 \
+  -min-loc-per-sec 50000 -max-rss-bytes 1000000000
+```
+
 ### Per-profile examples
 
 Each profile measures the production streaming path at a different depth. Small
@@ -50,6 +59,10 @@ and never enter our commits.
 Pass `-profile full|fast|syntax-only` to measure a given indexing depth (default
 `full`); the report records the profile, hardware (OS/arch/CPUs), and process
 peak RSS.
+
+The provider CLI also accepts `--progress` on `snapshot`, `symbols`, and
+`edges`. Progress lines are written to stderr and include phase, file/symbol/
+relation counts, heap, RSS, and elapsed time; stdout remains valid NDJSON.
 
 ## Comparing across phases
 
@@ -103,6 +116,12 @@ Treat the numbers as historical; re-run with the current streaming benchmark
   `E_FILE_TOO_LARGE` instead of being parsed, and C/C++ field symbols are
   suppressed. A Linux syntax-only run on this branch measured ~235k LOC/s over
   38.2M LOC.
+- **Syntax-only memory is compacted separately.** The syntax-only profile only
+  emits `DEFINES` and `CONTAINS`, so it does not need to retain full
+  `SymbolRecord` payloads after those records are streamed. A follow-on memory
+  run over Linux kept the same 3.37M symbols / 3.37M relations while reducing
+  peak RSS from ~5.82 GB to ~1.62 GB by retaining only structural symbol
+  metadata for phase 2.
 - **Peak memory scaled with repo size.** The in-memory snapshot accumulated
   every relation with its evidence and source contents, reaching ~20 GB RSS on
   tensorflow. The streaming path (`StreamSnapshot`, now the benchmark's measured
