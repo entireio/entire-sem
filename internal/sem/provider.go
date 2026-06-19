@@ -37,21 +37,31 @@ var relationTypes = []string{
 	"CONTAINS",
 	"IMPORTS",
 	"CALLS",
+	"ASYNC_CALLS",
 	"EXTENDS",
+	"INHERITS",
 	"IMPLEMENTS",
 	"OVERRIDES",
 	"USES_TYPE",
+	"PARAM_TYPE",
+	"RETURNS_TYPE",
 	"READS_FIELD",
 	"WRITES_FIELD",
 	"ACCESSES",
 	"HANDLES_ROUTE",
+	"HANDLES_GRPC",
+	"HANDLES_GRAPHQL",
+	"HANDLES_TRPC",
 	"HTTP_CALLS",
 	"EMITS",
 	"LISTENS_ON",
 	"HANDLES_TOOL",
+	"CONFIGURES",
 	"SIMILAR_TO",
 	"TESTS",
 	"RESOURCE_DEPENDS_ON",
+	"DATA_FLOWS",
+	"FILE_CHANGES_WITH",
 }
 
 // ooRelationSupport lists the additional (non-structural) relation types the
@@ -59,15 +69,18 @@ var relationTypes = []string{
 // OVERRIDES is derived from a resolved supertype's methods, so it is advertised
 // only for class-based languages with clear method containers.
 var ooRelationSupport = map[string][]string{
-	"Java":       {"EXTENDS", "IMPLEMENTS", "OVERRIDES", "USES_TYPE", "READS_FIELD", "WRITES_FIELD", "ACCESSES"},
-	"TypeScript": {"EXTENDS", "IMPLEMENTS", "OVERRIDES", "USES_TYPE", "READS_FIELD", "WRITES_FIELD", "ACCESSES"},
-	"JavaScript": {"EXTENDS"},
-	"C#":         {"EXTENDS", "IMPLEMENTS", "OVERRIDES", "USES_TYPE", "READS_FIELD", "WRITES_FIELD", "ACCESSES"},
-	"PHP":        {"EXTENDS", "IMPLEMENTS", "OVERRIDES", "USES_TYPE"},
-	"Python":     {"EXTENDS", "OVERRIDES", "USES_TYPE"},
-	"Rust":       {"EXTENDS", "IMPLEMENTS", "USES_TYPE", "READS_FIELD", "WRITES_FIELD", "ACCESSES"},
-	"Go":         {"USES_TYPE", "READS_FIELD", "WRITES_FIELD", "ACCESSES"},
-	"HCL":        {"RESOURCE_DEPENDS_ON"},
+	"Java":             {"EXTENDS", "INHERITS", "IMPLEMENTS", "OVERRIDES", "USES_TYPE", "PARAM_TYPE", "RETURNS_TYPE", "READS_FIELD", "WRITES_FIELD", "ACCESSES", "ASYNC_CALLS", "DATA_FLOWS"},
+	"TypeScript":       {"EXTENDS", "INHERITS", "IMPLEMENTS", "OVERRIDES", "USES_TYPE", "PARAM_TYPE", "RETURNS_TYPE", "READS_FIELD", "WRITES_FIELD", "ACCESSES", "HANDLES_GRAPHQL", "HANDLES_TRPC", "ASYNC_CALLS", "DATA_FLOWS"},
+	"JavaScript":       {"EXTENDS", "INHERITS", "HANDLES_GRAPHQL", "HANDLES_TRPC", "ASYNC_CALLS", "DATA_FLOWS"},
+	"C#":               {"EXTENDS", "INHERITS", "IMPLEMENTS", "OVERRIDES", "USES_TYPE", "PARAM_TYPE", "RETURNS_TYPE", "READS_FIELD", "WRITES_FIELD", "ACCESSES", "ASYNC_CALLS", "DATA_FLOWS"},
+	"PHP":              {"EXTENDS", "INHERITS", "IMPLEMENTS", "OVERRIDES", "USES_TYPE", "PARAM_TYPE", "RETURNS_TYPE", "DATA_FLOWS"},
+	"Python":           {"EXTENDS", "INHERITS", "OVERRIDES", "USES_TYPE", "PARAM_TYPE", "RETURNS_TYPE", "HANDLES_GRAPHQL", "ASYNC_CALLS", "DATA_FLOWS"},
+	"Rust":             {"EXTENDS", "INHERITS", "IMPLEMENTS", "USES_TYPE", "PARAM_TYPE", "RETURNS_TYPE", "READS_FIELD", "WRITES_FIELD", "ACCESSES", "ASYNC_CALLS", "DATA_FLOWS"},
+	"Go":               {"USES_TYPE", "PARAM_TYPE", "RETURNS_TYPE", "READS_FIELD", "WRITES_FIELD", "ACCESSES", "ASYNC_CALLS", "DATA_FLOWS"},
+	"HCL":              {"CONFIGURES", "RESOURCE_DEPENDS_ON"},
+	"Protocol Buffers": {"HANDLES_GRPC"},
+	"YAML":             {"CONFIGURES"},
+	"Dockerfile":       {"CONFIGURES"},
 }
 
 // schemaFeatures lists the optional schema 1.1 features this build emits. It
@@ -322,7 +335,7 @@ func (s profileSpec) skippedRelationFamilies() []string {
 // family is enabled, so the streaming path can skip re-reading file content
 // entirely for syntax-only profiles.
 func profileNeedsPerFileScan(spec profileSpec) bool {
-	for _, t := range []string{"IMPORTS", "CALLS", "HANDLES_ROUTE", "HTTP_CALLS", "EMITS", "LISTENS_ON", "EXTENDS", "IMPLEMENTS", "READS_FIELD", "WRITES_FIELD", "ACCESSES"} {
+	for _, t := range []string{"IMPORTS", "CALLS", "ASYNC_CALLS", "HANDLES_ROUTE", "HANDLES_GRPC", "HANDLES_GRAPHQL", "HANDLES_TRPC", "HTTP_CALLS", "EMITS", "LISTENS_ON", "EXTENDS", "INHERITS", "IMPLEMENTS", "READS_FIELD", "WRITES_FIELD", "ACCESSES", "CONFIGURES", "DATA_FLOWS"} {
 		if spec.relations[t] {
 			return true
 		}
@@ -356,7 +369,7 @@ func resolveProfile(p Profile) profileSpec {
 	case ProfileSyntaxOnly:
 		return profileSpec{name: ProfileSyntaxOnly, relations: relationTypeSet("DEFINES", "CONTAINS"), includeEvidence: false, callResolution: "none"}
 	case ProfileFast:
-		return profileSpec{name: ProfileFast, relations: relationTypeSet("DEFINES", "CONTAINS", "IMPORTS", "CALLS", "HANDLES_ROUTE", "HANDLES_TOOL", "RESOURCE_DEPENDS_ON"), includeEvidence: false, callResolution: "shallow"}
+		return profileSpec{name: ProfileFast, relations: relationTypeSet("DEFINES", "CONTAINS", "IMPORTS", "CALLS", "HANDLES_ROUTE", "HANDLES_TOOL", "CONFIGURES", "RESOURCE_DEPENDS_ON"), includeEvidence: false, callResolution: "shallow"}
 	default:
 		return profileSpec{name: ProfileFull, relations: relationTypeSet(relationTypes...), includeEvidence: true, callResolution: "full"}
 	}
@@ -392,6 +405,7 @@ func Capabilities() CapabilityReport {
 			"semantic_diff":        true,
 			"ndjson_snapshot":      true,
 			"near_clone_detection": true,
+			"git_cochange_edges":   true,
 		},
 		FeaturesRequiringNetworkAccess: map[string]bool{
 			"grammar_download":  false,
@@ -728,6 +742,9 @@ func StreamSnapshot(ctx context.Context, repo, providerVersion string, options P
 		if !spec.includeEvidence {
 			r.Evidence = nil
 		}
+		if r.WarningCodes == nil {
+			r.WarningCodes = []string{}
+		}
 		dedupKey := relationDedupKey(r)
 		if _, seen := seenRelation[dedupKey]; seen {
 			return
@@ -754,6 +771,11 @@ func StreamSnapshot(ctx context.Context, repo, providerVersion string, options P
 		forEachRelation(sc.key, files, recordsByFile, sc.read, spec, func(r RelationRecord) {
 			emitRelation(r, symbolsByID, filesByID)
 		})
+		if spec.emits("FILE_CHANGES_WITH") {
+			for _, r := range fileChangesWithRelations(ctx, sc.absRepo, sc.key, files) {
+				emitRelation(r, symbolsByID, filesByID)
+			}
+		}
 	}
 	if emitErr != nil {
 		return emitErr
@@ -1243,8 +1265,11 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 	needsCallScan := spec.emits("CALLS") && spec.callResolution != "none"
 	needsReceiverCalls := spec.emits("CALLS") && spec.callResolution == "full"
 	needsFields := spec.emits("READS_FIELD") || spec.emits("WRITES_FIELD") || spec.emits("ACCESSES")
-	needsTypes := spec.emits("EXTENDS") || spec.emits("IMPLEMENTS") || spec.emits("OVERRIDES")
+	needsTypes := spec.emits("EXTENDS") || spec.emits("INHERITS") || spec.emits("IMPLEMENTS") || spec.emits("OVERRIDES")
 	needsOverrides := spec.emits("OVERRIDES")
+	needsAsyncCalls := spec.emits("ASYNC_CALLS")
+	needsDataFlow := spec.emits("DATA_FLOWS")
+	needsServiceRelations := spec.emits("HANDLES_GRPC") || spec.emits("HANDLES_GRAPHQL") || spec.emits("HANDLES_TRPC")
 	symbolsByShortName := map[string][]SymbolRecord{}
 	symbolsByFile := map[string][]SymbolRecord{}
 	childNamesByContainer := map[string]map[string]bool{}
@@ -1423,6 +1448,89 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 					})
 				}
 			}
+			callableSymbol := !typeLikeKind(from.Kind)
+			if needsAsyncCalls && callableSymbol {
+				for _, name := range asyncCallNames(block) {
+					if name == from.Name {
+						continue
+					}
+					for _, to := range resolveCallTargets(name, from, symbolsByShortName[name], symbolsByFile[file.Path], importsByName) {
+						emit(RelationRecord{
+							RecordType:    "relation",
+							FromID:        from.ID,
+							ToID:          to.ID,
+							Type:          "ASYNC_CALLS",
+							Confidence:    minFloat(to.Confidence, 0.85),
+							Reason:        "async call site resolved to symbol",
+							RelationScope: to.Scope,
+							Resolution:    to.Resolution,
+							TargetKind:    "symbol",
+							Evidence: []Evidence{{
+								Kind:      "async_call_site",
+								FilePath:  from.FilePath,
+								StartLine: from.StartLine,
+								EndLine:   from.EndLine,
+								Detail:    name,
+							}},
+							WarningCodes: []string{},
+						})
+					}
+				}
+			}
+			if needsDataFlow && callableSymbol {
+				for _, name := range returnFlowCallNames(block) {
+					if name == from.Name {
+						continue
+					}
+					for _, to := range resolveCallTargets(name, from, symbolsByShortName[name], symbolsByFile[file.Path], importsByName) {
+						emit(RelationRecord{
+							RecordType:    "relation",
+							FromID:        to.ID,
+							ToID:          from.ID,
+							Type:          "DATA_FLOWS",
+							Confidence:    minFloat(to.Confidence, 0.75),
+							Reason:        "callee return value flows into caller return value",
+							RelationScope: to.Scope,
+							Resolution:    to.Resolution,
+							TargetKind:    "symbol",
+							Evidence: []Evidence{{
+								Kind:      "return_flow",
+								FilePath:  from.FilePath,
+								StartLine: from.StartLine,
+								EndLine:   from.EndLine,
+								Detail:    name,
+							}},
+							WarningCodes: []string{},
+						})
+					}
+				}
+			}
+			if needsServiceRelations {
+				for _, boundary := range serviceBoundaries(from, block) {
+					if !spec.emits(boundary.Relation) {
+						continue
+					}
+					emit(RelationRecord{
+						RecordType:    "relation",
+						FromID:        from.ID,
+						ToID:          externalID(boundary.Kind, boundary.Name),
+						Type:          boundary.Relation,
+						Confidence:    boundary.Confidence,
+						Reason:        boundary.Reason,
+						RelationScope: "external",
+						Resolution:    "pattern",
+						TargetKind:    boundary.Kind,
+						Evidence: []Evidence{{
+							Kind:      boundary.EvidenceKind,
+							FilePath:  from.FilePath,
+							StartLine: from.StartLine,
+							EndLine:   from.EndLine,
+							Detail:    boundary.Name,
+						}},
+						WarningCodes: boundary.WarningCodes,
+					})
+				}
+			}
 			for _, route := range routeLiterals(block) {
 				if _, ok := handledRoutes[route]; ok {
 					continue
@@ -1447,9 +1555,8 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 					WarningCodes: []string{},
 				})
 			}
-			httpAndChannels := spec.emits("HTTP_CALLS") || spec.emits("EMITS") || spec.emits("LISTENS_ON")
 			for _, call := range httpCalls(block) {
-				if !httpAndChannels {
+				if !spec.emits("HTTP_CALLS") {
 					break
 				}
 				confidence := 0.7
@@ -1477,8 +1584,8 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 				})
 			}
 			for _, event := range channelEvents(block) {
-				if !httpAndChannels {
-					break
+				if !spec.emits(event.Relation) {
+					continue
 				}
 				emit(RelationRecord{
 					RecordType:    "relation",
@@ -1532,6 +1639,11 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 			emit(r)
 		}
 	}
+	if spec.emits("PARAM_TYPE") || spec.emits("RETURNS_TYPE") {
+		for _, r := range signatureTypeRelations(recordsByFile, symbolsByFile, symbolsByShortName, spec) {
+			emit(r)
+		}
+	}
 	if spec.emits("TESTS") {
 		for _, r := range testRelations(recordsByFile, symbolsByShortName) {
 			emit(r)
@@ -1539,6 +1651,11 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 	}
 	if spec.emits("RESOURCE_DEPENDS_ON") {
 		for _, r := range resourceDependsOnRelations(recordsByFile, readContent) {
+			emit(r)
+		}
+	}
+	if spec.emits("CONFIGURES") {
+		for _, r := range configuresRelations(recordsByFile, readContent) {
 			emit(r)
 		}
 	}
@@ -1563,6 +1680,9 @@ func typeRelationsForFile(repoKey string, file FileRecord, content string, fileS
 		}
 		for _, edge := range supertypesFromSignature(symbol.Language, symbol.Signature) {
 			relations = append(relations, buildTypeRelation(repoKey, symbol, edge.Super, edge.Relation, edge.Confidence, sameFileSymbols, symbolsByShortName))
+			if edge.Relation == "EXTENDS" {
+				relations = append(relations, buildTypeRelation(repoKey, symbol, edge.Super, "INHERITS", edge.Confidence, sameFileSymbols, symbolsByShortName))
+			}
 		}
 	}
 	if file.Language == "Rust" {
@@ -1572,6 +1692,9 @@ func typeRelationsForFile(repoKey string, file FileRecord, content string, fileS
 				continue
 			}
 			relations = append(relations, buildTypeRelation(repoKey, anchor, edge.Super, edge.Relation, edge.Confidence, sameFileSymbols, symbolsByShortName))
+			if edge.Relation == "EXTENDS" {
+				relations = append(relations, buildTypeRelation(repoKey, anchor, edge.Super, "INHERITS", edge.Confidence, sameFileSymbols, symbolsByShortName))
+			}
 		}
 	}
 	return relations
@@ -1894,6 +2017,66 @@ func usesTypeRelations(recordsByFile map[string][]SymbolRecord, symbolsByFile, s
 	return relations
 }
 
+func signatureTypeRelations(recordsByFile map[string][]SymbolRecord, symbolsByFile, symbolsByShortName map[string][]SymbolRecord, spec profileSpec) []RelationRecord {
+	paths := make([]string, 0, len(recordsByFile))
+	for path := range recordsByFile {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+
+	var relations []RelationRecord
+	for _, path := range paths {
+		for _, symbol := range recordsByFile[path] {
+			if symbol.Kind != "function" && symbol.Kind != "method" || symbol.Signature == "" {
+				continue
+			}
+			refs := signatureTypeReferences(symbol.Language, symbol.Signature)
+			for _, relationType := range []string{"PARAM_TYPE", "RETURNS_TYPE"} {
+				if !spec.emits(relationType) {
+					continue
+				}
+				names := refs[relationType]
+				sort.Strings(names)
+				emitted := map[string]bool{}
+				for _, name := range names {
+					target, resolution, scope, confidence, ok := resolveTypeReference(name, symbol, symbolsByFile[path], symbolsByShortName)
+					if !ok || emitted[target.ID] {
+						continue
+					}
+					emitted[target.ID] = true
+					relations = append(relations, RelationRecord{
+						RecordType:    "relation",
+						FromID:        symbol.ID,
+						ToID:          target.ID,
+						Type:          relationType,
+						Confidence:    confidence,
+						Reason:        signatureTypeReason(relationType),
+						RelationScope: scope,
+						Resolution:    resolution,
+						TargetKind:    "symbol",
+						Evidence: []Evidence{{
+							Kind:      "signature",
+							FilePath:  symbol.FilePath,
+							StartLine: symbol.StartLine,
+							EndLine:   symbol.EndLine,
+							Detail:    name,
+						}},
+						WarningCodes: []string{},
+					})
+				}
+			}
+		}
+	}
+	return relations
+}
+
+func signatureTypeReason(relationType string) string {
+	if relationType == "RETURNS_TYPE" {
+		return "return type referenced in signature"
+	}
+	return "parameter type referenced in signature"
+}
+
 func resolveTypeReference(name string, from SymbolRecord, sameFile []SymbolRecord, symbolsByShortName map[string][]SymbolRecord) (SymbolRecord, string, string, float64, bool) {
 	if sym, ok := firstTypeLikeNamed(sameFile, name); ok && sym.ID != from.ID {
 		return sym, "exact", "file", 0.85, true
@@ -1902,6 +2085,84 @@ func resolveTypeReference(name string, from SymbolRecord, sameFile []SymbolRecor
 		return sym, "name_only", "module", 0.75, true
 	}
 	return SymbolRecord{}, "", "", 0, false
+}
+
+func configuresRelations(recordsByFile map[string][]SymbolRecord, readContent contentReader) []RelationRecord {
+	paths := make([]string, 0, len(recordsByFile))
+	for path := range recordsByFile {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+
+	var relations []RelationRecord
+	for _, path := range paths {
+		content, ok := readContent(path)
+		if !ok {
+			continue
+		}
+		for _, symbol := range recordsByFile[path] {
+			for _, cfg := range configTargets(symbol, content) {
+				relations = append(relations, RelationRecord{
+					RecordType:    "relation",
+					FromID:        symbol.ID,
+					ToID:          externalID("config", cfg.Name),
+					Type:          "CONFIGURES",
+					Confidence:    cfg.Confidence,
+					Reason:        cfg.Reason,
+					RelationScope: "external",
+					Resolution:    "pattern",
+					TargetKind:    "config",
+					Evidence: []Evidence{{
+						Kind:      cfg.EvidenceKind,
+						FilePath:  symbol.FilePath,
+						StartLine: symbol.StartLine,
+						EndLine:   symbol.EndLine,
+						Detail:    cfg.Name,
+					}},
+					WarningCodes: cfg.WarningCodes,
+				})
+			}
+		}
+	}
+	return relations
+}
+
+func fileChangesWithRelations(ctx context.Context, repo, repoKey string, files []FileRecord) []RelationRecord {
+	cochanges, err := gitutil.FileCochanges(ctx, repo, 256)
+	if err != nil || len(cochanges) == 0 {
+		return nil
+	}
+	known := map[string]bool{}
+	for _, file := range files {
+		known[file.Path] = true
+	}
+	var relations []RelationRecord
+	for _, pair := range cochanges {
+		if !known[pair.Left] || !known[pair.Right] {
+			continue
+		}
+		confidence := 0.55
+		if pair.Count >= 3 {
+			confidence = 0.7
+		}
+		relations = append(relations, RelationRecord{
+			RecordType:    "relation",
+			FromID:        fileID(repoKey, pair.Left),
+			ToID:          fileID(repoKey, pair.Right),
+			Type:          "FILE_CHANGES_WITH",
+			Confidence:    confidence,
+			Reason:        fmt.Sprintf("files changed together in %d recent commits", pair.Count),
+			RelationScope: "workspace",
+			Resolution:    "git_history",
+			TargetKind:    "file",
+			Evidence: []Evidence{{
+				Kind:   "git_log",
+				Detail: fmt.Sprintf("%d commits", pair.Count),
+			}},
+			WarningCodes: []string{},
+		})
+	}
+	return relations
 }
 
 // fieldAccessRelations resolves `receiver.field` accesses in a function/method
@@ -2143,7 +2404,7 @@ func boundarySourceLocation(relation RelationRecord, externalID string, symbolsB
 
 func isBoundaryRelation(relationType string) bool {
 	switch relationType {
-	case "HANDLES_ROUTE":
+	case "HANDLES_ROUTE", "HANDLES_GRPC", "HANDLES_GRAPHQL", "HANDLES_TRPC", "HTTP_CALLS", "EMITS", "LISTENS_ON", "CONFIGURES":
 		return true
 	default:
 		return false

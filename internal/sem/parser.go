@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -43,49 +44,50 @@ type languageSpec struct {
 }
 
 var treeSitterLanguages = map[string]languageSpec{
-	".bash":   {language: "Bash", grammar: bash.GetLanguage()},
-	".c":      {language: "C", grammar: c.GetLanguage()},
-	".cc":     {language: "C++", grammar: cpp.GetLanguage()},
-	".cpp":    {language: "C++", grammar: cpp.GetLanguage()},
-	".cs":     {language: "C#", grammar: csharp.GetLanguage()},
-	".cue":    {language: "CUE", grammar: cue.GetLanguage()},
-	".cxx":    {language: "C++", grammar: cpp.GetLanguage()},
-	".ex":     {language: "Elixir", grammar: elixir.GetLanguage()},
-	".exs":    {language: "Elixir", grammar: elixir.GetLanguage()},
-	".go":     {language: "Go", grammar: golang.GetLanguage()},
-	".gradle": {language: "Groovy", grammar: groovy.GetLanguage()},
-	".groovy": {language: "Groovy", grammar: groovy.GetLanguage()},
-	".h":      {language: "C", grammar: c.GetLanguage()},
-	".hcl":    {language: "HCL", grammar: hcl.GetLanguage()},
-	".hh":     {language: "C++", grammar: cpp.GetLanguage()},
-	".hpp":    {language: "C++", grammar: cpp.GetLanguage()},
-	".hxx":    {language: "C++", grammar: cpp.GetLanguage()},
-	".java":   {language: "Java", grammar: java.GetLanguage()},
-	".js":     {language: "JavaScript", grammar: javascript.GetLanguage()},
-	".jsx":    {language: "JavaScript", grammar: treesittertsx.GetLanguage()},
-	".kt":     {language: "Kotlin", grammar: kotlin.GetLanguage()},
-	".kts":    {language: "Kotlin", grammar: kotlin.GetLanguage()},
-	".lua":    {language: "Lua", grammar: lua.GetLanguage()},
-	".ml":     {language: "OCaml", grammar: ocaml.GetLanguage()},
-	".mli":    {language: "OCaml", grammar: ocaml.GetLanguage()},
-	".php":    {language: "PHP", grammar: php.GetLanguage()},
-	".proto":  {language: "Protocol Buffers", grammar: protobuf.GetLanguage()},
-	".py":     {language: "Python", grammar: python.GetLanguage()},
-	".rb":     {language: "Ruby", grammar: ruby.GetLanguage()},
-	".rs":     {language: "Rust", grammar: rust.GetLanguage()},
-	".sbt":    {language: "Scala", grammar: scala.GetLanguage()},
-	".scala":  {language: "Scala", grammar: scala.GetLanguage()},
-	".sc":     {language: "Scala", grammar: scala.GetLanguage()},
-	".sh":     {language: "Bash", grammar: bash.GetLanguage()},
-	".sql":    {language: "SQL"},
-	".swift":  {language: "Swift", grammar: swift.GetLanguage()},
-	".tf":     {language: "HCL", grammar: hcl.GetLanguage()},
-	".tfvars": {language: "HCL", grammar: hcl.GetLanguage()},
-	".ts":     {language: "TypeScript", grammar: treesitterts.GetLanguage()},
-	".tsx":    {language: "TypeScript", grammar: treesittertsx.GetLanguage()},
-	".yaml":   {language: "YAML", grammar: treesitteryaml.GetLanguage()},
-	".yml":    {language: "YAML", grammar: treesitteryaml.GetLanguage()},
-	".zsh":    {language: "Bash", grammar: bash.GetLanguage()},
+	".bash":       {language: "Bash", grammar: bash.GetLanguage()},
+	".c":          {language: "C", grammar: c.GetLanguage()},
+	".cc":         {language: "C++", grammar: cpp.GetLanguage()},
+	".cpp":        {language: "C++", grammar: cpp.GetLanguage()},
+	".cs":         {language: "C#", grammar: csharp.GetLanguage()},
+	".cue":        {language: "CUE", grammar: cue.GetLanguage()},
+	".cxx":        {language: "C++", grammar: cpp.GetLanguage()},
+	".ex":         {language: "Elixir", grammar: elixir.GetLanguage()},
+	".exs":        {language: "Elixir", grammar: elixir.GetLanguage()},
+	".go":         {language: "Go", grammar: golang.GetLanguage()},
+	".gradle":     {language: "Groovy", grammar: groovy.GetLanguage()},
+	".groovy":     {language: "Groovy", grammar: groovy.GetLanguage()},
+	".h":          {language: "C", grammar: c.GetLanguage()},
+	".hcl":        {language: "HCL", grammar: hcl.GetLanguage()},
+	".hh":         {language: "C++", grammar: cpp.GetLanguage()},
+	".hpp":        {language: "C++", grammar: cpp.GetLanguage()},
+	".hxx":        {language: "C++", grammar: cpp.GetLanguage()},
+	".java":       {language: "Java", grammar: java.GetLanguage()},
+	".js":         {language: "JavaScript", grammar: javascript.GetLanguage()},
+	".jsx":        {language: "JavaScript", grammar: treesittertsx.GetLanguage()},
+	".kt":         {language: "Kotlin", grammar: kotlin.GetLanguage()},
+	".kts":        {language: "Kotlin", grammar: kotlin.GetLanguage()},
+	".lua":        {language: "Lua", grammar: lua.GetLanguage()},
+	".ml":         {language: "OCaml", grammar: ocaml.GetLanguage()},
+	".mli":        {language: "OCaml", grammar: ocaml.GetLanguage()},
+	".php":        {language: "PHP", grammar: php.GetLanguage()},
+	".proto":      {language: "Protocol Buffers", grammar: protobuf.GetLanguage()},
+	".py":         {language: "Python", grammar: python.GetLanguage()},
+	".rb":         {language: "Ruby", grammar: ruby.GetLanguage()},
+	".rs":         {language: "Rust", grammar: rust.GetLanguage()},
+	".sbt":        {language: "Scala", grammar: scala.GetLanguage()},
+	".scala":      {language: "Scala", grammar: scala.GetLanguage()},
+	".sc":         {language: "Scala", grammar: scala.GetLanguage()},
+	".sh":         {language: "Bash", grammar: bash.GetLanguage()},
+	".sql":        {language: "SQL"},
+	".swift":      {language: "Swift", grammar: swift.GetLanguage()},
+	".tf":         {language: "HCL", grammar: hcl.GetLanguage()},
+	".tfvars":     {language: "HCL", grammar: hcl.GetLanguage()},
+	".ts":         {language: "TypeScript", grammar: treesitterts.GetLanguage()},
+	".tsx":        {language: "TypeScript", grammar: treesittertsx.GetLanguage()},
+	".yaml":       {language: "YAML", grammar: treesitteryaml.GetLanguage()},
+	".yml":        {language: "YAML", grammar: treesitteryaml.GetLanguage()},
+	".zsh":        {language: "Bash", grammar: bash.GetLanguage()},
+	".dockerfile": {language: "Dockerfile"},
 }
 
 type TreeSitterParser struct{}
@@ -107,6 +109,9 @@ func (TreeSitterParser) ParseWithStatus(path, content string) ([]Entity, string,
 	}
 	if spec.language == "SQL" {
 		spec.grammar = pgsql.GetLanguage()
+	}
+	if spec.grammar == nil {
+		return fallbackEntities(path, content, spec.language), spec.language, ParseStatus{}
 	}
 	src := []byte(content)
 	parseSrc := src
@@ -158,8 +163,65 @@ func Supported(path string) bool {
 }
 
 func languageForPath(path string) (languageSpec, bool) {
+	base := strings.ToLower(filepath.Base(path))
+	if base == "dockerfile" || strings.HasPrefix(base, "dockerfile.") {
+		return languageSpec{language: "Dockerfile"}, true
+	}
 	spec, ok := treeSitterLanguages[strings.ToLower(filepath.Ext(path))]
 	return spec, ok
+}
+
+func fallbackEntities(path, content, language string) []Entity {
+	switch language {
+	case "Dockerfile":
+		return dockerfileEntities(content)
+	default:
+		return nil
+	}
+}
+
+func dockerfileEntities(content string) []Entity {
+	lines := strings.Split(content, "\n")
+	var entities []Entity
+	stageIndex := 0
+	for index, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		fields := strings.Fields(trimmed)
+		if len(fields) == 0 || !strings.EqualFold(fields[0], "FROM") {
+			continue
+		}
+		stageIndex++
+		name := fmt.Sprintf("stage%d", stageIndex)
+		for i := 2; i+1 < len(fields); i++ {
+			if strings.EqualFold(fields[i], "AS") {
+				name = fields[i+1]
+				break
+			}
+		}
+		startLine := index + 1
+		endLine := len(lines)
+		for j := index + 1; j < len(lines); j++ {
+			next := strings.TrimSpace(lines[j])
+			if len(strings.Fields(next)) > 0 && strings.EqualFold(strings.Fields(next)[0], "FROM") {
+				endLine = j
+				break
+			}
+		}
+		block := strings.Join(lines[startLine-1:endLine], "\n")
+		entities = append(entities, Entity{
+			Kind:        "stage",
+			Name:        name,
+			Signature:   normalize(trimmed),
+			StartLine:   startLine,
+			EndLine:     endLine,
+			BodyHash:    hash(normalize(block)),
+			Fingerprint: hash(normalize(entityFingerprintSource(Entity{Name: name, Signature: trimmed}, block))),
+		})
+	}
+	return entities
 }
 
 func walkEntities(node *sitter.Node, src []byte, language, scope string, entities *[]Entity) {

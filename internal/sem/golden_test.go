@@ -151,6 +151,7 @@ var goldenFixtures = []string{
 	"csharp-fields",
 	"csharp-oo",
 	"go-basic",
+	"go-async",
 	"go-clones",
 	"go-fields",
 	"go-tests",
@@ -172,6 +173,7 @@ var goldenFixtures = []string{
 	"typescript-http",
 	"typescript-imports",
 	"typescript-oo",
+	"services-config",
 }
 
 func TestProviderGoldenSnapshots(t *testing.T) {

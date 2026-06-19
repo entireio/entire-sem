@@ -1501,6 +1501,41 @@ func TestBuildProviderSnapshotReadsAdvertisedHeadTree(t *testing.T) {
 	}
 }
 
+func TestBuildProviderSnapshotEmitsFileChangesWithFromGitHistory(t *testing.T) {
+	repo := t.TempDir()
+	git(t, repo, "init")
+	git(t, repo, "config", "user.name", "Entire Sem Test")
+	git(t, repo, "config", "user.email", "sem@example.com")
+
+	writeFile(t, repo, "a.go", "package p\n\nfunc A() {}\n")
+	writeFile(t, repo, "b.go", "package p\n\nfunc B() {}\n")
+	git(t, repo, "add", ".")
+	git(t, repo, "commit", "-m", "initial")
+
+	writeFile(t, repo, "a.go", "package p\n\nfunc A() string { return \"one\" }\n")
+	writeFile(t, repo, "b.go", "package p\n\nfunc B() string { return \"one\" }\n")
+	git(t, repo, "add", ".")
+	git(t, repo, "commit", "-m", "cochange one")
+
+	writeFile(t, repo, "a.go", "package p\n\nfunc A() string { return \"two\" }\n")
+	writeFile(t, repo, "b.go", "package p\n\nfunc B() string { return \"two\" }\n")
+	git(t, repo, "add", ".")
+	git(t, repo, "commit", "-m", "cochange two")
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, relation := range snapshot.Relations {
+		if relation.Type == "FILE_CHANGES_WITH" &&
+			relation.FromID == fileID(snapshot.Header.RepoKey, "a.go") &&
+			relation.ToID == fileID(snapshot.Header.RepoKey, "b.go") {
+			return
+		}
+	}
+	t.Fatalf("FILE_CHANGES_WITH relation missing: %#v", snapshot.Relations)
+}
+
 func TestBuildProviderSnapshotWorktreeIncludesDirtyFiles(t *testing.T) {
 	repo := t.TempDir()
 	git(t, repo, "init")

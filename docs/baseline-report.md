@@ -74,15 +74,18 @@ schema section (`0.90-1.00 exact`, `0.70-0.89 strong`, `0.40-0.69 heuristic`,
 `capabilities --json` reports per-language relation support
 (`relation_support_by_language`) and pattern-driven relations separately in
 `heuristic_relation_types` (`HANDLES_ROUTE`, `HTTP_CALLS`, `EMITS`,
-`LISTENS_ON`, `HANDLES_TOOL`, `SIMILAR_TO`, `TESTS`).
+`LISTENS_ON`, `HANDLES_TOOL`, `HANDLES_GRPC`, `HANDLES_GRAPHQL`,
+`HANDLES_TRPC`, `CONFIGURES`, `SIMILAR_TO`, `TESTS`).
 
 Field access (`READS_FIELD`/`WRITES_FIELD`/`ACCESSES`) is emitted for accesses
 resolved through the receiver's type (see "Field-access relations" below).
 
-Still to come (each blocked on a larger change): `HANDLES_GRAPHQL` (needs a
-GraphQL grammar), Dockerfile/Kubernetes `CONFIGURES` (Dockerfile grammar +
-k8s-shape handling), positional `PARAM_TYPE`/`RETURNS_TYPE`, and the deferred
-data-flow relations.
+Service/configuration/type/flow expansion is now present in the baseline:
+`HANDLES_GRPC`, `HANDLES_GRAPHQL`, `HANDLES_TRPC`, Dockerfile/Kubernetes/HCL
+`CONFIGURES`, positional `PARAM_TYPE`/`RETURNS_TYPE`, `ASYNC_CALLS`,
+`DATA_FLOWS`, and bounded `FILE_CHANGES_WITH` edges. Remaining work is deeper
+coverage, not absence of the relation families: Kustomize-specific semantics,
+more file formats, richer data-flow, and larger corpus proof runs.
 
 ## Known False Positives / Negatives
 
@@ -134,13 +137,12 @@ False negatives:
   `field` symbol. Unresolved/dynamic receivers and bare implicit-`this` access
   are skipped. Remaining: typed-parameter receivers, bare-field resolution via
   scope, and data-flow (separately deferred).
-- **Partial OO/type relations.** `EXTENDS`, `IMPLEMENTS`, and `OVERRIDES` are
-  now emitted (`EXTENDS`/`IMPLEMENTS` for Java, TypeScript, JavaScript, C#, PHP,
-  Python, Rust; `OVERRIDES` for the class-based languages with method symbols).
+- **Partial OO/type relations.** `EXTENDS`, `INHERITS`, `IMPLEMENTS`,
+  `OVERRIDES`, `USES_TYPE`, `PARAM_TYPE`, and `RETURNS_TYPE` are now emitted.
   `OVERRIDES` only fires when the supertype resolves locally and its methods are
-  symbolized — so TypeScript interface methods and Rust trait-impl methods do
-  not yet yield overrides. Still missing: `USES_TYPE`, `PARAM_TYPE`,
-  `RETURNS_TYPE`. (WP5 follow-up.)
+  symbolized, so TypeScript interface methods and Rust trait-impl methods do not
+  yet yield overrides. Remaining gaps are deeper parser/type-system coverage,
+  not the absence of the relation families.
 - **Abstract classes not always captured.** The TypeScript parser does not emit
   a symbol for `export abstract class Base`, so an `EXTENDS` to it falls back to
   an external type endpoint rather than resolving locally. This is a parser

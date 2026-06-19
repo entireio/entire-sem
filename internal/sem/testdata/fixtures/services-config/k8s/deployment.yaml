@@ -1,0 +1,11 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-api
+spec:
+  replicas: 2
+  template:
+    spec:
+      containers:
+        - name: auth-api
+          image: auth-api:latest

@@ -21,18 +21,26 @@ versioned, confidence-scored facts that `entire-brain` can persist and query.
 - Has stable `compound-v1` symbol IDs for ordinary edits.
 - Reports partial failures and no-egress posture.
 
-## Next Steps and Goals
+## Delivered Capabilities And Remaining Goals
 
-- Relation extraction is intentionally heuristic.
-- Calls are name-based in many cases and lack language-aware resolution.
-- Rename/move reconciliation is weak.
-- Duplicate same-name symbols can destabilize IDs.
-- OO/type relations are missing from the emitted contract.
-- Field access and data-flow relations are missing.
-- Cross-service route/client/channel relations are shallow.
-- IaC resource extraction is incomplete.
-- Language coverage should expand by priority tier and be reported exactly. Support at least 150 languages.
-- Performance and memory claims need reproducible benchmark evidence.
+- Relation extraction remains intentionally confidence-scored and honest about
+  heuristics.
+- Calls are resolved exactly where the provider has enough local information,
+  with name-only and pattern-based edges labeled as such.
+- Stable symbol IDs include signature disambiguation for duplicate names.
+- OO/type relations are emitted: `EXTENDS`, `INHERITS`, `IMPLEMENTS`,
+  `OVERRIDES`, `USES_TYPE`, `PARAM_TYPE`, and `RETURNS_TYPE`.
+- Field access and high-confidence return-flow relations are emitted:
+  `READS_FIELD`, `WRITES_FIELD`, `ACCESSES`, and `DATA_FLOWS`.
+- Service and async boundaries are emitted: route/client/channel edges plus
+  `HANDLES_GRPC`, `HANDLES_GRAPHQL`, `HANDLES_TRPC`, and `ASYNC_CALLS`.
+- IaC/configuration extraction emits HCL dependencies and `CONFIGURES` edges for
+  HCL blocks, Dockerfile stages, Kubernetes-looking YAML, and GitHub Actions.
+- Recent-history co-change extraction emits bounded `FILE_CHANGES_WITH` edges.
+- Language coverage is reported exactly through capabilities, warnings, and
+  partial failures. Additional formats remain an expansion goal.
+- Performance and memory claims are backed by local benchmark tooling; external
+  large-corpus proof runs remain an operations task.
 
 ## Design Rules
 
@@ -104,12 +112,12 @@ Add priority relations:
 - `TESTS`
 - `SIMILAR_TO`
 
-Defer until a later phase:
+Remain out of provider scope or later expansion:
 
-- `DATA_FLOWS`
-- `ASYNC_CALLS`
-- `FILE_CHANGES_WITH`
 - cross-repo `CROSS_*` edges, unless Brain asks for provider-level support.
+- deeper data-flow beyond high-confidence local return-flow.
+- Kustomize-specific semantics beyond generic Kubernetes YAML.
+- more file formats and parser grammars.
 
 ## Work Packages
 

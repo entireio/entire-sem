@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -16,6 +17,12 @@ type ChangedFile struct {
 	Status  string `json:"status"`
 	Path    string `json:"path"`
 	OldPath string `json:"old_path,omitempty"`
+}
+
+type FileCochange struct {
+	Left  string
+	Right string
+	Count int
 }
 
 func RepoRoot(ctx context.Context, cwd string) (string, error) {
@@ -98,6 +105,76 @@ func ChangedFiles(ctx context.Context, repo, base, head string, paths []string) 
 		}
 	}
 	return files, nil
+}
+
+func FileCochanges(ctx context.Context, repo string, maxCommits int) ([]FileCochange, error) {
+	if maxCommits <= 0 {
+		maxCommits = 256
+	}
+	out, err := run(ctx, repo, "git", "log", "--name-only", "--pretty=format:--entire-sem-commit--", "-n", strconv.Itoa(maxCommits), "--")
+	if err != nil {
+		return nil, err
+	}
+	counts := map[string]int{}
+	var commitFiles []string
+	flush := func() {
+		if len(commitFiles) < 2 {
+			commitFiles = nil
+			return
+		}
+		sort.Strings(commitFiles)
+		uniq := commitFiles[:0]
+		for _, path := range commitFiles {
+			if path == "" || strings.HasPrefix(path, "--") {
+				continue
+			}
+			if len(uniq) == 0 || uniq[len(uniq)-1] != path {
+				uniq = append(uniq, path)
+			}
+		}
+		for i := 0; i < len(uniq); i++ {
+			for j := i + 1; j < len(uniq); j++ {
+				counts[uniq[i]+"\x00"+uniq[j]]++
+			}
+		}
+		commitFiles = nil
+	}
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "--entire-sem-commit--" {
+			flush()
+			continue
+		}
+		if line != "" {
+			commitFiles = append(commitFiles, line)
+		}
+	}
+	flush()
+
+	pairs := make([]FileCochange, 0, len(counts))
+	for key, count := range counts {
+		if count < 2 {
+			continue
+		}
+		left, right, ok := strings.Cut(key, "\x00")
+		if !ok {
+			continue
+		}
+		pairs = append(pairs, FileCochange{Left: left, Right: right, Count: count})
+	}
+	sort.Slice(pairs, func(i, j int) bool {
+		if pairs[i].Count != pairs[j].Count {
+			return pairs[i].Count > pairs[j].Count
+		}
+		if pairs[i].Left != pairs[j].Left {
+			return pairs[i].Left < pairs[j].Left
+		}
+		return pairs[i].Right < pairs[j].Right
+	})
+	if len(pairs) > 1000 {
+		pairs = pairs[:1000]
+	}
+	return pairs, nil
 }
 
 func ShowFile(ctx context.Context, repo, rev, path string) (string, bool, error) {

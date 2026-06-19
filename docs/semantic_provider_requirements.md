@@ -310,10 +310,15 @@ Relation vocabulary:
   not resolved in this pass.
 - `USES_TYPE` — a function/method references a local type in its signature
   (resolved against known type symbols, so primitives and library types are
-  excluded). Covers parameter and return types without per-language signature
-  parsing; positional `PARAM_TYPE`/`RETURNS_TYPE` remain a finer follow-up.
+  excluded). This is the broad signature edge.
+- `PARAM_TYPE` / `RETURNS_TYPE` — a function/method references a local type in
+  parameter or return position. These positional edges are emitted only when the
+  parser captured enough signature text to classify the reference.
 - `HANDLES_ROUTE` — a handler registers an HTTP route (path on a line carrying
   routing context: a verb/route method call or mapping decorator).
+- `HANDLES_GRPC` / `HANDLES_GRAPHQL` / `HANDLES_TRPC` — service boundary edges
+  from protobuf RPC declarations, GraphQL operation literals, and tRPC
+  procedure declarations to stable external endpoint nodes.
 - `HTTP_CALLS` — an outbound HTTP client call (fetch/axios/requests/httpx/http
   client) to a path. Client calls and route registrations to the same path
   share an `external:route:<path>` node, enabling client-to-route matching.
@@ -326,6 +331,16 @@ Relation vocabulary:
   references another block (e.g. `aws_vpc.main.id`, `var.cidr`) depends on it.
   Blocks are indexed by their referenceable name and references resolved within
   the module.
+- `CONFIGURES` — configuration artifacts point at stable external config nodes:
+  HCL blocks, Dockerfile stages, Kubernetes-looking YAML sections, and GitHub
+  Actions workflow jobs.
+- `DATA_FLOWS` — high-confidence local return-flow edge from a callee to a
+  caller when a callable returns the result of another resolved callable.
+- `ASYNC_CALLS` — async call-site edge for language-level async constructs such
+  as Go `go` statements, JavaScript/TypeScript/Python `await`, and common
+  spawn/promise patterns when the target resolves to a known symbol.
+- `FILE_CHANGES_WITH` — bounded local git co-change edge between files that
+  repeatedly changed together in recent history.
 - `TESTS` — a test function maps to the unit it covers by naming convention
   (`TestFoo`/`testFoo` → `Foo`, `test_foo` → `foo`, `FooTest`/`FooSpec` → `Foo`)
   when the subject resolves to a non-test function/method/type.
@@ -341,8 +356,10 @@ otherwise. C# cannot syntactically separate a base class from interfaces, so it
 uses the `I<Upper>` naming heuristic at lower confidence. Per-language support
 is reported in `capabilities` under `relation_support_by_language`.
 
-Relation extraction continues to grow. Still to come: positional
-`PARAM_TYPE`/`RETURNS_TYPE`, and data-flow relations such as `ACCESSES`.
+Relation extraction continues to grow. Remaining known expansion areas are
+additional language/config formats and deeper flow analysis; the current
+contract already emits positional type, field-access, async, service-boundary,
+configuration, high-confidence return-flow, and bounded co-change edges.
 
 ## Warnings And Partial Failures
 

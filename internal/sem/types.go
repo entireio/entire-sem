@@ -1,7 +1,9 @@
 package sem
 
 import (
+	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -216,6 +218,245 @@ func channelEvents(content string) []channelEvent {
 		add("LISTENS_ON", m[1])
 	}
 	return out
+}
+
+type serviceBoundary struct {
+	Relation     string
+	Kind         string
+	Name         string
+	Confidence   float64
+	Reason       string
+	EvidenceKind string
+	WarningCodes []string
+}
+
+var (
+	graphqlOperationRe = regexp.MustCompile(`(?is)\b(query|mutation|subscription)\s+([A-Za-z_][A-Za-z0-9_]*)`)
+	trpcProcedureRe    = regexp.MustCompile(`(?m)([A-Za-z_$][\w$]*)\s*:\s*(?:publicProcedure|protectedProcedure|procedure)\s*\.\s*(query|mutation|subscription)\s*\(`)
+)
+
+func serviceBoundaries(symbol SymbolRecord, block string) []serviceBoundary {
+	var out []serviceBoundary
+	seen := map[string]bool{}
+	add := func(boundary serviceBoundary) {
+		key := boundary.Relation + "\x00" + boundary.Kind + "\x00" + boundary.Name
+		if boundary.Name == "" || seen[key] {
+			return
+		}
+		seen[key] = true
+		out = append(out, boundary)
+	}
+	if symbol.Language == "Protocol Buffers" && symbol.Kind == "rpc" {
+		add(serviceBoundary{
+			Relation:     "HANDLES_GRPC",
+			Kind:         "grpc",
+			Name:         strings.ReplaceAll(symbol.QualifiedName, ".", "/"),
+			Confidence:   0.95,
+			Reason:       "protobuf rpc declaration defines a gRPC method",
+			EvidenceKind: "grpc_rpc",
+		})
+	}
+	for _, match := range graphqlOperationRe.FindAllStringSubmatch(block, -1) {
+		add(serviceBoundary{
+			Relation:     "HANDLES_GRAPHQL",
+			Kind:         "graphql",
+			Name:         strings.ToLower(match[1]) + " " + match[2],
+			Confidence:   0.75,
+			Reason:       "GraphQL operation literal detected in symbol body",
+			EvidenceKind: "graphql_operation",
+		})
+	}
+	for _, match := range trpcProcedureRe.FindAllStringSubmatch(block, -1) {
+		add(serviceBoundary{
+			Relation:     "HANDLES_TRPC",
+			Kind:         "trpc",
+			Name:         match[2] + " " + match[1],
+			Confidence:   0.8,
+			Reason:       "tRPC procedure declaration detected in symbol body",
+			EvidenceKind: "trpc_procedure",
+		})
+	}
+	return out
+}
+
+var (
+	awaitCallRe     = regexp.MustCompile(`\bawait\s+([A-Za-z_$][\w$]*)\s*\(`)
+	goRoutineCallRe = regexp.MustCompile(`(?m)\bgo\s+([A-Za-z_]\w*)\s*\(`)
+	spawnCallRe     = regexp.MustCompile(`\b(?:Promise\.all|Promise\.race|asyncio\.gather|tokio::spawn|Task\.Run)\s*\([^)]*?([A-Za-z_]\w*)\s*\(`)
+	returnCallRe    = regexp.MustCompile(`(?m)\breturn\s+(?:await\s+)?([A-Za-z_$][\w$]*)\s*\(`)
+)
+
+func asyncCallNames(block string) []string {
+	stripped := stripCodeLiteralsAndComments(block)
+	seen := map[string]struct{}{}
+	addMatches := func(re *regexp.Regexp) {
+		for _, match := range re.FindAllStringSubmatch(stripped, -1) {
+			if len(match) > 1 && match[1] != "" {
+				seen[strings.TrimPrefix(match[1], "$")] = struct{}{}
+			}
+		}
+	}
+	addMatches(awaitCallRe)
+	addMatches(goRoutineCallRe)
+	addMatches(spawnCallRe)
+	return sortedStringSet(seen)
+}
+
+func returnFlowCallNames(block string) []string {
+	stripped := stripCodeLiteralsAndComments(block)
+	seen := map[string]struct{}{}
+	for _, match := range returnCallRe.FindAllStringSubmatch(stripped, -1) {
+		if len(match) > 1 && match[1] != "" {
+			seen[strings.TrimPrefix(match[1], "$")] = struct{}{}
+		}
+	}
+	return sortedStringSet(seen)
+}
+
+func sortedStringSet(seen map[string]struct{}) []string {
+	out := make([]string, 0, len(seen))
+	for value := range seen {
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func signatureTypeReferences(language, signature string) map[string][]string {
+	out := map[string][]string{"PARAM_TYPE": []string{}, "RETURNS_TYPE": []string{}}
+	paramText, returnText := splitSignatureTypes(language, signature)
+	out["PARAM_TYPE"] = typeNamesFromText(paramText)
+	out["RETURNS_TYPE"] = typeNamesFromText(returnText)
+	return out
+}
+
+func splitSignatureTypes(language, signature string) (string, string) {
+	open := strings.Index(signature, "(")
+	close := matchingParen(signature, open)
+	if open < 0 || close < 0 {
+		return "", ""
+	}
+	params := signature[open+1 : close]
+	after := strings.TrimSpace(signature[close+1:])
+	before := strings.TrimSpace(signature[:open])
+	switch language {
+	case "Go", "Rust":
+		return params, after
+	case "TypeScript", "JavaScript":
+		if strings.HasPrefix(after, ":") {
+			after = strings.TrimSpace(strings.TrimPrefix(after, ":"))
+		} else {
+			after = ""
+		}
+		return params, after
+	default:
+		fields := strings.Fields(before)
+		if len(fields) >= 2 {
+			return params, fields[len(fields)-2]
+		}
+		return params, ""
+	}
+}
+
+func matchingParen(s string, open int) int {
+	if open < 0 || open >= len(s) {
+		return -1
+	}
+	depth := 0
+	for i := open; i < len(s); i++ {
+		switch s[i] {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+func typeNamesFromText(text string) []string {
+	seen := map[string]struct{}{}
+	for name := range identifiersIn(text) {
+		if !likelyUserTypeName(name) {
+			continue
+		}
+		seen[name] = struct{}{}
+	}
+	return sortedStringSet(seen)
+}
+
+func likelyUserTypeName(name string) bool {
+	if !isTypeName(name) {
+		return false
+	}
+	switch strings.ToLower(name) {
+	case "any", "bool", "boolean", "byte", "char", "context", "double", "error", "float", "float32", "float64", "int", "int32", "int64", "integer", "long", "map", "number", "object", "promise", "record", "result", "self", "short", "string", "str", "void":
+		return false
+	default:
+		return true
+	}
+}
+
+type configTarget struct {
+	Name         string
+	Confidence   float64
+	Reason       string
+	EvidenceKind string
+	WarningCodes []string
+}
+
+func configTargets(symbol SymbolRecord, content string) []configTarget {
+	switch symbol.Language {
+	case "HCL":
+		if symbol.Kind == "block" {
+			return []configTarget{{
+				Name:         hclReferenceableName(symbol.QualifiedName),
+				Confidence:   0.9,
+				Reason:       "HCL block declares configurable infrastructure",
+				EvidenceKind: "hcl_block",
+			}}
+		}
+	case "YAML":
+		if isKubernetesPath(symbol.FilePath) || looksLikeKubernetesManifest(content) {
+			return []configTarget{{
+				Name:         "kubernetes/" + symbol.Name,
+				Confidence:   0.75,
+				Reason:       "YAML manifest configures a Kubernetes resource",
+				EvidenceKind: "kubernetes_yaml",
+			}}
+		}
+		if yamlWorkflowPath(symbol.FilePath) {
+			return []configTarget{{
+				Name:         "github-actions/" + symbol.Name,
+				Confidence:   0.85,
+				Reason:       "GitHub Actions workflow/job configures automation",
+				EvidenceKind: "workflow_yaml",
+			}}
+		}
+	case "Dockerfile":
+		if symbol.Kind == "stage" {
+			return []configTarget{{
+				Name:         "docker/" + symbol.Name,
+				Confidence:   0.85,
+				Reason:       "Dockerfile stage configures a container image",
+				EvidenceKind: "dockerfile_stage",
+			}}
+		}
+	}
+	return nil
+}
+
+func isKubernetesPath(path string) bool {
+	slash := filepath.ToSlash(strings.ToLower(path))
+	return strings.Contains(slash, "k8s/") || strings.Contains(slash, "kubernetes/") || strings.Contains(slash, "manifests/")
+}
+
+func looksLikeKubernetesManifest(content string) bool {
+	return regexp.MustCompile(`(?m)^apiVersion:\s*`).MatchString(content) &&
+		regexp.MustCompile(`(?m)^kind:\s*`).MatchString(content)
 }
 
 // httpCall is an outbound HTTP client call to a (method, path).
