@@ -1,11 +1,15 @@
 package gitutil
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os/exec"
+	"strconv"
 	"strings"
+	"sync"
 )
 
 type ChangedFile struct {
@@ -108,6 +112,113 @@ func ShowFile(ctx context.Context, repo, rev, path string) (string, bool, error)
 		return "", false, err
 	}
 	return out, true, nil
+}
+
+// BatchFileReader reads blobs from one revision through a persistent
+// `git cat-file --batch` process. It avoids spawning one git process per file
+// while preserving HEAD-tree snapshot semantics.
+type BatchFileReader struct {
+	rev    string
+	cmd    *exec.Cmd
+	stdin  io.WriteCloser
+	stdout *bufio.Reader
+	stderr *bytes.Buffer
+	mu     sync.Mutex
+	closed bool
+}
+
+func NewBatchFileReader(ctx context.Context, repo, rev string) (*BatchFileReader, error) {
+	cmd := exec.CommandContext(ctx, "git", "cat-file", "--batch")
+	cmd.Dir = repo
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, err
+	}
+	stdoutPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		_ = stdin.Close()
+		return nil, err
+	}
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		_ = stdin.Close()
+		return nil, fmt.Errorf("git cat-file --batch: %w", err)
+	}
+	return &BatchFileReader{
+		rev:    rev,
+		cmd:    cmd,
+		stdin:  stdin,
+		stdout: bufio.NewReader(stdoutPipe),
+		stderr: &stderr,
+	}, nil
+}
+
+func (r *BatchFileReader) ReadFile(path string) (string, bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed {
+		return "", false, fmt.Errorf("git cat-file batch reader is closed")
+	}
+	if _, err := fmt.Fprintf(r.stdin, "%s:%s\n", r.rev, path); err != nil {
+		return "", false, err
+	}
+	header, err := r.stdout.ReadString('\n')
+	if err != nil {
+		return "", false, fmt.Errorf("read git cat-file header: %w", err)
+	}
+	header = strings.TrimSuffix(header, "\n")
+	if strings.HasSuffix(header, " missing") {
+		return "", false, nil
+	}
+	fields := strings.Fields(header)
+	if len(fields) != 3 {
+		return "", false, fmt.Errorf("unexpected git cat-file header %q", header)
+	}
+	size, err := strconv.ParseInt(fields[2], 10, 64)
+	if err != nil {
+		return "", false, fmt.Errorf("parse git cat-file size %q: %w", fields[2], err)
+	}
+	if fields[1] != "blob" {
+		if _, err := io.CopyN(io.Discard, r.stdout, size+1); err != nil {
+			return "", false, err
+		}
+		return "", false, nil
+	}
+	content := make([]byte, size)
+	if _, err := io.ReadFull(r.stdout, content); err != nil {
+		return "", false, err
+	}
+	trailing, err := r.stdout.ReadByte()
+	if err != nil {
+		return "", false, err
+	}
+	if trailing != '\n' {
+		return "", false, fmt.Errorf("git cat-file blob missing trailing newline separator")
+	}
+	return string(content), true, nil
+}
+
+func (r *BatchFileReader) Close() error {
+	r.mu.Lock()
+	if r.closed {
+		r.mu.Unlock()
+		return nil
+	}
+	r.closed = true
+	stdin := r.stdin
+	r.mu.Unlock()
+	if err := stdin.Close(); err != nil {
+		return err
+	}
+	if err := r.cmd.Wait(); err != nil {
+		msg := strings.TrimSpace(r.stderr.String())
+		if msg == "" {
+			msg = err.Error()
+		}
+		return fmt.Errorf("git cat-file --batch: %s", msg)
+	}
+	return nil
 }
 
 func RemoteURLs(ctx context.Context, repo string) ([]string, error) {

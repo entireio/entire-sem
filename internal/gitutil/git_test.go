@@ -1,6 +1,7 @@
 package gitutil
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -72,6 +73,58 @@ func TestChangedFilesHandlesNewlinesAndTabsInPaths(t *testing.T) {
 	}
 	if len(files) != 1 || files[0].Status != "M" || files[0].Path != path {
 		t.Fatalf("files = %#v, want modified path %#v", files, path)
+	}
+}
+
+func TestBatchFileReaderReadsMultipleFilesFromHead(t *testing.T) {
+	repo := t.TempDir()
+	git(t, repo, "init")
+	git(t, repo, "config", "user.name", "Entire Sem Test")
+	git(t, repo, "config", "user.email", "sem@example.com")
+
+	for path, content := range map[string]string{
+		"a.go":     "package a\nfunc A() {}\n",
+		"dir/b.go": "package dir\nfunc B() {}\n",
+	} {
+		full := filepath.Join(repo, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git(t, repo, "add", ".")
+	git(t, repo, "commit", "-m", "add files")
+
+	reader, err := NewBatchFileReader(context.Background(), repo, "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := reader.Close(); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	for _, path := range []string{"a.go", "dir/b.go"} {
+		batched, ok, err := reader.ReadFile(path)
+		if err != nil {
+			t.Fatalf("batch read %s: %v", path, err)
+		}
+		if !ok {
+			t.Fatalf("batch read %s: not found", path)
+		}
+		shown, ok, err := ShowFile(t.Context(), repo, "HEAD", path)
+		if err != nil {
+			t.Fatalf("show %s: %v", path, err)
+		}
+		if !ok || batched != shown {
+			t.Fatalf("batch read %s = %q (ok %v), want %q", path, batched, ok, shown)
+		}
+	}
+	if _, ok, err := reader.ReadFile("missing.go"); err != nil || ok {
+		t.Fatalf("missing read ok=%v err=%v, want ok=false err=nil", ok, err)
 	}
 }
 

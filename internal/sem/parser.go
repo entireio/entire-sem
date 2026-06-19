@@ -130,7 +130,7 @@ func (TreeSitterParser) ParseWithStatus(path, content string) ([]Entity, string,
 	}
 
 	var entities []Entity
-	walkEntities(root, src, "", &entities)
+	walkEntities(root, src, spec.language, "", &entities)
 	if spec.language == "SQL" {
 		// Run the regex fallback extractors on comment-stripped source so that
 		// commented-out (or otherwise non-DDL) text is not picked up as a phantom
@@ -162,13 +162,13 @@ func languageForPath(path string) (languageSpec, bool) {
 	return spec, ok
 }
 
-func walkEntities(node *sitter.Node, src []byte, scope string, entities *[]Entity) {
+func walkEntities(node *sitter.Node, src []byte, language, scope string, entities *[]Entity) {
 	if !validNode(node) {
 		return
 	}
 	// Field/property declarations emit one entity per declared name and are not
 	// descended into (their name nodes would otherwise look like field accesses).
-	if fields, ok := fieldEntities(node, src, scope); ok {
+	if fields, ok := fieldEntities(node, src, language, scope); ok {
 		*entities = append(*entities, fields...)
 		return
 	}
@@ -181,7 +181,7 @@ func walkEntities(node *sitter.Node, src []byte, scope string, entities *[]Entit
 		}
 	}
 	for i := 0; i < int(node.NamedChildCount()); i++ {
-		walkEntities(node.NamedChild(i), src, childScope, entities)
+		walkEntities(node.NamedChild(i), src, language, childScope, entities)
 	}
 }
 
@@ -191,8 +191,11 @@ func walkEntities(node *sitter.Node, src []byte, scope string, entities *[]Entit
 // variables and parameters are never treated as fields). This pass handles Go
 // struct fields (field_declaration -> field_identifier); TypeScript/Java/C#
 // fields are added later.
-func fieldEntities(node *sitter.Node, src []byte, scope string) ([]Entity, bool) {
+func fieldEntities(node *sitter.Node, src []byte, language, scope string) ([]Entity, bool) {
 	if scope == "" {
+		return nil, false
+	}
+	if node.Type() == "field_declaration" && (language == "C" || language == "C++") {
 		return nil, false
 	}
 	switch node.Type() {

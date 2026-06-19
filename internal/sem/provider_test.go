@@ -281,6 +281,41 @@ func Check(v string) bool {
 	}
 }
 
+func TestMaxParseBytesSkipsOversizedFileWithPartialFailure(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "big.go", "package big\n\nfunc Large() {}\n"+strings.Repeat("// generated register mask\n", 20))
+
+	var files int
+	var symbols int
+	var summary SnapshotSummary
+	err := StreamSnapshot(t.Context(), repo, "test-version", ProviderSnapshotOptions{MaxParseBytes: 64}, func(rec any) error {
+		switch rec.(type) {
+		case FileRecord:
+			files++
+		case SymbolRecord:
+			symbols++
+		case SnapshotSummary:
+			summary = rec.(SnapshotSummary)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if files != 1 {
+		t.Fatalf("files = %d, want 1", files)
+	}
+	if symbols != 0 {
+		t.Fatalf("symbols = %d, want 0", symbols)
+	}
+	if summary.Stats.Files != 1 || summary.Stats.ParsedFiles != 0 {
+		t.Fatalf("summary stats = %#v, want file emitted but not parsed", summary.Stats)
+	}
+	if len(summary.PartialFailures) != 1 || summary.PartialFailures[0].Code != "E_FILE_TOO_LARGE" {
+		t.Fatalf("partial failures = %#v, want E_FILE_TOO_LARGE", summary.PartialFailures)
+	}
+}
+
 func TestGoStructFieldsEmittedAsSymbols(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "account.go", `package bank

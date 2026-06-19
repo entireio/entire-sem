@@ -224,9 +224,12 @@ Parameters and local variables are not fields and are not emitted as symbols.
 
 Field extraction covers Go/Rust struct fields, Java/C# class fields (and C#
 properties, mapped to `field`), and TypeScript class fields and
-interface/type-literal properties. It is declaration extraction only — Python
-instance attributes and other inference-based members are out of scope here and
-belong to later field-access inference.
+interface/type-literal properties. C/C++ struct/class fields are intentionally
+not emitted because C/C++ field-access relations are not part of the advertised
+relation matrix; emitting millions of C register/header fields adds indexing
+cost without a consumed relation. Field extraction is declaration extraction
+only — Python instance attributes and other inference-based members are out of
+scope here and belong to later field-access inference.
 
 The first stable symbol ID version should use a documented compound identity:
 
@@ -362,9 +365,10 @@ report enough aggregate stats to classify downstream reports as `ok`,
 No facts are dropped silently. A profile that omits relation families declares
 them in the header (`skipped_relation_families`) and in capabilities; a file
 that cannot be parsed or read emits a machine-readable partial failure. The
-provider currently applies no per-file size or count caps, so nothing is
-truncated; if such caps are added later, an exceeded cap must emit a
-machine-readable warning rather than silently omitting the file.
+provider applies a per-file parser input cap to avoid pathological generated
+files dominating large-repo runs. Files above the cap still emit file records,
+but symbol parsing is skipped and an `E_FILE_TOO_LARGE` partial failure is
+reported.
 
 ## Capability Reporting
 

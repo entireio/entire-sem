@@ -95,9 +95,14 @@ Treat the numbers as historical; re-run with the current streaming benchmark
 - **Route over-firing.** An early run showed gin emitting 1039 `HANDLES_ROUTE`
   edges — every path-like string literal counted as a route. Requiring routing
   context on the literal's line cut that to 206 (real registrations only).
-- **C/C++ throughput is the floor.** C/C++ parsed at ~1.5–3.5k LOC/s versus
-  ~10–23k LOC/s for Go and scripting languages, and the C/C++ repos are the
-  largest, so they dominated full-profile wall time.
+- **C/C++ throughput used to be the floor.** Early C/C++ runs parsed at
+  ~1.5–3.5k LOC/s because HEAD snapshots spawned `git show` once per file and
+  C/C++ field symbols were emitted even though C/C++ field-access relations are
+  not consumed. Current HEAD snapshots use one `git cat-file --batch` process,
+  syntax-only skips relation-resolution indexes, oversized generated files emit
+  `E_FILE_TOO_LARGE` instead of being parsed, and C/C++ field symbols are
+  suppressed. A Linux syntax-only run on this branch measured ~235k LOC/s over
+  38.2M LOC.
 - **Peak memory scaled with repo size.** The in-memory snapshot accumulated
   every relation with its evidence and source contents, reaching ~20 GB RSS on
   tensorflow. The streaming path (`StreamSnapshot`, now the benchmark's measured

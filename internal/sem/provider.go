@@ -27,6 +27,7 @@ const (
 	SchemaVersion         = "1.1"
 	ProviderName          = "entire-sem"
 	StableSymbolIDVersion = "compound-v1"
+	defaultMaxParseBytes  = 4 * 1024 * 1024
 )
 
 var relationTypes = []string{
@@ -250,6 +251,10 @@ type ProviderSnapshotOptions struct {
 	Worktree     bool
 	IgnoreFiles  []string
 	IncludeFiles []string
+	// MaxParseBytes caps parser input per file. Zero uses the provider default;
+	// negative disables the cap. Oversized files still emit file records and a
+	// partial failure, but symbol parsing is skipped.
+	MaxParseBytes int
 	// Profile selects the indexing depth: full (all relations), fast (symbol
 	// inventory, imports, shallow local calls, boundaries, IaC, no evidence), or
 	// syntax-only (file/symbol inventory and structure only). Empty means full.
@@ -431,6 +436,7 @@ type sourceContext struct {
 	tree     string
 	paths    []string
 	read     contentReader
+	close    func() error
 	warnings []ProviderWarning
 }
 
@@ -526,7 +532,14 @@ func StreamSnapshot(ctx context.Context, repo, providerVersion string, options P
 	if err != nil {
 		return err
 	}
+	if sc.close != nil {
+		defer sc.close()
+	}
 	spec := resolveProfile(options.Profile)
+	maxParseBytes := options.MaxParseBytes
+	if maxParseBytes == 0 {
+		maxParseBytes = defaultMaxParseBytes
+	}
 	if err := emit(leanHeader(sc, providerVersion, spec)); err != nil {
 		return err
 	}
@@ -564,6 +577,44 @@ func StreamSnapshot(ctx context.Context, repo, providerVersion string, options P
 			})
 			continue
 		}
+		contentBytes := []byte(content)
+		langSpec, ok := languageForPath(path)
+		if !ok {
+			failures = append(failures, PartialFailure{
+				Code:                 "E_UNSUPPORTED_LANGUAGE",
+				Severity:             "warning",
+				FilePath:             path,
+				EffectOnCompleteness: "file omitted because no parser is available",
+			})
+			continue
+		}
+		language := langSpec.language
+		file := FileRecord{
+			RecordType: "file",
+			ID:         fileID(sc.key, path),
+			Path:       path,
+			Blob:       contentHash(contentBytes),
+			Language:   language,
+			Bytes:      len(contentBytes),
+		}
+		if maxParseBytes > 0 && len(contentBytes) > maxParseBytes {
+			languageSet[language] = struct{}{}
+			if err := emit(file); err != nil {
+				return err
+			}
+			files = append(files, file)
+			lc := completenessLangs[language]
+			lc.Files++
+			completenessLangs[language] = lc
+			failures = append(failures, PartialFailure{
+				Code:                 "E_FILE_TOO_LARGE",
+				Severity:             "warning",
+				FilePath:             path,
+				EffectOnCompleteness: "file record emitted but symbol parsing skipped",
+				Detail:               fmt.Sprintf("file is %d bytes, above max parser input %d bytes", len(contentBytes), maxParseBytes),
+			})
+			continue
+		}
 		entities, language, parseStatus := parser.ParseWithStatus(path, content)
 		if language == "" {
 			failures = append(failures, PartialFailure{
@@ -584,15 +635,6 @@ func StreamSnapshot(ctx context.Context, repo, providerVersion string, options P
 			})
 		}
 		languageSet[language] = struct{}{}
-		contentBytes := []byte(content)
-		file := FileRecord{
-			RecordType: "file",
-			ID:         fileID(sc.key, path),
-			Path:       path,
-			Blob:       contentHash(contentBytes),
-			Language:   language,
-			Bytes:      len(contentBytes),
-		}
 		if err := emit(file); err != nil {
 			return err
 		}
@@ -734,7 +776,7 @@ func prepareSource(ctx context.Context, repo string, options ProviderSnapshotOpt
 	// explicit for callers that enforce no-egress provider execution.
 	_ = options.NoNetwork
 	useHead := !options.Worktree && commitErr == nil && treeErr == nil
-	paths, read, err := openSource(ctx, absRepo, useHead, options.IgnoreFiles, options.IncludeFiles)
+	paths, read, closeSource, err := openSource(ctx, absRepo, useHead, options.IgnoreFiles, options.IncludeFiles)
 	if err != nil {
 		return sourceContext{}, err
 	}
@@ -761,6 +803,7 @@ func prepareSource(ctx context.Context, repo string, options ProviderSnapshotOpt
 		tree:     tree,
 		paths:    paths,
 		read:     read,
+		close:    closeSource,
 		warnings: warnings,
 	}, nil
 }
@@ -1028,11 +1071,48 @@ func buildRelations(repoKey string, files []FileRecord, recordsByFile map[string
 	return relations
 }
 
+func emitStructuralRelations(repoKey string, files []FileRecord, recordsByFile map[string][]SymbolRecord, emit func(RelationRecord)) {
+	for _, file := range files {
+		for _, symbol := range recordsByFile[file.Path] {
+			emit(RelationRecord{
+				RecordType:    "relation",
+				FromID:        fileID(repoKey, symbol.FilePath),
+				ToID:          symbol.ID,
+				Type:          "DEFINES",
+				Confidence:    1,
+				Reason:        "symbol parsed from file",
+				RelationScope: "file",
+				Resolution:    "exact",
+				TargetKind:    "symbol",
+				WarningCodes:  []string{},
+			})
+			if symbol.ContainerID != "" {
+				emit(RelationRecord{
+					RecordType:    "relation",
+					FromID:        symbol.ContainerID,
+					ToID:          symbol.ID,
+					Type:          "CONTAINS",
+					Confidence:    1,
+					Reason:        "symbol qualified name is nested in container",
+					RelationScope: "file",
+					Resolution:    "exact",
+					TargetKind:    "symbol",
+					WarningCodes:  []string{},
+				})
+			}
+		}
+	}
+}
+
 // forEachRelation drives all relation extraction, passing each relation to emit
 // as it is produced. It never accumulates the full relation set, so a streaming
 // caller can write records out with bounded memory. Callers deduplicate:
 // buildRelations collects-then-dedupes; the streaming path dedupes on emit.
 func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[string][]SymbolRecord, readContent contentReader, spec profileSpec, emit func(RelationRecord)) {
+	if spec.name == ProfileSyntaxOnly {
+		emitStructuralRelations(repoKey, files, recordsByFile, emit)
+		return
+	}
 	symbolsByShortName := map[string][]SymbolRecord{}
 	symbolsByFile := map[string][]SymbolRecord{}
 	childNamesByContainer := map[string]map[string]bool{}
@@ -1950,28 +2030,39 @@ func externalParts(id string) (string, string) {
 // openSource lists the repository's files and returns a per-file content reader
 // that fetches one file at a time (from the git HEAD tree or the working tree),
 // so the snapshot never holds all source content in memory.
-func openSource(ctx context.Context, repo string, useHead bool, ignoreFiles, includeFiles []string) ([]string, contentReader, error) {
+func openSource(ctx context.Context, repo string, useHead bool, ignoreFiles, includeFiles []string) ([]string, contentReader, func() error, error) {
 	if useHead {
 		paths, err := gitutil.ListFiles(ctx, repo, "HEAD")
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
+		}
+		batch, err := gitutil.NewBatchFileReader(ctx, repo, "HEAD")
+		if err != nil {
+			return nil, nil, nil, err
 		}
 		read := func(path string) (string, bool) {
-			content, ok, err := gitutil.ShowFile(ctx, repo, "HEAD", path)
+			if strings.Contains(path, "\n") {
+				content, ok, err := gitutil.ShowFile(ctx, repo, "HEAD", path)
+				if err != nil || !ok {
+					return "", false
+				}
+				return content, true
+			}
+			content, ok, err := batch.ReadFile(path)
 			if err != nil || !ok {
 				return "", false
 			}
 			return content, true
 		}
-		return paths, read, nil
+		return paths, read, batch.Close, nil
 	}
 	ignores, err := loadWorktreeIgnoreMatcher(repo, ignoreFiles, includeFiles)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	paths, err := workingTreeFiles(repo, ignores)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	read := func(path string) (string, bool) {
 		full := filepath.Join(repo, filepath.FromSlash(path))
@@ -1985,7 +2076,7 @@ func openSource(ctx context.Context, repo string, useHead bool, ignoreFiles, inc
 		}
 		return string(content), true
 	}
-	return paths, read, nil
+	return paths, read, nil, nil
 }
 
 func workingTreeFiles(repo string, ignores ignoreMatcher) ([]string, error) {
