@@ -21,6 +21,15 @@ go run ./cmd/sem-bench -languages Go,Rust -limit 3
 go run ./cmd/sem-bench -skip-clone
 ```
 
+For long runs, add `-progress` to print provider phase telemetry to stderr
+without changing the JSON report. Guardrails can make local or CI runs fail
+after writing the report:
+
+```sh
+go run ./cmd/sem-bench -profile syntax-only -languages Go -limit 1 \
+  -min-loc-per-sec 50000 -max-rss-bytes 1000000000
+```
+
 ### Per-profile examples
 
 Each profile measures the production streaming path at a different depth. Small
@@ -50,6 +59,10 @@ and never enter our commits.
 Pass `-profile full|fast|syntax-only` to measure a given indexing depth (default
 `full`); the report records the profile, hardware (OS/arch/CPUs), and process
 peak RSS.
+
+The provider CLI also accepts `--progress` on `snapshot`, `symbols`, and
+`edges`. Progress lines are written to stderr and include phase, file/symbol/
+relation counts, heap, RSS, and elapsed time; stdout remains valid NDJSON.
 
 ## Comparing across phases
 

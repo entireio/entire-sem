@@ -50,12 +50,20 @@ type RepoMetrics struct {
 	Error             string         `json:"error,omitempty"`
 }
 
+type MeasureOptions struct {
+	Progress func(sem.ProgressEvent)
+}
+
 // MeasureRepo measures the streaming provider path (the production path) over
 // dir at the given profile and returns its metrics. StreamSnapshot is run with
 // NoNetwork set so the measured path stays no-egress; metrics are tallied from
 // the streamed records and the trailing summary. LOC is counted afterward so
 // the extra file reads do not skew wall time.
 func MeasureRepo(ctx context.Context, name, language, dir, providerVersion string, profile sem.Profile) (RepoMetrics, error) {
+	return MeasureRepoWithOptions(ctx, name, language, dir, providerVersion, profile, MeasureOptions{})
+}
+
+func MeasureRepoWithOptions(ctx context.Context, name, language, dir, providerVersion string, profile sem.Profile, opts MeasureOptions) (RepoMetrics, error) {
 	if profile == "" {
 		profile = sem.ProfileFull
 	}
@@ -77,7 +85,7 @@ func MeasureRepo(ctx context.Context, name, language, dir, providerVersion strin
 	var summary sem.SnapshotSummary
 	outputBytes := 0
 	start := time.Now()
-	err := sem.StreamSnapshot(ctx, dir, providerVersion, sem.ProviderSnapshotOptions{NoNetwork: true, Profile: profile}, func(record any) error {
+	err := sem.StreamSnapshot(ctx, dir, providerVersion, sem.ProviderSnapshotOptions{NoNetwork: true, Profile: profile, Progress: opts.Progress}, func(record any) error {
 		if encoded, marshalErr := json.Marshal(record); marshalErr == nil {
 			outputBytes += len(encoded) + 1 // record + newline, the NDJSON byte cost
 		}

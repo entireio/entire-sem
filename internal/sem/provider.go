@@ -13,8 +13,11 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/suhaanthayyil/entire-sem/internal/gitutil"
 )
@@ -259,6 +262,20 @@ type ProviderSnapshotOptions struct {
 	// inventory, imports, shallow local calls, boundaries, IaC, no evidence), or
 	// syntax-only (file/symbol inventory and structure only). Empty means full.
 	Profile Profile
+	// Progress, when non-nil, receives coarse local-only indexing telemetry.
+	// Callbacks run synchronously and should return quickly.
+	Progress func(ProgressEvent)
+}
+
+type ProgressEvent struct {
+	Phase       string
+	FilesTotal  int
+	FilesDone   int
+	Symbols     int
+	Relations   int
+	HeapAlloc   uint64
+	MaxRSSBytes uint64
+	Elapsed     time.Duration
 }
 
 // Profile names the indexing depth a snapshot is produced at.
@@ -540,6 +557,26 @@ func StreamSnapshot(ctx context.Context, repo, providerVersion string, options P
 	if maxParseBytes == 0 {
 		maxParseBytes = defaultMaxParseBytes
 	}
+	progressStart := time.Now()
+	progressEvery := 1024
+	emitProgress := func(phase string, filesDone int, symbols int, relations int) {
+		if options.Progress == nil {
+			return
+		}
+		var mem runtime.MemStats
+		runtime.ReadMemStats(&mem)
+		options.Progress(ProgressEvent{
+			Phase:       phase,
+			FilesTotal:  len(sc.paths),
+			FilesDone:   filesDone,
+			Symbols:     symbols,
+			Relations:   relations,
+			HeapAlloc:   mem.HeapAlloc,
+			MaxRSSBytes: maxRSSBytes(),
+			Elapsed:     time.Since(progressStart),
+		})
+	}
+	emitProgress("start", 0, 0, 0)
 	if err := emit(leanHeader(sc, providerVersion, spec)); err != nil {
 		return err
 	}
@@ -552,10 +589,11 @@ func StreamSnapshot(ctx context.Context, repo, providerVersion string, options P
 	recordsByFile := map[string][]SymbolRecord{}
 	structuralByFile := map[string][]structuralSymbol{}
 	symbolCount := 0
+	relationCount := 0
 	parsedFileCount := 0
 
 	// Phase 1: parse + emit file/symbol records, build indexes, discard content.
-	for _, path := range sc.paths {
+	for i, path := range sc.paths {
 		if !Supported(path) {
 			if hint := unsupportedLanguageHint(path); hint != "" {
 				failures = append(failures, PartialFailure{
@@ -652,14 +690,18 @@ func StreamSnapshot(ctx context.Context, repo, providerVersion string, options P
 		if spec.name == ProfileSyntaxOnly {
 			structuralByFile[path] = compactStructuralSymbols(fileSymbols)
 		} else {
-			recordsByFile[path] = fileSymbols
+			recordsByFile[path] = retainedSymbolsForProfile(fileSymbols, spec)
 		}
 		symbolCount += len(fileSymbols)
 		lc := completenessLangs[language]
 		lc.Files++
 		lc.Symbols += len(fileSymbols)
 		completenessLangs[language] = lc
+		if (i+1)%progressEvery == 0 {
+			emitProgress("parse", i+1, symbolCount, relationCount)
+		}
 	}
+	emitProgress("parse", len(sc.paths), symbolCount, relationCount)
 
 	// Phase 2: resolve relations from indexes, re-reading content per file.
 	// Relation dedup uses compact 64-bit hashed keys rather than the full
@@ -670,7 +712,6 @@ func StreamSnapshot(ctx context.Context, repo, providerVersion string, options P
 	seenRelation := map[uint64]struct{}{}
 	externalsByID := map[string]ExternalRecord{}
 	relationsByType := map[string]int{}
-	relationCount := 0
 	var emitErr error
 	emitRelation := func(r RelationRecord, symbolsByID map[string]SymbolRecord, filesByID map[string]FileRecord) {
 		if emitErr != nil {
@@ -700,6 +741,9 @@ func StreamSnapshot(ctx context.Context, repo, providerVersion string, options P
 		}
 		relationsByType[r.Type]++
 		relationCount++
+		if relationCount%progressEvery == 0 {
+			emitProgress("relations", len(sc.paths), symbolCount, relationCount)
+		}
 		emitErr = emit(r)
 	}
 	if spec.name == ProfileSyntaxOnly {
@@ -715,6 +759,7 @@ func StreamSnapshot(ctx context.Context, repo, providerVersion string, options P
 	if emitErr != nil {
 		return emitErr
 	}
+	emitProgress("relations", len(sc.paths), symbolCount, relationCount)
 
 	externalIDs := make([]string, 0, len(externalsByID))
 	for id := range externalsByID {
@@ -726,6 +771,7 @@ func StreamSnapshot(ctx context.Context, repo, providerVersion string, options P
 			return err
 		}
 	}
+	emitProgress("summary", len(sc.paths), symbolCount, relationCount)
 
 	warnings := sc.warnings
 	if warnings == nil {
@@ -749,6 +795,18 @@ func StreamSnapshot(ctx context.Context, repo, providerVersion string, options P
 		},
 		Completeness: CompletenessReport{Languages: completenessLangs, Relations: relationsByType},
 	})
+}
+
+func maxRSSBytes() uint64 {
+	var ru syscall.Rusage
+	if err := syscall.Getrusage(syscall.RUSAGE_SELF, &ru); err != nil {
+		return 0
+	}
+	rss := uint64(ru.Maxrss)
+	if runtime.GOOS == "linux" {
+		rss *= 1024
+	}
+	return rss
 }
 
 // relationDedupKey hashes a relation's identity (from, to, type) to a compact
@@ -1105,6 +1163,20 @@ func compactStructuralSymbols(records []SymbolRecord) []structuralSymbol {
 	return out
 }
 
+func retainedSymbolsForProfile(records []SymbolRecord, spec profileSpec) []SymbolRecord {
+	if spec.name == ProfileFull {
+		return records
+	}
+	out := make([]SymbolRecord, 0, len(records))
+	for _, record := range records {
+		record.StableIDVersion = ""
+		record.Signature = ""
+		record.BodyHash = ""
+		out = append(out, record)
+	}
+	return out
+}
+
 func emitStructuralRelations(repoKey string, files []FileRecord, recordsByFile map[string][]SymbolRecord, emit func(RelationRecord)) {
 	for _, file := range files {
 		for _, symbol := range recordsByFile[file.Path] {
@@ -1180,6 +1252,12 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 		emitStructuralRelations(repoKey, files, recordsByFile, emit)
 		return
 	}
+	needsTool := spec.emits("HANDLES_TOOL")
+	needsCallScan := spec.emits("CALLS") && spec.callResolution != "none"
+	needsReceiverCalls := spec.emits("CALLS") && spec.callResolution == "full"
+	needsFields := spec.emits("READS_FIELD") || spec.emits("WRITES_FIELD") || spec.emits("ACCESSES")
+	needsTypes := spec.emits("EXTENDS") || spec.emits("IMPLEMENTS") || spec.emits("OVERRIDES")
+	needsOverrides := spec.emits("OVERRIDES")
 	symbolsByShortName := map[string][]SymbolRecord{}
 	symbolsByFile := map[string][]SymbolRecord{}
 	childNamesByContainer := map[string]map[string]bool{}
@@ -1217,7 +1295,7 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 					WarningCodes:  []string{},
 				})
 			}
-			if symbol.Kind == "tool" && symbol.ContainerID != "" {
+			if needsTool && symbol.Kind == "tool" && symbol.ContainerID != "" {
 				emit(RelationRecord{
 					RecordType:    "relation",
 					FromID:        symbol.ContainerID,
@@ -1240,18 +1318,18 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 			}
 			symbolsByShortName[symbol.Name] = append(symbolsByShortName[symbol.Name], symbol)
 			symbolsByFile[symbol.FilePath] = append(symbolsByFile[symbol.FilePath], symbol)
-			if symbol.ContainerID != "" {
+			if symbol.ContainerID != "" && (needsCallScan || needsReceiverCalls || needsFields || needsOverrides) {
 				if childNamesByContainer[symbol.ContainerID] == nil {
 					childNamesByContainer[symbol.ContainerID] = map[string]bool{}
 				}
 				childNamesByContainer[symbol.ContainerID][symbol.Name] = true
-				if symbol.Kind == "method" {
+				if (needsReceiverCalls || needsOverrides) && symbol.Kind == "method" {
 					if methodsByContainer[symbol.ContainerID] == nil {
 						methodsByContainer[symbol.ContainerID] = map[string]SymbolRecord{}
 					}
 					methodsByContainer[symbol.ContainerID][symbol.Name] = symbol
 				}
-				if symbol.Kind == "field" {
+				if needsFields && symbol.Kind == "field" {
 					if fieldsByContainer[symbol.ContainerID] == nil {
 						fieldsByContainer[symbol.ContainerID] = map[string]SymbolRecord{}
 					}
@@ -1440,14 +1518,14 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 					emit(r)
 				}
 			}
-			if spec.emits("READS_FIELD") || spec.emits("WRITES_FIELD") || spec.emits("ACCESSES") {
+			if needsFields {
 				for _, r := range fieldAccessRelations(from, block, fieldsByContainer, symbolsByShortName) {
 					emit(r)
 				}
 			}
 		}
 
-		if spec.emits("EXTENDS") || spec.emits("IMPLEMENTS") || spec.emits("OVERRIDES") {
+		if needsTypes {
 			for _, r := range typeRelationsForFile(repoKey, file, content, recordsByFile[file.Path], symbolsByFile[file.Path], symbolsByShortName) {
 				if r.Type == "EXTENDS" || r.Type == "IMPLEMENTS" {
 					inheritanceEdges = append(inheritanceEdges, r)
@@ -1457,7 +1535,7 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 		}
 	}
 
-	if spec.emits("OVERRIDES") {
+	if needsOverrides {
 		for _, r := range overrideRelations(inheritanceEdges, methodsByContainer) {
 			emit(r)
 		}

@@ -46,7 +46,7 @@ func TestSkippedRepoReportsSelectedProfile(t *testing.T) {
 	lockPath := filepath.Join(dir, "lock.json")
 
 	// skip-clone so no network is touched; syntax-only is the selected profile.
-	err := run(manifestPath, cacheDir, outDir, lockPath, "", "syntax-only", 0, 1, 1, true, false, "bench-test")
+	err := run(manifestPath, cacheDir, outDir, lockPath, "", "syntax-only", 0, 1, 1, true, false, "bench-test", false, 0, 0)
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -64,6 +64,22 @@ func TestSkippedRepoReportsSelectedProfile(t *testing.T) {
 	}
 	if got.Profile != "syntax-only" {
 		t.Fatalf("skipped repo profile = %q, want syntax-only", got.Profile)
+	}
+}
+
+func TestGuardrailFailureAfterReport(t *testing.T) {
+	dir := t.TempDir()
+	manifestPath := filepath.Join(dir, "manifest.json")
+	if err := os.WriteFile(manifestPath, []byte(`{"languages":{"Go":["owner/not-cloned"]}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	outDir := filepath.Join(dir, "out")
+	err := run(manifestPath, filepath.Join(dir, "cache"), outDir, filepath.Join(dir, "lock.json"), "", "syntax-only", 0, 1, 1, true, false, "bench-test", false, 1, 0)
+	if err == nil {
+		t.Fatalf("expected guardrail failure")
+	}
+	if report := readOnlyReport(t, outDir); report.Profile != "syntax-only" {
+		t.Fatalf("report was not written before guardrail failure: %#v", report)
 	}
 }
 
