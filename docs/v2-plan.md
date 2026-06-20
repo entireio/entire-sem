@@ -37,8 +37,9 @@ versioned, confidence-scored facts that `entire-brain` can persist and query.
 - Service and async boundaries are emitted: route/client/channel edges plus
   `HANDLES_GRPC`, `HANDLES_GRAPHQL`, `HANDLES_TRPC`, and `ASYNC_CALLS`.
 - IaC/configuration extraction emits HCL dependencies and `CONFIGURES` edges for
-  HCL blocks, Dockerfile stages, Kubernetes-looking YAML, Kustomize, common
-  JSON/TOML/XML project config, Make targets, and GitHub Actions.
+  HCL blocks, Dockerfile stages, Kubernetes-looking YAML, Kubernetes
+  image/env/port declarations, Kustomize, common JSON/TOML/XML project config,
+  Make targets, and GitHub Actions.
 - Recent-history co-change extraction emits bounded `FILE_CHANGES_WITH` edges.
 - Language coverage is reported exactly through capabilities, warnings, and
   partial failures. Additional formats remain an expansion goal.
@@ -277,6 +278,9 @@ Delivered:
 - Kubernetes-looking YAML emits config sections plus conservative external
   resource dependencies for common `ConfigMap`, `Secret`, service account, and
   persistent-volume-claim references.
+- Kubernetes resource symbols emit common container image, environment-variable,
+  and port declarations as `CONFIGURES` facts, and Services can depend on
+  matching workload resources by selector labels.
 - Kustomize manifests emit overlay/resource sections plus external
   dependencies for listed resources, patches, and components.
 - Terraform/HCL blocks emit resources, modules, variables, outputs, config
@@ -285,9 +289,9 @@ Delivered:
 
 Open:
 
-- Port/image/env-var and selector-level resource matching is still partial.
-- Cross-file Kubernetes resource resolution is still endpoint-based unless a
+- Cross-file Kubernetes resource resolution remains endpoint-based unless a
   richer resource symbol exists in the same provider snapshot.
+- Broad framework-specific IaC/service modeling remains partial.
 
 Acceptance:
 

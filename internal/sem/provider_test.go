@@ -163,6 +163,11 @@ spec:
       containers:
         - name: api
           image: example/api:latest
+          ports:
+            - containerPort: 8080
+          env:
+            - name: LOG_LEVEL
+              value: debug
           envFrom:
             - configMapRef:
                 name: api-config
@@ -184,6 +189,15 @@ spec:
 	} {
 		if !hasRelationTo(snapshot.Relations, "RESOURCE_DEPENDS_ON", target) {
 			t.Fatalf("missing Kubernetes dependency to %s in %#v", target, snapshot.Relations)
+		}
+	}
+	for _, target := range []string{
+		"external:config:kubernetes/env/LOG_LEVEL",
+		"external:config:kubernetes/image/example/api:latest",
+		"external:config:kubernetes/port/8080",
+	} {
+		if !hasRelationTo(snapshot.Relations, "CONFIGURES", target) {
+			t.Fatalf("missing Kubernetes config fact to %s in %#v", target, snapshot.Relations)
 		}
 	}
 }

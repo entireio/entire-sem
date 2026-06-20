@@ -19,6 +19,8 @@ go run ./cmd/sem-bench -skip-clone -manifest bench/repos.json -languages C -limi
   suffixes/extensions.
 - Kubernetes resource extraction and Service-selector dependency tests pass
   (`Service` -> matching workload resource by selector labels).
+- Kubernetes resource config tests pass for common container image,
+  environment-variable, and port declarations emitted as `CONFIGURES` facts.
 - Retained benchmark reports:
   - `bench/results/result-1781937160.json`: Go/gin, syntax-only, 28,618 LOC,
     152,621 LOC/s.

@@ -421,12 +421,14 @@ func configTargets(symbol SymbolRecord, content string) []configTarget {
 		}
 	case "YAML":
 		if symbol.Kind == "resource" && (isKubernetesPath(symbol.FilePath) || looksLikeKubernetesManifest(content)) {
-			return []configTarget{{
+			targets := []configTarget{{
 				Name:         "kubernetes/" + strings.ToLower(symbol.QualifiedName),
 				Confidence:   0.9,
 				Reason:       "YAML manifest declares a Kubernetes resource",
 				EvidenceKind: "kubernetes_resource",
 			}}
+			targets = append(targets, kubernetesResourceConfigTargets(content)...)
+			return targets
 		}
 		if isKubernetesPath(symbol.FilePath) || looksLikeKubernetesManifest(content) {
 			return []configTarget{{
@@ -498,6 +500,101 @@ func configTargets(symbol SymbolRecord, content string) []configTarget {
 		}
 	}
 	return nil
+}
+
+func kubernetesResourceConfigTargets(content string) []configTarget {
+	var targets []configTarget
+	for _, image := range kubernetesImageRefs(content) {
+		targets = append(targets, configTarget{
+			Name:         "kubernetes/image/" + image,
+			Confidence:   0.82,
+			Reason:       "Kubernetes resource references a container image",
+			EvidenceKind: "kubernetes_image",
+		})
+	}
+	for _, env := range kubernetesEnvVarRefs(content) {
+		targets = append(targets, configTarget{
+			Name:         "kubernetes/env/" + env,
+			Confidence:   0.78,
+			Reason:       "Kubernetes resource declares an environment variable",
+			EvidenceKind: "kubernetes_env",
+		})
+	}
+	for _, port := range kubernetesPortRefs(content) {
+		targets = append(targets, configTarget{
+			Name:         "kubernetes/port/" + port,
+			Confidence:   0.78,
+			Reason:       "Kubernetes resource declares a port",
+			EvidenceKind: "kubernetes_port",
+		})
+	}
+	return targets
+}
+
+func kubernetesImageRefs(content string) []string {
+	re := regexp.MustCompile(`(?im)^\s*image:\s*["']?([^"'\s#]+)`)
+	var refs []string
+	for _, match := range re.FindAllStringSubmatch(content, -1) {
+		if len(match) == 2 {
+			refs = append(refs, strings.TrimSpace(match[1]))
+		}
+	}
+	return dedupeConfigValues(refs)
+}
+
+func kubernetesEnvVarRefs(content string) []string {
+	var refs []string
+	inEnv := false
+	envIndent := -1
+	nameRe := regexp.MustCompile(`^\s*-\s*name:\s*["']?([A-Za-z_][A-Za-z0-9_]*)`)
+	for _, line := range strings.Split(content, "\n") {
+		if yamlIgnoreLine(line) {
+			continue
+		}
+		indent := yamlIndent(line)
+		if inEnv && indent <= envIndent {
+			inEnv = false
+			envIndent = -1
+		}
+		if key, ok := yamlLineKey(line); ok && key == "env" {
+			inEnv = true
+			envIndent = indent
+			continue
+		}
+		if !inEnv {
+			continue
+		}
+		if match := nameRe.FindStringSubmatch(line); len(match) == 2 {
+			refs = append(refs, match[1])
+		}
+	}
+	return dedupeConfigValues(refs)
+}
+
+func kubernetesPortRefs(content string) []string {
+	re := regexp.MustCompile(`(?im)^\s*(?:-\s*)?(?:containerPort|targetPort|nodePort|port):\s*["']?([0-9]+)`)
+	var refs []string
+	for _, match := range re.FindAllStringSubmatch(content, -1) {
+		if len(match) == 2 {
+			refs = append(refs, strings.TrimSpace(match[1]))
+		}
+	}
+	return dedupeConfigValues(refs)
+}
+
+func dedupeConfigValues(values []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func isKubernetesPath(path string) bool {
