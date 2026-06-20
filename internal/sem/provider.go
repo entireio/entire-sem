@@ -8368,22 +8368,79 @@ func railsRouteRegistrations(content string) []railsRouteRegistration {
 	}
 	toRe := regexp.MustCompile(`(?is)\b(?:get|post|put|patch|delete|match)\s+["']([^"']+)["']\s*,\s*to:\s*["']([A-Za-z0-9_/]+)#([A-Za-z_][A-Za-z0-9_]*)["']`)
 	hashRocketRe := regexp.MustCompile(`(?is)\b(?:get|post|put|patch|delete|match)\s+["']([^"']+)["']\s*=>\s*["']([A-Za-z0-9_/]+)#([A-Za-z_][A-Za-z0-9_]*)["']`)
-	for _, match := range toRe.FindAllStringSubmatch(content, -1) {
-		if len(match) == 4 {
-			add(match[1], match[2], match[3], "rails_route_to")
+	scan := func(body, routePrefix, controllerPrefix, evidenceSuffix string) {
+		for _, match := range toRe.FindAllStringSubmatch(body, -1) {
+			if len(match) == 4 {
+				add(joinRoutePaths(routePrefix, match[1]), railsJoinControllerPrefix(controllerPrefix, match[2]), match[3], "rails_route_to"+evidenceSuffix)
+			}
+		}
+		for _, match := range hashRocketRe.FindAllStringSubmatch(body, -1) {
+			if len(match) == 4 {
+				add(joinRoutePaths(routePrefix, match[1]), railsJoinControllerPrefix(controllerPrefix, match[2]), match[3], "rails_route_hash_rocket"+evidenceSuffix)
+			}
+		}
+		for _, resource := range railsResourceDeclarations(body) {
+			for _, route := range railsResourceRoutes(resource.Name, resource.Actions) {
+				add(joinRoutePaths(routePrefix, route.Path), railsJoinControllerPrefix(controllerPrefix, resource.Name), route.Action, resource.EvidenceKind+evidenceSuffix)
+			}
 		}
 	}
-	for _, match := range hashRocketRe.FindAllStringSubmatch(content, -1) {
-		if len(match) == 4 {
-			add(match[1], match[2], match[3], "rails_route_hash_rocket")
-		}
-	}
-	for _, resource := range railsResourceDeclarations(content) {
-		for _, route := range railsResourceRoutes(resource.Name, resource.Actions) {
-			add(route.Path, resource.Name, route.Action, resource.EvidenceKind)
-		}
+	topLevel, scoped := railsScopedRouteBlocks(content)
+	scan(topLevel, "", "", "")
+	for _, block := range scoped {
+		scan(block.Body, block.RoutePrefix, block.ControllerPrefix, block.EvidenceSuffix)
 	}
 	return registrations
+}
+
+type railsScopedRouteBlock struct {
+	RoutePrefix      string
+	ControllerPrefix string
+	Body             string
+	EvidenceSuffix   string
+}
+
+func railsScopedRouteBlocks(content string) (string, []railsScopedRouteBlock) {
+	re := regexp.MustCompile(`(?ims)^\s*(scope\s+["']([^"']+)["']|namespace\s+:([A-Za-z_][A-Za-z0-9_]*))\s+do\s*(.*?)^\s*end\b`)
+	var blocks []railsScopedRouteBlock
+	top := re.ReplaceAllStringFunc(content, func(block string) string {
+		match := re.FindStringSubmatch(block)
+		if len(match) != 5 {
+			return block
+		}
+		if match[2] != "" {
+			blocks = append(blocks, railsScopedRouteBlock{
+				RoutePrefix:    normalizeSlashRoute(match[2]),
+				Body:           match[4],
+				EvidenceSuffix: "_scope",
+			})
+			return ""
+		}
+		if match[3] != "" {
+			ns := strings.TrimSpace(match[3])
+			blocks = append(blocks, railsScopedRouteBlock{
+				RoutePrefix:      normalizeSlashRoute(ns),
+				ControllerPrefix: ns,
+				Body:             match[4],
+				EvidenceSuffix:   "_namespace",
+			})
+			return ""
+		}
+		return block
+	})
+	return top, blocks
+}
+
+func railsJoinControllerPrefix(prefix, controller string) string {
+	prefix = strings.Trim(strings.TrimSpace(filepath.ToSlash(prefix)), "/")
+	controller = strings.Trim(strings.TrimSpace(filepath.ToSlash(controller)), "/")
+	if prefix == "" {
+		return controller
+	}
+	if controller == "" || strings.HasPrefix(controller, prefix+"/") {
+		return controller
+	}
+	return prefix + "/" + controller
 }
 
 type railsResourceDeclaration struct {

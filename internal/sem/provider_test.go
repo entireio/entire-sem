@@ -4505,6 +4505,81 @@ end
 	}
 }
 
+func TestRailsScopeAndNamespaceRoutesComposeControllerActions(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "config/routes.rb", `Rails.application.routes.draw do
+  scope "/api" do
+    resources :users, only: [:show]
+    get "/health", to: "health#show"
+  end
+
+  namespace :admin do
+    resources :reports, only: [:show]
+    get "/status", to: "status#show"
+  end
+end
+`)
+	writeFile(t, repo, "app/controllers/users_controller.rb", `class UsersController
+  def show
+    "ok"
+  end
+end
+`)
+	writeFile(t, repo, "app/controllers/health_controller.rb", `class HealthController
+  def show
+    "ok"
+  end
+end
+`)
+	writeFile(t, repo, "app/controllers/admin/reports_controller.rb", `module Admin
+  class ReportsController
+    def show
+      "ok"
+    end
+
+    def ping
+      HTTP.get("/admin/reports/:id")
+    end
+  end
+end
+`)
+	writeFile(t, repo, "app/controllers/admin/status_controller.rb", `module Admin
+  class StatusController
+    def show
+      "ok"
+    end
+  end
+end
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []struct {
+		handler string
+		route   string
+	}{
+		{"UsersController.show", "/api/users/:id"},
+		{"HealthController.show", "/api/health"},
+		{"ReportsController.show", "/admin/reports/:id"},
+		{"StatusController.show", "/admin/status"},
+	} {
+		if !hasRelationToExternalRoute(snapshot.Relations, "HANDLES_ROUTE", want.handler, want.route) {
+			t.Fatalf("missing Rails scoped route %s -> %s in %#v", want.handler, want.route, snapshot.Relations)
+		}
+	}
+	if hasRelationToExternalRoute(snapshot.Relations, "HANDLES_ROUTE", "UsersController.show", "/users/:id") {
+		t.Fatalf("Rails scope emitted unmounted child route: %#v", snapshot.Relations)
+	}
+	if hasRelationToExternalRoute(snapshot.Relations, "HANDLES_ROUTE", "ReportsController.show", "/reports/:id") {
+		t.Fatalf("Rails namespace emitted unmounted child route: %#v", snapshot.Relations)
+	}
+	if !hasRelationByLastSegment(snapshot.Relations, "CALLS", "ReportsController.ping", "ReportsController.show") {
+		t.Fatalf("missing route bridge CALLS ping->ReportsController.show: %#v", snapshot.Relations)
+	}
+}
+
 func TestRailsDefaultResourcesAndExceptResolveControllerActions(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "config/routes.rb", `Rails.application.routes.draw do

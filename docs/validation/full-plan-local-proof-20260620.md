@@ -122,9 +122,10 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
   groups resolve local controller methods, Symfony/PHP route attributes compose
   class and method routes, and matching PHP `Http::` facade calls bridge to
   handlers as direct `CALLS`.
-- Ruby on Rails static route declarations and `resources` declarations with
-  default REST actions, `only:`, and `except:` resolve local controller
-  actions, and matching HTTP client calls bridge to handlers as direct `CALLS`.
+- Ruby on Rails static route declarations, `scope` blocks, `namespace` blocks,
+  and `resources` declarations with default REST actions, `only:`, and
+  `except:` resolve local controller actions, compose route/controller prefixes,
+  and matching HTTP client calls bridge to handlers as direct `CALLS`.
 - Go `net/http` `HandleFunc` registrations and `HandlerFunc` wrappers resolve
   static or local-literal-constant paths to same-file local handler symbols,
   including unique same-file selector handler expressions, and bridge matching
@@ -438,6 +439,9 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
   - `bench/results/result-1781980081.json`: Go/gin, syntax-only, 28,618 LOC,
     154,710 LOC/s, max RSS 29,130,752 bytes, estimated output 1,902,637
     bytes; run after Laravel controller-group route extraction.
+  - `bench/results/result-1781980407.json`: Go/gin, syntax-only, 28,618 LOC,
+    162,532 LOC/s, max RSS 26,951,680 bytes, estimated output 1,902,640
+    bytes; run after Rails scope/namespace route extraction.
   - `bench/results/result-1781972446.json`: Go/gin, syntax-only, 28,618 LOC,
     162,982 LOC/s, max RSS 26,804,224 bytes, estimated output 1,902,630
     bytes; run after IngressClass reference extraction.
@@ -623,6 +627,9 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
     bytes.
   - `bench/results/result-1781980081.json`: Go/gin, syntax-only, 28,618 LOC,
     154,710 LOC/s, max RSS 29,130,752 bytes, estimated output 1,902,637
+    bytes.
+  - `bench/results/result-1781980407.json`: Go/gin, syntax-only, 28,618 LOC,
+    162,532 LOC/s, max RSS 26,951,680 bytes, estimated output 1,902,640
     bytes.
 
 ## Remaining Honesty Notes
