@@ -5418,6 +5418,33 @@ func TestSvelteKitRouteBoundaryBridgesHTTPClient(t *testing.T) {
 	}
 }
 
+func TestRemixRouteBoundaryBridgesHTTPClient(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "app/routes/users.$id.tsx", `export async function loader({ params }): Promise<Response> {
+  return Response.json({ id: params.id })
+}
+`)
+	writeFile(t, repo, "app/client.ts", `export async function ping(): Promise<unknown> {
+  return fetch("/users/$id")
+}
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasRelationByLastSegment(snapshot.Relations, "HTTP_CALLS", "ping", "/users/{id}") {
+		t.Fatalf("missing HTTP_CALLS to Remix route boundary: %#v", snapshot.Relations)
+	}
+	if !hasRelationByLastSegment(snapshot.Relations, "CALLS", "ping", "/users/{id}") {
+		t.Fatalf("missing route bridge CALLS ping->Remix route boundary: %#v", snapshot.Relations)
+	}
+	route := symbolByKindAndName(snapshot.Symbols, "route", "/users/{id}")
+	if route.ID == "" || route.ContainerID == "" || route.FilePath != "app/routes/users.$id.tsx" {
+		t.Fatalf("missing Remix route boundary sourced to handler: %#v", route)
+	}
+}
+
 func TestCapabilitiesAdvertiseExpandedLanguageSet(t *testing.T) {
 	caps := Capabilities()
 	if caps.SchemaVersion != SchemaVersion || caps.Provider != ProviderName {

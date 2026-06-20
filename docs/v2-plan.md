@@ -325,9 +325,9 @@ Tasks:
   Symfony/PHP route attributes compose class and method routes. Direct Fastify/app/server JS/TS
   route registrations resolve local handler functions. Ruby on Rails static
   route declarations and `resources` declarations with default REST actions,
-  `only:`, and `except:` resolve local controller actions. Next.js and
-  SvelteKit route-file boundaries bridge matching JS/TS clients, including
-  bracket-parameter paths.
+  `only:`, and `except:` resolve local controller actions. Next.js, SvelteKit,
+  and Remix route-file boundaries bridge matching JS/TS clients, including
+  bracket-parameter and Remix `$param` paths.
   NestJS controller/method decorators compose class prefixes with method routes
   and bridge matching JS/TS HTTP clients.
   Express/Hono-style JS/TS same-block router mounts plus

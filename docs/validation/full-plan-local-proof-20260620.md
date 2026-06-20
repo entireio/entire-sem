@@ -159,9 +159,9 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
 - Local literal-constant Express router mount prefixes and child router paths
   compose across files and bridge exact matching HTTP client calls to the
   handler symbol.
-- Next.js and SvelteKit route-file boundaries bridge matching JS/TS HTTP
-  clients, including bracket-parameter client paths normalized to the
-  provider's canonical route endpoint form.
+- Next.js, SvelteKit, and Remix route-file boundaries bridge matching JS/TS
+  HTTP clients, including bracket-parameter and Remix `$param` client paths
+  normalized to the provider's canonical route endpoint form.
 - Kubernetes resource extraction, including multi-document YAML manifests, and
   Service-selector dependency tests pass (`Service` -> matching workload
   resource by selector labels).
@@ -377,6 +377,9 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
   - `bench/results/result-1781975273.json`: Go/gin, syntax-only, 28,618 LOC,
     149,410 LOC/s, max RSS 29,556,736 bytes, estimated output 1,902,635
     bytes; run after SvelteKit route-boundary extraction.
+  - `bench/results/result-1781975769.json`: Go/gin, syntax-only, 28,618 LOC,
+    161,684 LOC/s, max RSS 27,328,512 bytes, estimated output 1,902,631
+    bytes; run after Remix route-boundary extraction.
   - `bench/results/result-1781975430.json`: Go/gin, syntax-only, 28,618 LOC,
     153,893 LOC/s, max RSS 27,672,576 bytes, estimated output 1,902,641
     bytes; run after Docker Compose service reference dependency extraction.

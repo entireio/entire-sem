@@ -9513,6 +9513,9 @@ func webRouteBoundary(path string) string {
 	if route := svelteKitRouteBoundary(path); route != "" {
 		return route
 	}
+	if route := remixRouteBoundary(path); route != "" {
+		return route
+	}
 	return ""
 }
 
@@ -9613,6 +9616,63 @@ func svelteKitRouteFromRelative(relative string) string {
 			segment = nextRouteSegment(segment)
 		}
 		segments = append(segments, segment)
+	}
+	if len(segments) == 0 {
+		return "/"
+	}
+	return "/" + strings.Join(segments, "/")
+}
+
+func remixRouteBoundary(path string) string {
+	slashPath := filepath.ToSlash(path)
+	const rootMarker = "app/routes/"
+	const nestedMarker = "/app/routes/"
+	var relative string
+	switch {
+	case strings.HasPrefix(slashPath, rootMarker):
+		relative = strings.TrimPrefix(slashPath, rootMarker)
+	case strings.Contains(slashPath, nestedMarker):
+		index := strings.Index(slashPath, nestedMarker)
+		relative = slashPath[index+len(nestedMarker):]
+	default:
+		return ""
+	}
+	for _, suffix := range []string{".tsx", ".ts", ".jsx", ".js"} {
+		if strings.HasSuffix(relative, suffix) {
+			relative = strings.TrimSuffix(relative, suffix)
+			return remixRouteFromRelative(relative)
+		}
+	}
+	return ""
+}
+
+func remixRouteFromRelative(relative string) string {
+	relative = strings.Trim(relative, "/")
+	if relative == "" || relative == "root" {
+		return ""
+	}
+	relative = strings.TrimSuffix(relative, "/route")
+	var segments []string
+	for _, part := range strings.Split(relative, "/") {
+		for _, segment := range strings.Split(part, ".") {
+			segment = strings.TrimSpace(segment)
+			if segment == "" || segment == "_index" || strings.HasPrefix(segment, "_") {
+				continue
+			}
+			if strings.HasPrefix(segment, "$") {
+				name := strings.TrimPrefix(segment, "$")
+				if name == "" {
+					continue
+				}
+				if name == "*" {
+					segments = append(segments, "{...splat}")
+				} else {
+					segments = append(segments, "{"+name+"}")
+				}
+				continue
+			}
+			segments = append(segments, segment)
+		}
 	}
 	if len(segments) == 0 {
 		return "/"

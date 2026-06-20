@@ -1459,6 +1459,7 @@ func staticHTTPCallExpressionValue(expr string, constants map[string]string) (st
 
 func normalizeRouteParamSyntax(path string) string {
 	path = regexp.MustCompile(`\[\.{0,3}([A-Za-z_][A-Za-z0-9_]*)\]`).ReplaceAllString(path, `{$1}`)
+	path = regexp.MustCompile(`\$([A-Za-z_][A-Za-z0-9_]*)`).ReplaceAllString(path, `{$1}`)
 	return regexp.MustCompile(`<(?:(?:[A-Za-z_][A-Za-z0-9_]*):)?([A-Za-z_][A-Za-z0-9_]*)>`).ReplaceAllString(path, `{$1}`)
 }
 
