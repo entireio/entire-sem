@@ -1620,6 +1620,67 @@ spec:
 	}
 }
 
+func TestKubernetesCrossplaneReferenceDependencies(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "k8s/provider-config.yaml", `apiVersion: aws.upbound.io/v1beta1
+kind: ProviderConfig
+metadata:
+  name: aws-default
+spec:
+  credentials:
+    source: InjectedIdentity
+`)
+	writeFile(t, repo, "k8s/composition.yaml", `apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: webapp
+spec:
+  compositeTypeRef:
+    apiVersion: platform.example.org/v1alpha1
+    kind: XWebApp
+`)
+	writeFile(t, repo, "k8s/composite.yaml", `apiVersion: platform.example.org/v1alpha1
+kind: XWebApp
+metadata:
+  name: frontend-abc
+spec: {}
+`)
+	writeFile(t, repo, "k8s/bucket.yaml", `apiVersion: s3.aws.upbound.io/v1beta1
+kind: Bucket
+metadata:
+  name: logs
+spec:
+  providerConfigRef:
+    name: aws-default
+`)
+	writeFile(t, repo, "k8s/webapp-claim.yaml", `apiVersion: platform.example.org/v1alpha1
+kind: WebApp
+metadata:
+  name: frontend
+spec:
+  compositionRef:
+    name: webapp
+  resourceRef:
+    apiVersion: platform.example.org/v1alpha1
+    kind: XWebApp
+    name: frontend-abc
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, edge := range [][2]string{
+		{"Bucket.logs", "ProviderConfig.aws-default"},
+		{"WebApp.frontend", "Composition.webapp"},
+		{"WebApp.frontend", "XWebApp.frontend-abc"},
+	} {
+		if !hasRelationByLastSegment(snapshot.Relations, "RESOURCE_DEPENDS_ON", edge[0], edge[1]) {
+			t.Fatalf("missing Crossplane dependency %s -> %s in %#v", edge[0], edge[1], snapshot.Relations)
+		}
+	}
+}
+
 func TestKustomizeResourceDependencies(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "overlays/prod/kustomization.yaml", `resources:

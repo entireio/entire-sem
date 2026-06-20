@@ -172,6 +172,10 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
   `GitRepository` when the referenced source manifests are present, including
   Flux `kustomization.yaml` files that would otherwise collide with ordinary
   Kustomize overlay detection.
+- Crossplane `providerConfigRef`, `compositionRef`, and explicit `resourceRef`
+  references emit exact local `RESOURCE_DEPENDS_ON` edges to ProviderConfig,
+  Composition, and composite resource manifests when the referenced resources
+  are present in the snapshot.
 - Istio VirtualService route destinations and gateway refs, plus
   DestinationRule hosts, emit exact local `RESOURCE_DEPENDS_ON` edges to
   Service/Gateway resources when the referenced manifests are present in the
@@ -369,6 +373,9 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
     bytes.
   - `bench/results/result-1781967930.json`: Go/gin, syntax-only, 28,618 LOC,
     132,509 LOC/s, max RSS 27,246,592 bytes, estimated output 1,902,628
+    bytes.
+  - `bench/results/result-1781968120.json`: Go/gin, syntax-only, 28,618 LOC,
+    145,004 LOC/s, max RSS 27,869,184 bytes, estimated output 1,902,627
     bytes.
 
 ## Remaining Honesty Notes

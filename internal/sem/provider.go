@@ -2755,6 +2755,23 @@ func kubernetesResourceReferences(content string) []resourceReference {
 			add(ref.Kind, ref.Name, ref.EvidenceKind, ref.Confidence)
 		}
 	}
+	if kubernetesManifestHasCrossplaneReferences(content) {
+		for _, ref := range kubernetesNamedRefBlockReferences(content, "providerConfigRef", "kubernetes_crossplane_provider_config_ref", 0.84, kubernetesDefaultReferenceKind("providerconfig")) {
+			add(ref.Kind, ref.Name, ref.EvidenceKind, ref.Confidence)
+		}
+		for _, ref := range kubernetesNamedRefBlockReferences(content, "compositionRef", "kubernetes_crossplane_composition_ref", 0.84, kubernetesDefaultReferenceKind("composition")) {
+			add(ref.Kind, ref.Name, ref.EvidenceKind, ref.Confidence)
+		}
+		for _, ref := range kubernetesNamedRefBlockReferences(content, "compositionRevisionRef", "kubernetes_crossplane_composition_revision_ref", 0.82, kubernetesDefaultReferenceKind("compositionrevision")) {
+			add(ref.Kind, ref.Name, ref.EvidenceKind, ref.Confidence)
+		}
+		for _, ref := range kubernetesNamedRefBlockReferences(content, "resourceRef", "kubernetes_crossplane_resource_ref", 0.82, kubernetesExplicitReferenceKind) {
+			add(ref.Kind, ref.Name, ref.EvidenceKind, ref.Confidence)
+		}
+		for _, ref := range kubernetesNamedRefBlockReferences(content, "resourceRefs", "kubernetes_crossplane_resource_ref", 0.82, kubernetesExplicitReferenceKind) {
+			add(ref.Kind, ref.Name, ref.EvidenceKind, ref.Confidence)
+		}
+	}
 	for _, ref := range kubernetesKindNameBlockReferences(content, "ownerReferences", "kubernetes_owner_reference", 0.78) {
 		add(ref.Kind, ref.Name, ref.EvidenceKind, ref.Confidence)
 	}
@@ -2855,6 +2872,14 @@ func kubernetesDefaultReferenceKind(defaultKind string) func(map[string]string) 
 
 func kubernetesExplicitReferenceKind(fields map[string]string) string {
 	return fields["kind"]
+}
+
+func kubernetesManifestHasCrossplaneReferences(content string) bool {
+	return strings.Contains(content, "providerConfigRef:") ||
+		strings.Contains(content, "compositionRef:") ||
+		strings.Contains(content, "compositionRevisionRef:") ||
+		strings.Contains(content, "resourceRef:") ||
+		strings.Contains(content, "resourceRefs:")
 }
 
 func kubernetesWorkflowTemplateReferenceKind(fields map[string]string) string {
