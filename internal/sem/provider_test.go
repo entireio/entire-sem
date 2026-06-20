@@ -4788,6 +4788,52 @@ export function run(): string {
 	}
 }
 
+func TestBuildProviderSnapshotEmitsAssignedPropertyReturnDataFlow(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "flow.ts", `type Result = { data: string }
+
+function helper(): Result {
+  return { data: "ok" }
+}
+
+function side(): Result {
+  return { data: "side" }
+}
+
+export function run(): string {
+  const result = helper()
+  const ignored = side()
+  return result.data
+}
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found RelationRecord
+	for _, relation := range snapshot.Relations {
+		if relation.Type == "DATA_FLOWS" && lastSegment(relation.FromID) == "helper" && lastSegment(relation.ToID) == "run" && len(relation.Evidence) == 1 && relation.Evidence[0].Kind == "assigned_property_return_flow" {
+			found = relation
+			break
+		}
+	}
+	if found.FromID == "" {
+		t.Fatalf("missing assigned property return DATA_FLOWS helper->run: %#v", snapshot.Relations)
+	}
+	if found.Reason != "callee return value assigned to local and returned through property by caller" || found.Confidence > 0.75 {
+		t.Fatalf("unexpected assigned property flow metadata: %#v", found)
+	}
+	if len(found.Evidence) != 1 || found.Evidence[0].Detail != "helper -> result.data" {
+		t.Fatalf("unexpected assigned property flow evidence: %#v", found.Evidence)
+	}
+	for _, relation := range snapshot.Relations {
+		if relation.Type == "DATA_FLOWS" && lastSegment(relation.FromID) == "side" && lastSegment(relation.ToID) == "run" {
+			t.Fatalf("non-returned property assignment produced DATA_FLOWS: %#v", relation)
+		}
+	}
+}
+
 func TestBuildProviderSnapshotEmitsArgumentForwardDataFlow(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "flow.ts", `function normalize(value: string): string {

@@ -320,6 +320,7 @@ var (
 	pythonOrAssignRe     = regexp.MustCompile(`(?m)\b\$?([A-Za-z_$][\w$]*)\s*(?::=|=)\s*(?:await\s+)?([A-Za-z_$][\w$]*)\s*\([^\n]*?\)\s+or\s+(?:await\s+)?([A-Za-z_$][\w$]*)\s*\(`)
 	assignCallRe         = regexp.MustCompile(`(?m)\b(?:const|let|var)?\s*\$?([A-Za-z_$][\w$]*)\s*(?:\:\s*[^=\n]+)?\s*(?::=|=)\s*(?:await\s+)?([A-Za-z_$][\w$]*)\s*\(`)
 	returnVarRe          = regexp.MustCompile(`(?m)\breturn\s+\$?([A-Za-z_$][\w$]*)\b`)
+	returnPropertyRe     = regexp.MustCompile(`(?m)\breturn\s+\$?([A-Za-z_$][\w$]*)\s*\.\s*([A-Za-z_$][\w$]*)\b`)
 	aliasAssignRe        = regexp.MustCompile(`(?m)\b(?:const|let|var)?\s*\$?([A-Za-z_$][\w$]*)\s*(?:\:\s*[^=\n]+)?\s*(?::=|=)\s*\$?([A-Za-z_$][\w$]*)\b`)
 	localObjectVarRe     = regexp.MustCompile(`(?m)\b(?:const|let|var)?\s*\$?([A-Za-z_$][\w$]*)\s*(?:\:\s*[^=\n]+)?\s*(?::=|=)\s*(?:\{\s*\}|new\s+[A-Za-z_$][\w$]*\s*\(\s*\))`)
 	objectLiteralVarRe   = regexp.MustCompile(`(?s)\b(?:const|let|var)?\s*\$?([A-Za-z_$][\w$]*)\s*(?:\:\s*[^=\n]+)?\s*(?::=|=)\s*\{([^{}]*)\}`)
@@ -456,6 +457,27 @@ func returnFlowCalls(block, signature string) []returnFlowCall {
 			Reason:       "callee return value assigned to local and returned by caller",
 			EvidenceKind: "assigned_return_flow",
 			Detail:       name + " -> " + varName,
+			Direction:    "callee_to_caller",
+		}
+	}
+	for _, match := range returnPropertyRe.FindAllStringSubmatchIndex(stripped, -1) {
+		if len(match) != 6 {
+			continue
+		}
+		if followsReturnedVariable(stripped, match[1]) {
+			continue
+		}
+		varName := strings.TrimPrefix(stripped[match[2]:match[3]], "$")
+		property := strings.TrimPrefix(stripped[match[4]:match[5]], "$")
+		name := assigned[varName]
+		if name == "" || property == "" {
+			continue
+		}
+		flows[name+"\x00assigned_property_return_flow"] = returnFlowCall{
+			Name:         name,
+			Reason:       "callee return value assigned to local and returned through property by caller",
+			EvidenceKind: "assigned_property_return_flow",
+			Detail:       name + " -> " + varName + "." + property,
 			Direction:    "callee_to_caller",
 		}
 	}

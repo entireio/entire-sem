@@ -243,7 +243,9 @@ False negatives:
   `return primary() or fallback()`, plus simple conditional/fallback
   assignment-then-return expressions such as
   `const value = primary() ?? fallback(); return value` and Python
-  `value = primary() or fallback(); return value`. Caller parameters passed into
+  `value = primary() or fallback(); return value`, plus property returns from
+  assigned callee results such as `const result = helper(); return result.data`.
+  Caller parameters passed into
   exact/import-resolved callees, including conservative local alias
   (`alias = input; callee(alias)`), object-field forwarding
   (`payload.field = input; callee(payload)`), simple object-literal forwarding

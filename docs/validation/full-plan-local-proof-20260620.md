@@ -275,6 +275,10 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
   `value = primary() or fallback()`, when the local is returned as a bare
   variable. Sequential overwrite guards prevent stale branch callees from being
   reported when a later assignment wins.
+- Simple assigned property-return flow emits `DATA_FLOWS` for known callees
+  assigned to a local and returned through a property, such as
+  `const result = helper(); return result.data`, while ignoring unrelated
+  assigned callees whose locals are not returned.
 - Exact/import-resolved argument forwarding emits caller-to-callee
   `DATA_FLOWS` when a caller parameter is passed into a known callee.
 - Conservative parameter-alias forwarding emits caller-to-callee `DATA_FLOWS`
@@ -380,6 +384,9 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
   - `bench/results/result-1781975769.json`: Go/gin, syntax-only, 28,618 LOC,
     161,684 LOC/s, max RSS 27,328,512 bytes, estimated output 1,902,631
     bytes; run after Remix route-boundary extraction.
+  - `bench/results/result-1781975899.json`: Go/gin, syntax-only, 28,618 LOC,
+    152,866 LOC/s, max RSS 27,459,584 bytes, estimated output 1,902,640
+    bytes; run after assigned property-return data-flow extraction.
   - `bench/results/result-1781975430.json`: Go/gin, syntax-only, 28,618 LOC,
     153,893 LOC/s, max RSS 27,672,576 bytes, estimated output 1,902,641
     bytes; run after Docker Compose service reference dependency extraction.
