@@ -99,8 +99,8 @@ Service/configuration/type/flow expansion is now present in the baseline:
 Kustomize/HCL/common project-config `CONFIGURES`, positional
 `PARAM_TYPE`/`RETURNS_TYPE`, `ASYNC_CALLS`, `DATA_FLOWS`, and bounded
 `FILE_CHANGES_WITH` edges. Remaining work is deeper coverage, not absence of
-the relation families: richer data-flow, higher-precision fallback-format
-semantics, and larger corpus proof runs.
+the relation families: richer cross-statement/cross-symbol data-flow,
+higher-precision fallback-format semantics, and larger corpus proof runs.
 
 ## Known False Positives / Negatives
 
@@ -173,6 +173,12 @@ False negatives:
   parameter) to a known `field` symbol. Unresolved/dynamic receivers and bare
   implicit-`this` access are skipped. Remaining: bare-field resolution via
   scope and broader data-flow.
+- **Data-flow relations.** `DATA_FLOWS` is emitted when a callee result is
+  returned directly (`return helper()`) or assigned to a local and then returned
+  as a bare variable (`value = helper(); return value`). Non-returned
+  assignments and returned receiver expressions are intentionally skipped.
+  Remaining: argument/field/object flow, branching, aliases, and cross-function
+  data-flow beyond these high-confidence return paths.
 - **Partial OO/type relations.** `EXTENDS`, `INHERITS`, `IMPLEMENTS`,
   `OVERRIDES`, `USES_TYPE`, `PARAM_TYPE`, and `RETURNS_TYPE` are now emitted.
   `OVERRIDES` only fires when the supertype resolves locally and its methods are

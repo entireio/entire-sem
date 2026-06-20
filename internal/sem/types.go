@@ -284,6 +284,8 @@ var (
 	goRoutineCallRe = regexp.MustCompile(`(?m)\bgo\s+([A-Za-z_]\w*)\s*\(`)
 	spawnCallRe     = regexp.MustCompile(`\b(?:Promise\.all|Promise\.race|asyncio\.gather|tokio::spawn|Task\.Run)\s*\([^)]*?([A-Za-z_]\w*)\s*\(`)
 	returnCallRe    = regexp.MustCompile(`(?m)\breturn\s+(?:await\s+)?([A-Za-z_$][\w$]*)\s*\(`)
+	assignCallRe    = regexp.MustCompile(`(?m)\b(?:const|let|var)?\s*\$?([A-Za-z_$][\w$]*)\s*(?:\:\s*[^=\n]+)?\s*(?::=|=)\s*(?:await\s+)?([A-Za-z_$][\w$]*)\s*\(`)
+	returnVarRe     = regexp.MustCompile(`(?m)\breturn\s+\$?([A-Za-z_$][\w$]*)\b`)
 )
 
 func asyncCallNames(block string) []string {
@@ -311,6 +313,77 @@ func returnFlowCallNames(block string) []string {
 		}
 	}
 	return sortedStringSet(seen)
+}
+
+type returnFlowCall struct {
+	Name         string
+	Reason       string
+	EvidenceKind string
+	Detail       string
+}
+
+func returnFlowCalls(block string) []returnFlowCall {
+	stripped := stripCodeLiteralsAndComments(block)
+	flows := map[string]returnFlowCall{}
+	for _, name := range returnFlowCallNames(block) {
+		flows[name+"\x00return_flow"] = returnFlowCall{
+			Name:         name,
+			Reason:       "callee return value flows into caller return value",
+			EvidenceKind: "return_flow",
+			Detail:       name,
+		}
+	}
+	assigned := map[string]string{}
+	for _, match := range assignCallRe.FindAllStringSubmatch(stripped, -1) {
+		if len(match) == 3 && match[1] != "" && match[2] != "" {
+			assigned[strings.TrimPrefix(match[1], "$")] = strings.TrimPrefix(match[2], "$")
+		}
+	}
+	for _, match := range returnVarRe.FindAllStringSubmatchIndex(stripped, -1) {
+		if len(match) != 4 {
+			continue
+		}
+		if followsReturnedVariable(stripped, match[1]) {
+			continue
+		}
+		varName := strings.TrimPrefix(stripped[match[2]:match[3]], "$")
+		name := assigned[varName]
+		if name == "" {
+			continue
+		}
+		flows[name+"\x00assigned_return_flow"] = returnFlowCall{
+			Name:         name,
+			Reason:       "callee return value assigned to local and returned by caller",
+			EvidenceKind: "assigned_return_flow",
+			Detail:       name + " -> " + varName,
+		}
+	}
+	out := make([]returnFlowCall, 0, len(flows))
+	for _, flow := range flows {
+		out = append(out, flow)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Name != out[j].Name {
+			return out[i].Name < out[j].Name
+		}
+		return out[i].EvidenceKind < out[j].EvidenceKind
+	})
+	return out
+}
+
+func followsReturnedVariable(stripped string, end int) bool {
+	for end < len(stripped) {
+		switch stripped[end] {
+		case ' ', '\t':
+			end++
+			continue
+		case '.', '(', '-', '[':
+			return true
+		default:
+			return false
+		}
+	}
+	return false
 }
 
 func sortedStringSet(seen map[string]struct{}) []string {

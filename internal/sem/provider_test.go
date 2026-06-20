@@ -1852,6 +1852,50 @@ export function readConfig(name: string): string {
 	}
 }
 
+func TestBuildProviderSnapshotEmitsAssignedReturnDataFlow(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "flow.ts", `function helper(): string {
+  return "ok"
+}
+
+function side(): string {
+  return "side"
+}
+
+export function run(): string {
+  const value = helper()
+  const ignored = side()
+  return value
+}
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found RelationRecord
+	for _, relation := range snapshot.Relations {
+		if relation.Type == "DATA_FLOWS" && lastSegment(relation.FromID) == "helper" && lastSegment(relation.ToID) == "run" {
+			found = relation
+			break
+		}
+	}
+	if found.FromID == "" {
+		t.Fatalf("missing assigned return DATA_FLOWS helper->run: %#v", snapshot.Relations)
+	}
+	if found.Reason != "callee return value assigned to local and returned by caller" || found.Confidence > 0.75 {
+		t.Fatalf("unexpected assigned return flow metadata: %#v", found)
+	}
+	if len(found.Evidence) != 1 || found.Evidence[0].Kind != "assigned_return_flow" || found.Evidence[0].Detail != "helper -> value" {
+		t.Fatalf("unexpected assigned return flow evidence: %#v", found.Evidence)
+	}
+	for _, relation := range snapshot.Relations {
+		if relation.Type == "DATA_FLOWS" && lastSegment(relation.FromID) == "side" && lastSegment(relation.ToID) == "run" {
+			t.Fatalf("non-returned assignment produced DATA_FLOWS: %#v", relation)
+		}
+	}
+}
+
 func TestBuildProviderSnapshotEmitsTypeRelations(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "Animals.java", `package zoo;

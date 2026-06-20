@@ -33,7 +33,8 @@ versioned, confidence-scored facts that `entire-brain` can persist and query.
 - OO/type relations are emitted: `EXTENDS`, `INHERITS`, `IMPLEMENTS`,
   `OVERRIDES`, `USES_TYPE`, `PARAM_TYPE`, and `RETURNS_TYPE`.
 - Field access and high-confidence return-flow relations are emitted:
-  `READS_FIELD`, `WRITES_FIELD`, `ACCESSES`, and `DATA_FLOWS`.
+  `READS_FIELD`, `WRITES_FIELD`, `ACCESSES`, and `DATA_FLOWS`, including direct
+  `return helper()` and local assignment followed by bare `return value`.
 - Service and async boundaries are emitted: route/client/channel edges plus
   `HANDLES_GRPC`, `HANDLES_GRAPHQL`, `HANDLES_TRPC`, and `ASYNC_CALLS`.
 - IaC/configuration extraction emits HCL dependencies and `CONFIGURES` edges for
@@ -119,7 +120,7 @@ Add priority relations:
 Remain out of provider scope or later expansion:
 
 - cross-repo `CROSS_*` edges, unless Brain asks for provider-level support.
-- deeper data-flow beyond high-confidence local return-flow.
+- deeper data-flow beyond high-confidence local direct/assigned return-flow.
 - deeper semantics for fallback formats where only lightweight structure is
   currently emitted.
 - more parser grammars when a real repo or benchmark fixture needs them.

@@ -1571,27 +1571,27 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 				}
 			}
 			if needsDataFlow && callableSymbol {
-				for _, name := range returnFlowCallNames(block) {
-					if name == from.Name {
+				for _, flow := range returnFlowCalls(block) {
+					if flow.Name == from.Name {
 						continue
 					}
-					for _, to := range resolveCallTargets(name, from, symbolsByShortName[name], symbolsByFile[file.Path], importsByName) {
+					for _, to := range resolveCallTargets(flow.Name, from, symbolsByShortName[flow.Name], symbolsByFile[file.Path], importsByName) {
 						emit(RelationRecord{
 							RecordType:    "relation",
 							FromID:        to.ID,
 							ToID:          from.ID,
 							Type:          "DATA_FLOWS",
 							Confidence:    minFloat(to.Confidence, 0.75),
-							Reason:        "callee return value flows into caller return value",
+							Reason:        flow.Reason,
 							RelationScope: to.Scope,
 							Resolution:    to.Resolution,
 							TargetKind:    "symbol",
 							Evidence: []Evidence{{
-								Kind:      "return_flow",
+								Kind:      flow.EvidenceKind,
 								FilePath:  from.FilePath,
 								StartLine: from.StartLine,
 								EndLine:   from.EndLine,
-								Detail:    name,
+								Detail:    flow.Detail,
 							}},
 							WarningCodes: []string{},
 						})
