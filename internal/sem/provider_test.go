@@ -765,6 +765,61 @@ spec:
 	}
 }
 
+func TestKubernetesMatchExpressionSelectorsDependOnWorkloads(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "k8s/deployment.yaml", `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+spec:
+  template:
+    metadata:
+      labels:
+        app: api
+        tier: backend
+    spec:
+      containers:
+        - name: api
+          image: example/api:latest
+`)
+	writeFile(t, repo, "k8s/pdb.yaml", `apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: api
+spec:
+  selector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values:
+          - api
+      - key: tier
+        operator: Exists
+`)
+	writeFile(t, repo, "k8s/network-policy.yaml", `apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: api-policy
+spec:
+  podSelector:
+    matchExpressions:
+      - key: tier
+        operator: NotIn
+        values: ["frontend"]
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasRelationByLastSegment(snapshot.Relations, "RESOURCE_DEPENDS_ON", "PodDisruptionBudget.api", "Deployment.api") {
+		t.Fatalf("missing PDB matchExpressions dependency in %#v", snapshot.Relations)
+	}
+	if !hasRelationByLastSegment(snapshot.Relations, "RESOURCE_DEPENDS_ON", "NetworkPolicy.api-policy", "Deployment.api") {
+		t.Fatalf("missing NetworkPolicy matchExpressions dependency in %#v", snapshot.Relations)
+	}
+}
+
 func TestKubernetesMonitorSelectorsDependOnTargets(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "k8s/deployment.yaml", `apiVersion: apps/v1

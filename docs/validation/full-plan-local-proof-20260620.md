@@ -114,6 +114,9 @@ go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go
 - ServiceMonitor and PodMonitor selectors emit exact local
   `RESOURCE_DEPENDS_ON` edges to target-kind-filtered Service and workload
   resources by labels.
+- PodDisruptionBudget, NetworkPolicy, ServiceMonitor, and PodMonitor
+  `matchExpressions` selectors emit exact local `RESOURCE_DEPENDS_ON` edges
+  when expressions match target resource labels.
 - Kubernetes named resource references for ConfigMaps, Secrets, service
   accounts, and PVCs emit exact local `RESOURCE_DEPENDS_ON` edges when the
   referenced resource manifests are present in the snapshot.
@@ -234,6 +237,8 @@ go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go
     138,131 LOC/s, max RSS 27,181,056 bytes, output 1,938,906 bytes.
   - `bench/results/result-1781953027.json`: Go/gin, syntax-only, 28,618 LOC,
     138,593 LOC/s, max RSS 28,819,456 bytes, output 1,938,906 bytes.
+  - `bench/results/result-1781953248.json`: Go/gin, syntax-only, 28,618 LOC,
+    152,499 LOC/s, max RSS 26,771,456 bytes, output 1,938,906 bytes.
 
 ## Remaining Honesty Notes
 

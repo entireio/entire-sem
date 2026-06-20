@@ -372,9 +372,11 @@ Open:
 - Cross-file Kubernetes resource resolution is implemented for named
   ConfigMap/Secret/service-account/PVC/RBAC/owner/Ingress/HPA/Gateway API
   HTTPRoute backend references, Service selector matches, PodDisruptionBudget
-  selector matches, NetworkPolicy podSelector matches, Prometheus Operator
-  ServiceMonitor selector matches, and Prometheus Operator PodMonitor selector
-  matches when the target resource symbol exists in the same provider snapshot.
+  selector and matchExpression matches, NetworkPolicy podSelector and
+  matchExpression matches, Prometheus Operator ServiceMonitor selector and
+  matchExpression matches, and Prometheus Operator PodMonitor selector and
+  matchExpression matches when the target resource symbol exists in the same
+  provider snapshot.
   Remaining Kubernetes resource gaps include less common Kubernetes controllers
   beyond these selectors and other custom resource conventions.
 - Broad framework-specific IaC/service modeling remains partial.

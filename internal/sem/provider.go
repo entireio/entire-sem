@@ -2170,6 +2170,7 @@ func resourceDependsOnRelations(recordsByFile map[string][]SymbolRecord, readCon
 	relations = append(relations, kubernetesResourceDependsOnRelations(recordsByFile, readContent)...)
 	relations = append(relations, kubernetesNamedResourceReferenceRelations(recordsByFile, readContent)...)
 	relations = append(relations, kubernetesSelectorResourceRelations(recordsByFile, readContent)...)
+	relations = append(relations, kubernetesSelectorExpressionResourceRelations(recordsByFile, readContent)...)
 	relations = append(relations, kustomizeResourceDependsOnRelations(recordsByFile, readContent)...)
 	relations = append(relations, composeResourceDependsOnRelations(recordsByFile, readContent)...)
 	return relations
@@ -2495,6 +2496,7 @@ type kubernetesResourceInfo struct {
 	Name                string
 	Labels              map[string]string
 	Selector            map[string]string
+	SelectorExpressions []kubernetesSelectorExpression
 	SelectorTargetKinds map[string]bool
 	SelectorEvidence    string
 	SelectorReason      string
@@ -2671,6 +2673,228 @@ func kubernetesSelectorMatches(selector, labels map[string]string) bool {
 		}
 	}
 	return true
+}
+
+type kubernetesSelectorExpression struct {
+	Key      string
+	Operator string
+	Values   []string
+}
+
+func kubernetesSelectorExpressionResourceRelations(recordsByFile map[string][]SymbolRecord, readContent contentReader) []RelationRecord {
+	var resources []kubernetesResourceInfo
+	for _, path := range sortedKeysOf(recordsByFile) {
+		content, ok := readContent(path)
+		if !ok || !(isKubernetesPath(path) || looksLikeKubernetesManifest(content)) {
+			continue
+		}
+		for _, symbol := range recordsByFile[path] {
+			if symbol.Language != "YAML" || symbol.Kind != "resource" {
+				continue
+			}
+			kind, name, ok := strings.Cut(symbol.QualifiedName, ".")
+			if !ok {
+				continue
+			}
+			labels := yamlMapAtPath(content, "spec", "template", "metadata", "labels")
+			if len(labels) == 0 {
+				labels = yamlMapAtPath(content, "metadata", "labels")
+			}
+			selector, expressions, targetKinds, evidence, reason, confidence := kubernetesExpressionSelectorForResource(strings.ToLower(kind), content)
+			resources = append(resources, kubernetesResourceInfo{
+				Symbol:              symbol,
+				Kind:                strings.ToLower(kind),
+				Name:                name,
+				Labels:              labels,
+				Selector:            selector,
+				SelectorExpressions: expressions,
+				SelectorTargetKinds: targetKinds,
+				SelectorEvidence:    evidence,
+				SelectorReason:      reason,
+				SelectorConfidence:  confidence,
+			})
+		}
+	}
+	var relations []RelationRecord
+	for _, source := range resources {
+		if len(source.SelectorExpressions) == 0 {
+			continue
+		}
+		for _, target := range resources {
+			if target.Symbol.ID == source.Symbol.ID || len(target.Labels) == 0 {
+				continue
+			}
+			if len(source.SelectorTargetKinds) > 0 && !source.SelectorTargetKinds[target.Kind] {
+				continue
+			}
+			if !kubernetesSelectorMatches(source.Selector, target.Labels) || !kubernetesSelectorExpressionsMatch(source.SelectorExpressions, target.Labels) {
+				continue
+			}
+			relations = append(relations, RelationRecord{
+				RecordType:    "relation",
+				FromID:        source.Symbol.ID,
+				ToID:          target.Symbol.ID,
+				Type:          "RESOURCE_DEPENDS_ON",
+				Confidence:    source.SelectorConfidence,
+				Reason:        source.SelectorReason,
+				RelationScope: "file",
+				Resolution:    "exact",
+				TargetKind:    "symbol",
+				Evidence: []Evidence{{
+					Kind:      source.SelectorEvidence,
+					FilePath:  source.Symbol.FilePath,
+					StartLine: source.Symbol.StartLine,
+					EndLine:   source.Symbol.EndLine,
+					Detail:    source.Name + " -> " + target.Name,
+				}},
+				WarningCodes: []string{},
+			})
+		}
+	}
+	return relations
+}
+
+func kubernetesExpressionSelectorForResource(kind, content string) (map[string]string, []kubernetesSelectorExpression, map[string]bool, string, string, float64) {
+	switch kind {
+	case "poddisruptionbudget":
+		return yamlMapAtPath(content, "spec", "selector", "matchLabels"),
+			yamlMatchExpressionsAtPath(content, "spec", "selector"),
+			kubernetesWorkloadKinds(),
+			"kubernetes_pdb_match_expression_selector",
+			"Kubernetes PodDisruptionBudget matchExpressions selector matches workload labels",
+			0.82
+	case "networkpolicy":
+		return yamlMapAtPath(content, "spec", "podSelector", "matchLabels"),
+			yamlMatchExpressionsAtPath(content, "spec", "podSelector"),
+			kubernetesWorkloadKinds(),
+			"kubernetes_network_policy_match_expression_selector",
+			"Kubernetes NetworkPolicy podSelector matchExpressions matches workload labels",
+			0.8
+	case "servicemonitor":
+		return yamlMapAtPath(content, "spec", "selector", "matchLabels"),
+			yamlMatchExpressionsAtPath(content, "spec", "selector"),
+			map[string]bool{"service": true},
+			"kubernetes_service_monitor_match_expression_selector",
+			"Kubernetes ServiceMonitor matchExpressions selector matches Service labels",
+			0.78
+	case "podmonitor":
+		return yamlMapAtPath(content, "spec", "selector", "matchLabels"),
+			yamlMatchExpressionsAtPath(content, "spec", "selector"),
+			kubernetesWorkloadKinds(),
+			"kubernetes_pod_monitor_match_expression_selector",
+			"Kubernetes PodMonitor matchExpressions selector matches workload labels",
+			0.78
+	default:
+		return nil, nil, nil, "", "", 0
+	}
+}
+
+func yamlMatchExpressionsAtPath(content string, path ...string) []kubernetesSelectorExpression {
+	var stack []yamlPathFrame
+	var out []kubernetesSelectorExpression
+	var current kubernetesSelectorExpression
+	inValues := false
+	flush := func() {
+		if current.Key != "" && current.Operator != "" {
+			out = append(out, current)
+		}
+		current = kubernetesSelectorExpression{}
+		inValues = false
+	}
+	targetPath := append(append([]string{}, path...), "matchExpressions")
+	for _, line := range strings.Split(content, "\n") {
+		if yamlIgnoreLine(line) {
+			continue
+		}
+		indent := yamlIndent(line)
+		for len(stack) > 0 && indent <= stack[len(stack)-1].indent {
+			if yamlPathMatches(stack, targetPath) {
+				flush()
+			}
+			stack = stack[:len(stack)-1]
+		}
+		insideExpressions := len(stack) == len(targetPath) && yamlPathMatches(stack, targetPath) && indent > stack[len(stack)-1].indent
+		trimmed := strings.TrimSpace(line)
+		if insideExpressions {
+			switch {
+			case strings.HasPrefix(trimmed, "- key:"):
+				flush()
+				current.Key = strings.Trim(strings.TrimSpace(strings.TrimPrefix(trimmed, "- key:")), `"'`)
+			case strings.HasPrefix(trimmed, "key:"):
+				current.Key = strings.Trim(strings.TrimSpace(strings.TrimPrefix(trimmed, "key:")), `"'`)
+			case strings.HasPrefix(trimmed, "operator:"):
+				current.Operator = strings.Trim(strings.TrimSpace(strings.TrimPrefix(trimmed, "operator:")), `"'`)
+				inValues = false
+			case strings.HasPrefix(trimmed, "values:"):
+				inValues = true
+				current.Values = append(current.Values, yamlInlineListValues(strings.TrimSpace(strings.TrimPrefix(trimmed, "values:")))...)
+			case inValues && strings.HasPrefix(trimmed, "- "):
+				current.Values = append(current.Values, strings.Trim(strings.TrimSpace(strings.TrimPrefix(trimmed, "- ")), `"'`))
+			case strings.HasPrefix(trimmed, "- "):
+				flush()
+			}
+			continue
+		}
+		key, ok := yamlLineKey(line)
+		if !ok {
+			continue
+		}
+		stack = append(stack, yamlPathFrame{indent: indent, key: key})
+	}
+	flush()
+	return out
+}
+
+func yamlInlineListValues(value string) []string {
+	value = strings.TrimSpace(value)
+	if !strings.HasPrefix(value, "[") || !strings.HasSuffix(value, "]") {
+		return nil
+	}
+	value = strings.TrimSuffix(strings.TrimPrefix(value, "["), "]")
+	var out []string
+	for _, part := range strings.Split(value, ",") {
+		part = strings.Trim(strings.TrimSpace(part), `"'`)
+		if part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
+}
+
+func kubernetesSelectorExpressionsMatch(expressions []kubernetesSelectorExpression, labels map[string]string) bool {
+	for _, expression := range expressions {
+		value, exists := labels[expression.Key]
+		switch strings.ToLower(expression.Operator) {
+		case "in":
+			if !exists || !stringInSlice(value, expression.Values) {
+				return false
+			}
+		case "notin":
+			if exists && stringInSlice(value, expression.Values) {
+				return false
+			}
+		case "exists":
+			if !exists {
+				return false
+			}
+		case "doesnotexist":
+			if exists {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func stringInSlice(value string, values []string) bool {
+	for _, candidate := range values {
+		if candidate == value {
+			return true
+		}
+	}
+	return false
 }
 
 func kustomizeResourceDependsOnRelations(recordsByFile map[string][]SymbolRecord, readContent contentReader) []RelationRecord {
