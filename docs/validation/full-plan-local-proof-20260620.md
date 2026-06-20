@@ -79,6 +79,8 @@ go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go
 - PHP Laravel route declarations resolve local controller methods, Symfony/PHP
   route attributes compose class and method routes, and matching PHP `Http::`
   facade calls bridge to handlers as direct `CALLS`.
+- Ruby on Rails static route declarations resolve local controller actions, and
+  matching HTTP client calls bridge to handlers as direct `CALLS`.
 - Go `net/http` `HandleFunc` registrations and `HandlerFunc` wrappers resolve
   static or local-literal-constant paths to same-file local handler symbols and
   bridge matching Go HTTP client calls as direct `CALLS`.
@@ -273,6 +275,8 @@ go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go
     148,719 LOC/s, max RSS 28,573,696 bytes, output 1,938,906 bytes.
   - `bench/results/result-1781956065.json`: Go/gin, syntax-only, 28,618 LOC,
     161,821 LOC/s, max RSS 28,999,680 bytes, output 1,938,906 bytes.
+  - `bench/results/result-1781956681.json`: Go/gin, syntax-only, 28,618 LOC,
+    147,713 LOC/s, max RSS 30,048,256 bytes, output 1,938,906 bytes.
 
 ## Remaining Honesty Notes
 

@@ -58,7 +58,8 @@ Python Flask/FastAPI-style decorator routes, FastAPI/Starlette-style
 `include_router(prefix=...)` composition, same-block Express router-prefix
 composition, same-name imported Express router mounts, and C# ASP.NET
 controller route attributes, plus PHP Laravel controller route declarations and
-Symfony/PHP route attributes, plus NestJS controller/method decorators;
+Symfony/PHP route attributes, Ruby on Rails route declarations, plus NestJS
+controller/method decorators;
 remaining work is deeper framework coverage and larger-corpus proof.
 
 ## Relation Coverage Today
@@ -126,9 +127,9 @@ False positives:
   registration, Go `net/http` `HandleFunc`/`HandlerFunc` registration, or
   Go chi/gin-style router method registration, C# ASP.NET route/HTTP-verb
   attributes, PHP Laravel/Symfony route attributes and declarations, direct
-  Fastify/app/server JS route registrations, NestJS controller/method
-  decorators, Next.js route-file boundaries, or same-block Express router mount
-  plus route registration).
+  Fastify/app/server JS route registrations, Ruby on Rails route declarations,
+  NestJS controller/method decorators, Next.js route-file boundaries, or
+  same-block Express router mount plus route registration).
   Deterministic static computed route expressions such as
   `apiPrefix + "/health"` and template literals with known local route
   constants compose to one route and do not emit suffixes as separate routes.

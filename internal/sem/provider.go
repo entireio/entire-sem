@@ -1449,6 +1449,11 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 			routeHandlers[r.Route] = append(routeHandlers[r.Route], r.Handler)
 			handledRoutes[r.Route] = struct{}{}
 		}
+		for _, r := range railsRouteRelations(files, recordsByFile, readContent) {
+			emit(r.Relation)
+			routeHandlers[r.Route] = append(routeHandlers[r.Route], r.Handler)
+			handledRoutes[r.Route] = struct{}{}
+		}
 		for _, r := range jsDirectRouteRelations(files, recordsByFile, readContent) {
 			emit(r.Relation)
 			routeHandlers[r.Route] = append(routeHandlers[r.Route], r.Handler)
@@ -6252,6 +6257,161 @@ func laravelRouteRegistrations(content string) []laravelRouteRegistration {
 	return registrations
 }
 
+func railsRouteRelations(files []FileRecord, recordsByFile map[string][]SymbolRecord, readContent contentReader) []expressRouteRelation {
+	handlers := map[string]SymbolRecord{}
+	for _, records := range recordsByFile {
+		for _, symbol := range records {
+			if symbol.Kind != "method" || symbol.ContainerID == "" {
+				continue
+			}
+			className := ""
+			for _, candidate := range recordsByFile[symbol.FilePath] {
+				if candidate.ID == symbol.ContainerID {
+					className = candidate.Name
+					break
+				}
+			}
+			if className == "" {
+				continue
+			}
+			handlers[className+"."+symbol.Name] = symbol
+		}
+	}
+	var relations []expressRouteRelation
+	seen := map[string]bool{}
+	for _, file := range files {
+		if !strings.EqualFold(filepath.Ext(file.Path), ".rb") {
+			continue
+		}
+		content, ok := readContent(file.Path)
+		if !ok || !railsRoutesFile(file.Path, content) {
+			continue
+		}
+		for _, registration := range railsRouteRegistrations(content) {
+			var handler SymbolRecord
+			found := false
+			for _, className := range railsControllerClassCandidates(registration.Controller) {
+				if candidate, ok := handlers[className+"."+registration.Method]; ok {
+					handler = candidate
+					found = true
+					break
+				}
+			}
+			if !found {
+				continue
+			}
+			key := handler.ID + "\x00" + registration.Route
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			relations = append(relations, expressRouteRelation{
+				Route:   registration.Route,
+				Handler: handler,
+				Relation: RelationRecord{
+					RecordType:    "relation",
+					FromID:        handler.ID,
+					ToID:          externalID("route", registration.Route),
+					Type:          "HANDLES_ROUTE",
+					Confidence:    0.82,
+					Reason:        "Rails route declaration resolved to controller action",
+					RelationScope: "external",
+					Resolution:    "exact",
+					TargetKind:    "route",
+					Evidence: []Evidence{{
+						Kind:     registration.EvidenceKind,
+						FilePath: file.Path,
+						Detail:   registration.Detail,
+					}},
+					WarningCodes: []string{},
+				},
+			})
+		}
+	}
+	sort.Slice(relations, func(i, j int) bool {
+		if relations[i].Route != relations[j].Route {
+			return relations[i].Route < relations[j].Route
+		}
+		return relations[i].Handler.ID < relations[j].Handler.ID
+	})
+	return relations
+}
+
+func railsRoutesFile(path, content string) bool {
+	slashPath := filepath.ToSlash(path)
+	return strings.HasSuffix(slashPath, "config/routes.rb") || strings.Contains(content, ".routes.draw")
+}
+
+func railsRouteRegistrations(content string) []railsRouteRegistration {
+	var registrations []railsRouteRegistration
+	add := func(route, controller, action, evidence string) {
+		route = normalizeSlashRoute(route)
+		controller = strings.TrimSpace(controller)
+		action = strings.TrimSpace(action)
+		if route == "" || controller == "" || action == "" {
+			return
+		}
+		registrations = append(registrations, railsRouteRegistration{
+			Route:        route,
+			Controller:   controller,
+			Method:       action,
+			EvidenceKind: evidence,
+			Detail:       route + " -> " + controller + "#" + action,
+		})
+	}
+	toRe := regexp.MustCompile(`(?is)\b(?:get|post|put|patch|delete|match)\s+["']([^"']+)["']\s*,\s*to:\s*["']([A-Za-z0-9_/]+)#([A-Za-z_][A-Za-z0-9_]*)["']`)
+	hashRocketRe := regexp.MustCompile(`(?is)\b(?:get|post|put|patch|delete|match)\s+["']([^"']+)["']\s*=>\s*["']([A-Za-z0-9_/]+)#([A-Za-z_][A-Za-z0-9_]*)["']`)
+	for _, match := range toRe.FindAllStringSubmatch(content, -1) {
+		if len(match) == 4 {
+			add(match[1], match[2], match[3], "rails_route_to")
+		}
+	}
+	for _, match := range hashRocketRe.FindAllStringSubmatch(content, -1) {
+		if len(match) == 4 {
+			add(match[1], match[2], match[3], "rails_route_hash_rocket")
+		}
+	}
+	return registrations
+}
+
+func railsControllerClassCandidates(controller string) []string {
+	controller = strings.Trim(strings.TrimSpace(filepath.ToSlash(controller)), "/")
+	if controller == "" {
+		return nil
+	}
+	parts := strings.Split(controller, "/")
+	for i, part := range parts {
+		parts[i] = railsCamelize(part)
+	}
+	compact := parts[:0]
+	for _, part := range parts {
+		if part != "" {
+			compact = append(compact, part)
+		}
+	}
+	parts = compact
+	if len(parts) == 0 {
+		return nil
+	}
+	className := strings.Join(parts, ".") + "Controller"
+	lastClassName := parts[len(parts)-1] + "Controller"
+	if className == lastClassName {
+		return []string{className}
+	}
+	return []string{className, lastClassName}
+}
+
+func railsCamelize(value string) string {
+	parts := strings.FieldsFunc(value, func(r rune) bool { return r == '_' || r == '-' })
+	for i, part := range parts {
+		if part == "" {
+			continue
+		}
+		parts[i] = strings.ToUpper(part[:1]) + part[1:]
+	}
+	return strings.Join(parts, "")
+}
+
 func djangoRoutePatternValue(pattern string, regex bool) string {
 	pattern = strings.TrimSpace(pattern)
 	for pattern != "" {
@@ -6345,6 +6505,14 @@ type djangoRouteRegistration struct {
 }
 
 type laravelRouteRegistration struct {
+	Route        string
+	Controller   string
+	Method       string
+	EvidenceKind string
+	Detail       string
+}
+
+type railsRouteRegistration struct {
 	Route        string
 	Controller   string
 	Method       string
