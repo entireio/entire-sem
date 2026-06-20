@@ -79,6 +79,9 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
   `src`, configured setuptools package-find roots, root and package-specific
   `package-dir`/`package_dir` mappings, inferred nested `*/src` namespace roots,
   `pyproject.toml`, and `setup.cfg` with `import_resolved` metadata.
+- Python literal runtime imports through
+  `importlib.import_module("module.path")` and `__import__("module.path")`
+  emit `IMPORTS` and resolve to local files through the same module resolver.
 - Exact Java/Kotlin/Scala-style package imports resolve through package
   declarations and source file names with `import_resolved` metadata.
 - Simple root Maven/Gradle package identity aliases resolve matching JVM imports
@@ -474,6 +477,9 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
     158,363 LOC/s, max RSS 28,409,856 bytes, estimated output 1,902,639
     bytes; run after Python package-specific `package-dir`/`package_dir` import
     resolution.
+  - `bench/results/result-1781983000.json`: Go/gin, syntax-only, 28,618 LOC,
+    146,169 LOC/s, max RSS 27,377,664 bytes, estimated output 1,902,634
+    bytes; run after Python literal runtime import extraction.
   - `bench/results/result-1781972446.json`: Go/gin, syntax-only, 28,618 LOC,
     162,982 LOC/s, max RSS 26,804,224 bytes, estimated output 1,902,630
     bytes; run after IngressClass reference extraction.

@@ -399,6 +399,35 @@ def call():
 	}
 }
 
+func TestPythonRuntimeLiteralImportsResolveToLocalFiles(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "src/acme_runtime/__init__.py", "")
+	writeFile(t, repo, "src/acme_runtime/plugin.py", `def run():
+    return "plugin"
+`)
+	writeFile(t, repo, "src/acme_runtime/legacy.py", `def run():
+    return "legacy"
+`)
+	writeFile(t, repo, "src/acme_runtime/loader.py", `import importlib
+
+def load():
+    plugin = importlib.import_module("acme_runtime.plugin")
+    legacy = __import__("acme_runtime.legacy")
+    return plugin, legacy
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, targetPath := range []string{"src/acme_runtime/plugin.py", "src/acme_runtime/legacy.py"} {
+		target := fileID(snapshot.Header.RepoKey, targetPath)
+		if !hasImportRelation(snapshot.Relations, "src/acme_runtime/loader.py", target) {
+			t.Fatalf("missing Python runtime literal import to %s in %#v", target, snapshot.Relations)
+		}
+	}
+}
+
 func TestPythonNamespaceImportsResolveThroughDiscoveredSourceRoots(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "services/api/src/acme_ns/widgets/service.py", `def run():

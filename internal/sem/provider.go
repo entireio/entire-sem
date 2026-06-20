@@ -7293,7 +7293,7 @@ func importsFor(path, content string) []string {
 	case ".java", ".kt", ".kts", ".scala", ".sc", ".sbt":
 		return scanImports(content, regexp.MustCompile(`(?m)^\s*import\s+(?:static\s+)?([A-Za-z0-9_\.\*]+)`))
 	case ".py":
-		return scanImports(content, regexp.MustCompile(`(?m)^\s*(?:from\s+(\.*[A-Za-z0-9_\.]+)\s+import|import\s+([A-Za-z0-9_\.]+))`))
+		return scanPythonImports(content)
 	case ".js", ".jsx", ".ts", ".tsx":
 		return scanJSImports(content)
 	case ".lua":
@@ -7315,6 +7315,25 @@ func importsFor(path, content string) []string {
 	default:
 		return nil
 	}
+}
+
+func scanPythonImports(content string) []string {
+	seen := map[string]struct{}{}
+	add := func(module string) {
+		module = strings.TrimSpace(module)
+		if module != "" {
+			seen[module] = struct{}{}
+		}
+	}
+	for _, module := range scanImports(content, regexp.MustCompile(`(?m)^\s*(?:from\s+(\.*[A-Za-z0-9_\.]+)\s+import|import\s+([A-Za-z0-9_\.]+))`)) {
+		add(module)
+	}
+	for _, match := range regexp.MustCompile(`\b(?:importlib\s*\.\s*import_module|__import__)\s*\(\s*["']([^"']+)["']`).FindAllStringSubmatch(content, -1) {
+		if len(match) == 2 {
+			add(match[1])
+		}
+	}
+	return sortedKeys(seen)
 }
 
 func scanJSImports(content string) []string {
