@@ -1803,7 +1803,7 @@ func TestComputedRouteExpressionComposesAndBridgesHTTPClient(t *testing.T) {
 		"  return \"ok\"\n"+
 		"}\n\n"+
 		"export async function ping(): Promise<unknown> {\n"+
-		"  return fetch(\"/api/v1/users/:id\")\n"+
+		"  return fetch(usersRoute)\n"+
 		"}\n")
 
 	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")

@@ -134,6 +134,8 @@ go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go
 - Deterministic static computed JS/TS route expressions, including
   template-literal route constants and chained concatenated constants, compose
   to route endpoints and bridge matching HTTP clients.
+- Deterministic static computed JS/TS HTTP client paths built from known local
+  route constants emit `HTTP_CALLS` and bridge to local handlers.
 - Imported external calls for common Go, Python, and JS/TS import forms emit
   `CALLS` edges to `external:symbol:<module>.<member>` with
   `resolution: import_external`.
@@ -230,6 +232,8 @@ go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go
     143,831 LOC/s, max RSS 27,181,056 bytes, output 1,938,906 bytes.
   - `bench/results/result-1781952932.json`: Go/gin, syntax-only, 28,618 LOC,
     138,131 LOC/s, max RSS 27,181,056 bytes, output 1,938,906 bytes.
+  - `bench/results/result-1781953027.json`: Go/gin, syntax-only, 28,618 LOC,
+    138,593 LOC/s, max RSS 28,819,456 bytes, output 1,938,906 bytes.
 
 ## Remaining Honesty Notes
 

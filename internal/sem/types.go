@@ -1002,9 +1002,10 @@ var (
 	// name (fetch/axios/requests/httpx/http client) is what distinguishes a
 	// client call from a server route registration (app.get/router.post), which
 	// share the .get(/.post( shape.
-	httpClientRe = regexp.MustCompile(`(?i)(\bfetch\s*\(|\baxios\b|\brequests\s*\.|\bhttpx\b|\bhttp::\s*(get|post|put|patch|delete|head)\s*\(|\bhttp\.(get|post|put|patch|delete|head)\b|\.(get|post|put|patch|delete|head)(?:fromjson|asjson)?async(?:<[^>]+>)?\s*\(|\bhttpclient\b|\bresttemplate\b|\bwebclient\b|\bgot\s*\(|\bky\s*\()`)
-	httpVerbRe   = regexp.MustCompile(`(?i)\b(?:http\.|http::\s*|requests\.|httpx\.|axios\.)?(get|post|put|patch|delete|head)(?:fromjson|asjson)?(?:async)?(?:<[^>]+>)?\s*\(`)
-	urlLiteralRe = regexp.MustCompile(`["'](https?://[^"'\s]+|/[A-Za-z0-9_\-/{}\[\]:.]*)["']`)
+	httpClientRe  = regexp.MustCompile(`(?i)(\bfetch\s*\(|\baxios\b|\brequests\s*\.|\bhttpx\b|\bhttp::\s*(get|post|put|patch|delete|head)\s*\(|\bhttp\.(get|post|put|patch|delete|head)\b|\.(get|post|put|patch|delete|head)(?:fromjson|asjson)?async(?:<[^>]+>)?\s*\(|\bhttpclient\b|\bresttemplate\b|\bwebclient\b|\bgot\s*\(|\bky\s*\()`)
+	httpVerbRe    = regexp.MustCompile(`(?i)\b(?:http\.|http::\s*|requests\.|httpx\.|axios\.)?(get|post|put|patch|delete|head)(?:fromjson|asjson)?(?:async)?(?:<[^>]+>)?\s*\(`)
+	urlLiteralRe  = regexp.MustCompile(`["'](https?://[^"'\s]+|/[A-Za-z0-9_\-/{}\[\]:.]*)["']`)
+	httpCallArgRe = regexp.MustCompile(`(?i)(?:\b(?:fetch|got|ky)\s*\(|\b(?:axios|requests|httpx|http)\s*\.\s*(?:get|post|put|patch|delete|head)\s*\(|\bhttp::\s*(?:get|post|put|patch|delete|head)\s*\(|\.\s*(?:get|post|put|patch|delete|head)(?:fromjson|asjson)?async(?:<[^>]+>)?\s*\()\s*([^,\n)]+)`)
 )
 
 // httpCalls extracts outbound HTTP client calls from a code block: lines that
@@ -1012,8 +1013,24 @@ var (
 // reduced to their path so a client call and a local route registration to the
 // same path share an endpoint node.
 func httpCalls(content string) []httpCall {
+	return httpCallsWithConstants(content, nil)
+}
+
+func httpCallsWithConstants(content string, constants map[string]string) []httpCall {
 	var out []httpCall
 	seen := map[string]bool{}
+	add := func(method, path string, absolute bool) {
+		if path == "" {
+			return
+		}
+		path = normalizeRouteParamSyntax(path)
+		key := method + " " + path
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		out = append(out, httpCall{Method: method, Path: path, Absolute: absolute})
+	}
 	for _, line := range strings.Split(content, "\n") {
 		if !httpClientRe.MatchString(line) {
 			continue
@@ -1022,21 +1039,31 @@ func httpCalls(content string) []httpCall {
 		if m := httpVerbRe.FindStringSubmatch(line); m != nil {
 			method = strings.ToUpper(m[1])
 		}
+		for _, match := range httpCallArgRe.FindAllStringSubmatch(line, -1) {
+			if len(match) != 2 {
+				continue
+			}
+			if path, absolute, ok := staticHTTPCallExpressionValue(match[1], constants); ok {
+				add(method, path, absolute)
+			}
+		}
 		for _, lm := range urlLiteralRe.FindAllStringSubmatch(line, -1) {
 			path, absolute := httpPath(lm[1])
-			if path == "" {
-				continue
-			}
-			path = normalizeRouteParamSyntax(path)
-			key := method + " " + path
-			if seen[key] {
-				continue
-			}
-			seen[key] = true
-			out = append(out, httpCall{Method: method, Path: path, Absolute: absolute})
+			add(method, path, absolute)
 		}
 	}
 	return out
+}
+
+func staticHTTPCallExpressionValue(expr string, constants map[string]string) (string, bool, bool) {
+	expr = strings.TrimSpace(expr)
+	if (strings.HasPrefix(expr, `"`) && strings.HasSuffix(expr, `"`)) || (strings.HasPrefix(expr, `'`) && strings.HasSuffix(expr, `'`)) {
+		literal := strings.Trim(expr, `"'`)
+		path, absolute := httpPath(literal)
+		return path, absolute, path != ""
+	}
+	route, ok := staticRouteExpressionValue(expr, constants)
+	return route, false, ok
 }
 
 func normalizeRouteParamSyntax(path string) string {

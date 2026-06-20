@@ -1691,7 +1691,7 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 				routeHandlers[route] = append(routeHandlers[route], from)
 			}
 			if callableSymbol {
-				for _, call := range httpCalls(block) {
+				for _, call := range httpCallsWithConstants(block, staticStringConstants(content)) {
 					if !spec.emits("HTTP_CALLS") {
 						break
 					}

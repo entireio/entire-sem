@@ -132,9 +132,9 @@ False positives:
   Runtime builders remain intentionally skipped. Matching Python
   `requests`/`httpx`, Java `RestTemplate`/HTTP client calls, Go HTTP client
   calls, C# `HttpClient` calls, PHP `Http::` facade calls, and JS/TS
-  `fetch`/Axios calls, including Next.js bracket parameter paths, can bridge to
-  local decorated or registered handlers through the shared route endpoint.
-  (WP6.)
+  `fetch`/Axios calls, including deterministic static computed JS/TS client
+  paths and Next.js bracket parameter paths, can bridge to local decorated or
+  registered handlers through the shared route endpoint. (WP6.)
 - **Global-unique name match (Go `go-basic`).** `LoginHandler CALLS CheckToken`
   is emitted at `0.68` purely because the name is unique repo-wide, not because
   the call was resolved through imports/scope. Correct here, but fragile.
