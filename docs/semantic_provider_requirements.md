@@ -339,7 +339,9 @@ Relation vocabulary:
   Actions workflow jobs, Kustomize sections, common JSON/TOML/XML project
   configuration, and Make targets.
 - `DATA_FLOWS` — high-confidence local return-flow edge from a callee to a
-  caller when a callable returns the result of another resolved callable.
+  caller when a callable returns the result of another resolved callable, plus
+  conservative local caller-to-callee forwarding for exact/import-resolved
+  parameter, alias, object-field, and collection-element cases.
 - `ASYNC_CALLS` — async call-site edge for language-level async constructs such
   as Go `go` statements, JavaScript/TypeScript/Python `await`, and common
   spawn/promise patterns when the target resolves to a known symbol.

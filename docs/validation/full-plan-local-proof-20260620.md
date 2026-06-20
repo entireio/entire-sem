@@ -40,6 +40,7 @@ go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go
 go build -o /tmp/sem-bench ./cmd/sem-bench
 /tmp/sem-bench -skip-clone -manifest bench/repos.json -languages C -limit 1 -profile fast -provider-version codex-fast-c-scan -out bench/results -max-rss-bytes 5000000000 -min-loc-per-sec 150000
 go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go -limit 1 -profile syntax-only -provider-version codex-k8s-crd-refs -out bench/results
+go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out bench/results -lock bench/repos.lock.json -languages Go -limit 1 -skip-clone -profile syntax-only -provider-version codex-collection-flow -min-loc-per-sec 1
 ```
 
 ## Results
@@ -221,6 +222,9 @@ go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go
 - Conservative object-field forwarding emits caller-to-callee `DATA_FLOWS` when
   a caller parameter is assigned into a local object field and that object is
   passed to a known callee.
+- Conservative collection-element forwarding emits caller-to-callee
+  `DATA_FLOWS` when a caller parameter is pushed/appended/added into a local
+  collection and that collection is passed to a known callee.
 - Retained benchmark reports:
   - `bench/results/result-1781937160.json`: Go/gin, syntax-only, 28,618 LOC,
     152,621 LOC/s.
@@ -339,6 +343,9 @@ go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go
     bytes.
   - `bench/results/result-1781966413.json`: Go/gin, syntax-only, 28,618 LOC,
     140,816 LOC/s, max RSS 26,542,080 bytes, estimated output 1,902,626
+    bytes.
+  - `bench/results/result-1781966708.json`: Go/gin, syntax-only, 28,618 LOC,
+    126,735 LOC/s, max RSS 28,229,632 bytes, estimated output 1,902,627
     bytes.
 
 ## Remaining Honesty Notes

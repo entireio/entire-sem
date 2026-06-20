@@ -3654,6 +3654,54 @@ export function run(input: string): string {
 	}
 }
 
+func TestBuildProviderSnapshotEmitsCollectionElementForwardDataFlow(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "flow.ts", `function normalize(values: string[]): string {
+  return values.join(",")
+}
+
+function ignore(values: string[]): string {
+  return "ignored"
+}
+
+export function run(input: string): string {
+  const values: string[] = []
+  values.push(input)
+  normalize(values)
+  const other: string[] = []
+  other.push("static")
+  ignore(other)
+  return input
+}
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found RelationRecord
+	for _, relation := range snapshot.Relations {
+		if relation.Type == "DATA_FLOWS" && lastSegment(relation.FromID) == "run" && lastSegment(relation.ToID) == "normalize" {
+			found = relation
+			break
+		}
+	}
+	if found.FromID == "" {
+		t.Fatalf("missing collection element DATA_FLOWS run->normalize: %#v", snapshot.Relations)
+	}
+	if found.Reason != "caller parameter inserted into collection forwarded to callee argument" || found.Confidence > 0.7 {
+		t.Fatalf("unexpected collection element flow metadata: %#v", found)
+	}
+	if len(found.Evidence) != 1 || found.Evidence[0].Kind != "collection_element_forward_flow" || found.Evidence[0].Detail != "input -> values[] -> normalize()" {
+		t.Fatalf("unexpected collection element flow evidence: %#v", found.Evidence)
+	}
+	for _, relation := range snapshot.Relations {
+		if relation.Type == "DATA_FLOWS" && lastSegment(relation.FromID) == "run" && lastSegment(relation.ToID) == "ignore" {
+			t.Fatalf("non-parameter collection element produced DATA_FLOWS: %#v", relation)
+		}
+	}
+}
+
 func TestBuildProviderSnapshotEmitsTypeRelations(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "Animals.java", `package zoo;
