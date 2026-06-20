@@ -8529,18 +8529,26 @@ func pythonRouterTargetFiles(importingPath, target string, importsByName map[str
 
 func pythonRouterMounts(content string) []pythonRouterMount {
 	includeRouterRe := regexp.MustCompile(`\.include_router\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)`)
+	blueprintRe := regexp.MustCompile(`\.register_blueprint\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)`)
 	prefixRe := regexp.MustCompile(`\bprefix\s*=\s*["']([^"']+)["']`)
+	urlPrefixRe := regexp.MustCompile(`\burl_prefix\s*=\s*["']([^"']+)["']`)
 	var mounts []pythonRouterMount
 	for _, line := range strings.Split(content, "\n") {
 		targetMatch := includeRouterRe.FindStringSubmatch(line)
-		if len(targetMatch) != 2 {
-			continue
+		if len(targetMatch) == 2 {
+			prefixMatch := prefixRe.FindStringSubmatch(line)
+			if len(prefixMatch) == 2 && strings.HasPrefix(prefixMatch[1], "/") {
+				mounts = append(mounts, pythonRouterMount{Prefix: prefixMatch[1], Target: targetMatch[1]})
+			}
 		}
-		prefixMatch := prefixRe.FindStringSubmatch(line)
-		if len(prefixMatch) != 2 || !strings.HasPrefix(prefixMatch[1], "/") {
-			continue
+		targetMatch = blueprintRe.FindStringSubmatch(line)
+		if len(targetMatch) == 2 {
+			prefix := "/"
+			if prefixMatch := urlPrefixRe.FindStringSubmatch(line); len(prefixMatch) == 2 && strings.HasPrefix(prefixMatch[1], "/") {
+				prefix = prefixMatch[1]
+			}
+			mounts = append(mounts, pythonRouterMount{Prefix: prefix, Target: targetMatch[1]})
 		}
-		mounts = append(mounts, pythonRouterMount{Prefix: prefixMatch[1], Target: targetMatch[1]})
 	}
 	return mounts
 }
@@ -8600,12 +8608,13 @@ func pythonRouteDecoratorsNearSymbol(content string, symbol SymbolRecord) []pyth
 		if len(match) != 3 || !strings.HasPrefix(match[2], "/") {
 			continue
 		}
-		key := match[1] + "\x00" + match[2]
+		route := normalizeRouteParamSyntax(match[2])
+		key := match[1] + "\x00" + route
 		if seen[key] {
 			continue
 		}
 		seen[key] = true
-		routes = append(routes, pythonRouteDecorator{Receiver: match[1], Route: match[2]})
+		routes = append(routes, pythonRouteDecorator{Receiver: match[1], Route: route})
 	}
 	sort.Slice(routes, func(i, j int) bool {
 		if routes[i].Route != routes[j].Route {

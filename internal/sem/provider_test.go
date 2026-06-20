@@ -3339,6 +3339,46 @@ def ping():
 	}
 }
 
+func TestFlaskBlueprintPrefixComposesAndBridgesHTTPClient(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "routes.py", `from flask import Blueprint
+
+users_bp = Blueprint("users", __name__)
+
+@users_bp.route("/<id>")
+def show_user(id: str):
+    return {"id": id}
+`)
+	writeFile(t, repo, "app.py", `from flask import Flask
+import requests
+
+from .routes import users_bp
+
+app = Flask(__name__)
+app.register_blueprint(users_bp, url_prefix="/api/users")
+
+def ping():
+    return requests.get("/api/users/{id}")
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasRelationByLastSegment(snapshot.Relations, "IMPORTS", "app.py", "routes.py") {
+		t.Fatalf("missing local relative import app.py -> routes.py: %#v", snapshot.Relations)
+	}
+	if !hasRelationToExternalRoute(snapshot.Relations, "HANDLES_ROUTE", "show_user", "/api/users/{id}") {
+		t.Fatalf("missing composed Flask blueprint route: %#v", snapshot.Relations)
+	}
+	if !hasRelationToExternalRoute(snapshot.Relations, "HTTP_CALLS", "ping", "/api/users/{id}") {
+		t.Fatalf("missing matching Python HTTP_CALLS relation: %#v", snapshot.Relations)
+	}
+	if !hasRelationByLastSegment(snapshot.Relations, "CALLS", "ping", "show_user") {
+		t.Fatalf("missing route bridge CALLS ping->show_user: %#v", snapshot.Relations)
+	}
+}
+
 func TestSpringRouteAnnotationsComposeClassPrefixAndBridgeHTTPClient(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "src/main/java/com/acme/UserController.java", `package com.acme;

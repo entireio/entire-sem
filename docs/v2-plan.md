@@ -399,6 +399,9 @@ Delivered:
 - Koa/@koa-router `router.routes()` mounts, including static `koa-mount`
   prefixes, compose with static router registrations and bridge exact matching
   HTTP clients to local handlers.
+- Flask Blueprint `register_blueprint(..., url_prefix=...)` mounts compose
+  with Blueprint route decorators and bridge exact matching Python HTTP clients
+  to local handlers.
 - Terraform/HCL blocks emit resources, modules, variables, outputs, config
   targets, and exact intra-module `RESOURCE_DEPENDS_ON` edges for block
   references.

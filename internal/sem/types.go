@@ -1278,7 +1278,8 @@ func staticHTTPCallExpressionValue(expr string, constants map[string]string) (st
 }
 
 func normalizeRouteParamSyntax(path string) string {
-	return regexp.MustCompile(`\[\.{0,3}([A-Za-z_][A-Za-z0-9_]*)\]`).ReplaceAllString(path, `{$1}`)
+	path = regexp.MustCompile(`\[\.{0,3}([A-Za-z_][A-Za-z0-9_]*)\]`).ReplaceAllString(path, `{$1}`)
+	return regexp.MustCompile(`<(?:(?:[A-Za-z_][A-Za-z0-9_]*):)?([A-Za-z_][A-Za-z0-9_]*)>`).ReplaceAllString(path, `{$1}`)
 }
 
 // httpPath reduces a URL literal to its path component. Absolute URLs return
