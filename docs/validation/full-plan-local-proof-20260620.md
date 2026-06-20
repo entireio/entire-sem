@@ -92,6 +92,8 @@ go test ./internal/sem -run 'TestKubernetes(ReloaderAnnotationsDependOnConfigRes
 go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out bench/results -lock bench/repos.lock.json -languages Go -limit 1 -skip-clone -profile syntax-only -provider-version codex-reloader-annotation-refs -min-loc-per-sec 1
 go test ./internal/sem -run 'Test(StaticPathJoinRouteExpressionComposesAndBridgesHTTPClient|StaticArrayJoinRouteExpressionComposesAndBridgesHTTPClient|StringRawTemplateRouteExpressionComposesAndBridgesHTTPClient|URLPathnameRouteConstantComposesAndBridgesHTTPClient|ComputedRouteExpressionComposesAndBridgesHTTPClient)' -count=1
 go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out bench/results -lock bench/repos.lock.json -languages Go -limit 1 -skip-clone -profile syntax-only -provider-version codex-path-join-routes -min-loc-per-sec 1
+go test ./internal/sem -run 'Test(GraphQLOperationLiteralsEmitRootFieldBoundaries|BuildProviderSnapshotEmitsGraphQLResolverBoundaries|BuildProviderSnapshotEmitsGraphQLSchemaBoundaries|GraphQLSchemaFieldsLinkToResolverFields|GraphQLSchemaFieldsLinkToModularResolverObjects)' -count=1
+go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out bench/results -lock bench/repos.lock.json -languages Go -limit 1 -skip-clone -profile syntax-only -provider-version codex-graphql-operation-fields -min-loc-per-sec 1
 ```
 
 ## Results
@@ -424,6 +426,11 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
   array, or list literal passed directly to a known callee, including direct
   parameter aliases, while string literals that happen to match a parameter
   name are ignored.
+- GraphQL operation literals now emit `HANDLES_GRAPHQL` for selected root
+  fields, including named operations with variables and aliases such as
+  `query GetViewer($id: ID!) { viewer { id } me: user(id: $id) { id } }`, and
+  explicit anonymous operations such as `query { viewer { id } }`. The previous
+  named-operation endpoint is preserved for compatibility.
 - JS/TS GraphQL resolver maps now emit concrete `graphql_resolver` symbols and
   `HANDLES_GRAPHQL` edges for `Query`, `Mutation`, and `Subscription` fields,
   including inline handlers and named/member/wrapped resolver references;
@@ -854,6 +861,9 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
   - `bench/results/result-1781999134.json`: Go/gin, syntax-only, 28,618 LOC,
     163,751 LOC/s, max RSS 28,131,328 bytes, estimated output 1,902,628
     bytes.
+  - `bench/results/result-1781999418.json`: Go/gin, syntax-only, 28,618 LOC,
+    163,844 LOC/s, max RSS 29,163,520 bytes, estimated output 1,902,636
+    bytes.
   - `bench/results/result-1781997407.json`: Go/gin, syntax-only, 28,618 LOC,
     165,967 LOC/s, max RSS 30,015,488 bytes, estimated output 1,902,632
     bytes.
@@ -890,12 +900,12 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
   and direct literal callee arguments such as
   `normalize({ value: input })` or `collect([input])`. Broad program slicing
   remains intentionally out of scope.
-- GraphQL support covers operation literals, JS/TS resolver-map fields,
-  modular resolver root objects such as `export const Query = { ... }`, schema
-  fields for root and non-root object types, exact schema-field-to-resolver
-  links, and root GraphQL operation boundaries. It is not full GraphQL schema
-  validation, type checking, or resolver analysis beyond exact type/field-name
-  matching.
+- GraphQL support covers operation literals with selected root-field endpoint
+  extraction, JS/TS resolver-map fields, modular resolver root objects such as
+  `export const Query = { ... }`, schema fields for root and non-root object
+  types, exact schema-field-to-resolver links, and root GraphQL operation
+  boundaries. It is not full GraphQL schema validation, type checking, or
+  resolver analysis beyond exact type/field-name matching.
 - Attempted cached C/Linux `fast` profile with a 5 GB RSS ceiling exposed a
   real validation gap before this fix: live process inspection showed the run
   still active at roughly 7.3 GB RSS because the old guard only checked memory

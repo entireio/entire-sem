@@ -231,8 +231,9 @@ type serviceBoundary struct {
 }
 
 var (
-	graphqlOperationRe = regexp.MustCompile(`(?is)\b(query|mutation|subscription)\s+([A-Za-z_][A-Za-z0-9_]*)`)
-	trpcProcedureRe    = regexp.MustCompile(`(?m)([A-Za-z_$][\w$]*)\s*:\s*(?:publicProcedure|protectedProcedure|procedure)\s*\.\s*(query|mutation|subscription)\s*\(`)
+	graphqlOperationRe          = regexp.MustCompile(`(?is)\b(query|mutation|subscription)\s+([A-Za-z_][A-Za-z0-9_]*)`)
+	graphqlOperationSelectionRe = regexp.MustCompile(`(?is)\b(query|mutation|subscription)\b\s*(?:[A-Za-z_][A-Za-z0-9_]*)?\s*(?:\([^{}]*\))?\s*(?:@[A-Za-z_][A-Za-z0-9_]*(?:\([^{}]*\))?\s*)*\{`)
+	trpcProcedureRe             = regexp.MustCompile(`(?m)([A-Za-z_$][\w$]*)\s*:\s*(?:publicProcedure|protectedProcedure|procedure)\s*\.\s*(query|mutation|subscription)\s*\(`)
 )
 
 func serviceBoundaries(symbol SymbolRecord, block string) []serviceBoundary {
@@ -298,6 +299,16 @@ func serviceBoundaries(symbol SymbolRecord, block string) []serviceBoundary {
 			EvidenceKind: "graphql_operation",
 		})
 	}
+	for _, op := range graphqlOperationRootFieldSelections(block) {
+		add(serviceBoundary{
+			Relation:     "HANDLES_GRAPHQL",
+			Kind:         "graphql",
+			Name:         op.Root + " " + op.Field,
+			Confidence:   0.78,
+			Reason:       "GraphQL operation root field detected in operation literal",
+			EvidenceKind: "graphql_operation_field",
+		})
+	}
 	for _, match := range trpcProcedureRe.FindAllStringSubmatch(block, -1) {
 		add(serviceBoundary{
 			Relation:     "HANDLES_TRPC",
@@ -309,6 +320,123 @@ func serviceBoundaries(symbol SymbolRecord, block string) []serviceBoundary {
 		})
 	}
 	return out
+}
+
+type graphqlOperationSelection struct {
+	Root  string
+	Field string
+}
+
+func graphqlOperationRootFieldSelections(block string) []graphqlOperationSelection {
+	seen := map[string]bool{}
+	var out []graphqlOperationSelection
+	for _, loc := range graphqlOperationSelectionRe.FindAllStringSubmatchIndex(block, -1) {
+		if len(loc) < 4 {
+			continue
+		}
+		root := strings.ToLower(block[loc[2]:loc[3]])
+		open := strings.LastIndex(block[loc[0]:loc[1]], "{")
+		if open < 0 {
+			continue
+		}
+		open += loc[0]
+		close := matchingBraceOffset(block, open)
+		if close < 0 {
+			continue
+		}
+		for _, field := range graphqlRootSelectionFields(block[open+1 : close]) {
+			key := root + "\x00" + field
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			out = append(out, graphqlOperationSelection{Root: root, Field: field})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Root == out[j].Root {
+			return out[i].Field < out[j].Field
+		}
+		return out[i].Root < out[j].Root
+	})
+	return out
+}
+
+func graphqlRootSelectionFields(body string) []string {
+	seen := map[string]bool{}
+	var fields []string
+	depth := 0
+	inString := byte(0)
+	escaped := false
+	for i := 0; i < len(body); i++ {
+		ch := body[i]
+		if inString != 0 {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if ch == '\\' {
+				escaped = true
+				continue
+			}
+			if ch == inString {
+				inString = 0
+			}
+			continue
+		}
+		switch ch {
+		case '\'', '"':
+			inString = ch
+			continue
+		case '#':
+			for i < len(body) && body[i] != '\n' {
+				i++
+			}
+			continue
+		case '{', '(', '[':
+			depth++
+			continue
+		case '}', ')', ']':
+			if depth > 0 {
+				depth--
+			}
+			continue
+		}
+		if depth != 0 || !isJSIdentifierStart(ch) {
+			continue
+		}
+		nameStart := i
+		i++
+		for i < len(body) && isJSIdentifierPart(body[i]) {
+			i++
+		}
+		name := body[nameStart:i]
+		cursor := skipSpace(body, i)
+		if cursor < len(body) && body[cursor] == ':' {
+			cursor = skipSpace(body, cursor+1)
+			if cursor >= len(body) || !isJSIdentifierStart(body[cursor]) {
+				continue
+			}
+			fieldStart := cursor
+			cursor++
+			for cursor < len(body) && isJSIdentifierPart(body[cursor]) {
+				cursor++
+			}
+			name = body[fieldStart:cursor]
+			i = cursor - 1
+		}
+		switch name {
+		case "fragment", "on":
+			continue
+		}
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		fields = append(fields, name)
+	}
+	sort.Strings(fields)
+	return fields
 }
 
 func graphqlOperationRoot(root string) bool {

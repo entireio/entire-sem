@@ -39,7 +39,7 @@
     "DEFINES": 136,
     "EMITS": 1,
     "EXTENDS": 9,
-    "HANDLES_GRAPHQL": 1,
+    "HANDLES_GRAPHQL": 2,
     "HANDLES_GRPC": 1,
     "HANDLES_ROUTE": 3,
     "HANDLES_TRPC": 1,

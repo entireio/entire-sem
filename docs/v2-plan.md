@@ -386,10 +386,12 @@ Tasks:
   remain out of scope.
 - Emit `HANDLES_ROUTE` and `HTTP_CALLS` with method, path, confidence, and
   source evidence.
-- GraphQL operation literals, JS/TS resolver-map fields, modular resolver root
-  objects such as `export const Query = { ... }`, and GraphQL schema root
-  fields in `type`/`extend type` `Query`, `Mutation`, and `Subscription`
-  blocks now emit `HANDLES_GRAPHQL`. Resolver fields cover inline
+- GraphQL operation literals emit `HANDLES_GRAPHQL` for named-operation
+  compatibility endpoints and selected root-field endpoints, including explicit
+  anonymous operations such as `query { viewer { id } }`. JS/TS resolver-map
+  fields, modular resolver root objects such as `export const Query = { ... }`,
+  and GraphQL schema root fields in `type`/`extend type` `Query`, `Mutation`,
+  and `Subscription` blocks now emit `HANDLES_GRAPHQL`. Resolver fields cover inline
   function/arrow handlers, subscription resolver objects, and named/member or
   wrapped resolver references such as `user: getUser`,
   `viewer: userResolvers.viewer`, and `user: withAuth(getUser)`. Matching

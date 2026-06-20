@@ -6195,6 +6195,53 @@ export const User = {
 	}
 }
 
+func TestGraphQLOperationLiteralsEmitRootFieldBoundaries(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "schema.graphql", `type Query {
+  viewer: User!
+  user(id: ID!): User!
+}
+
+type Mutation {
+  updateUser(id: ID!): User!
+}
+
+type User {
+  id: ID!
+}
+`)
+	writeFile(t, repo, "src/client.ts", "export function loadViewer(id: string): unknown {\n"+
+		"  return gql`query GetViewer($id: ID!) { viewer { id } me: user(id: $id) { id } }`\n"+
+		"}\n\n"+
+		"export function loadAnonymous(): unknown {\n"+
+		"  return gql`query { viewer { id } }`\n"+
+		"}\n\n"+
+		"export function mutate(id: string): unknown {\n"+
+		"  return gql`mutation Update($id: ID!) { updateUser(id: $id) { id } }`\n"+
+		"}\n")
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []struct {
+		from string
+		to   string
+	}{
+		{"loadViewer", "query viewer"},
+		{"loadViewer", "query user"},
+		{"loadAnonymous", "query viewer"},
+		{"mutate", "mutation updateUser"},
+	} {
+		if !hasRelationByLastSegment(snapshot.Relations, "HANDLES_GRAPHQL", want.from, want.to) {
+			t.Fatalf("missing GraphQL operation root-field HANDLES_GRAPHQL %s -> %s in %#v", want.from, want.to, snapshot.Relations)
+		}
+	}
+	if !hasRelationByLastSegment(snapshot.Relations, "HANDLES_GRAPHQL", "loadViewer", "query GetViewer") {
+		t.Fatalf("missing compatibility named-operation GraphQL boundary in %#v", snapshot.Relations)
+	}
+}
+
 func TestBuildProviderSnapshotEmitsAssignedReturnDataFlow(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "flow.ts", `function helper(): string {
