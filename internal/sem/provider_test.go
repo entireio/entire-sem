@@ -4065,6 +4065,41 @@ def ping():
 	}
 }
 
+func TestDjangoClassBasedViewRoutesResolveAndBridgeHTTPClients(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "urls.py", `from django.urls import path
+from . import views
+
+urlpatterns = [
+    path("users/<int:id>/", views.UserView.as_view(), name="user"),
+]
+`)
+	writeFile(t, repo, "views.py", `import requests
+from django.views import View
+
+class UserView(View):
+    def get(self, request, id):
+        return {"id": id}
+
+def ping_user():
+    return requests.get("/users/{id}")
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasRelationToExternalRoute(snapshot.Relations, "HANDLES_ROUTE", "UserView", "/users/{id}") {
+		t.Fatalf("missing Django class-based view route: %#v", snapshot.Relations)
+	}
+	if hasRelationToExternalRoute(snapshot.Relations, "HANDLES_ROUTE", "ping_user", "/users/{id}") {
+		t.Fatalf("Django client function was misclassified as route handler: %#v", snapshot.Relations)
+	}
+	if !hasRelationByLastSegment(snapshot.Relations, "CALLS", "ping_user", "UserView") {
+		t.Fatalf("missing route bridge CALLS ping_user->UserView: %#v", snapshot.Relations)
+	}
+}
+
 func TestDjangoIncludeURLPatternsComposeHandlersAndBridgeHTTPClients(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "project/urls.py", `import requests

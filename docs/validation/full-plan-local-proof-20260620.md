@@ -141,10 +141,11 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
   `app.Group("/api").Get("/users/{id}", handler)`, nested assigned groups
   such as `v1 := api.Group("/v1")`, and chained groups from assigned parent
   groups such as `api.Group("/admin").Get(...)` are covered too.
-- Django `path(...)` registrations, simple `re_path(...)` registrations, and
-  `path(..., include("module.urls"))` URLConf mounts resolve static patterns
-  to local handler symbols, including `views.handler` imports, and bridge
-  matching Python HTTP client calls as direct `CALLS`.
+- Django `path(...)` registrations, including `<converter:name>` parameters
+  and class-based `View.as_view()` handlers, simple `re_path(...)`
+  registrations, and `path(..., include("module.urls"))` URLConf mounts resolve
+  static patterns to local handler symbols, including `views.handler` imports,
+  and bridge matching Python HTTP client calls as direct `CALLS`.
 - FastAPI/Starlette `add_api_route(path, handler)` registrations resolve
   static or local-literal-constant paths to same-file handler symbols,
   including unique same-file selector handler expressions, and avoid
@@ -458,6 +459,9 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
   - `bench/results/result-1781981708.json`: Go/gin, syntax-only, 28,618 LOC,
     162,459 LOC/s, max RSS 29,655,040 bytes, estimated output 1,902,628
     bytes; run after Flask `MethodView.as_view` route extraction.
+  - `bench/results/result-1781982215.json`: Go/gin, syntax-only, 28,618 LOC,
+    168,873 LOC/s, max RSS 27,885,568 bytes, estimated output 1,902,629
+    bytes; run after Django class-based view route extraction.
   - `bench/results/result-1781972446.json`: Go/gin, syntax-only, 28,618 LOC,
     162,982 LOC/s, max RSS 26,804,224 bytes, estimated output 1,902,630
     bytes; run after IngressClass reference extraction.

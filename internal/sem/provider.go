@@ -7748,14 +7748,29 @@ func djangoRouteRelations(files []FileRecord, recordsByFile map[string][]SymbolR
 	}
 	moduleFiles := pythonModuleFiles(files)
 	symbolsByFileAndName := map[string]map[string]SymbolRecord{}
+	typeSymbolsByFileAndName := map[string]map[string]SymbolRecord{}
 	for _, file := range files {
 		symbolsByFileAndName[file.Path] = map[string]SymbolRecord{}
+		typeSymbolsByFileAndName[file.Path] = map[string]SymbolRecord{}
 		for _, symbol := range recordsByFile[file.Path] {
 			if typeLikeKind(symbol.Kind) {
+				if _, exists := typeSymbolsByFileAndName[file.Path][symbol.Name]; !exists {
+					typeSymbolsByFileAndName[file.Path][symbol.Name] = symbol
+				}
+				if symbol.QualifiedName != "" {
+					if _, exists := typeSymbolsByFileAndName[file.Path][symbol.QualifiedName]; !exists {
+						typeSymbolsByFileAndName[file.Path][symbol.QualifiedName] = symbol
+					}
+				}
 				continue
 			}
 			if _, exists := symbolsByFileAndName[file.Path][symbol.Name]; !exists {
 				symbolsByFileAndName[file.Path][symbol.Name] = symbol
+			}
+			if symbol.QualifiedName != "" {
+				if _, exists := symbolsByFileAndName[file.Path][symbol.QualifiedName]; !exists {
+					symbolsByFileAndName[file.Path][symbol.QualifiedName] = symbol
+				}
 			}
 		}
 	}
@@ -7816,7 +7831,11 @@ func djangoRouteRelations(files []FileRecord, recordsByFile map[string][]SymbolR
 		}
 		if !includedTargets[file.Path] {
 			for _, registration := range djangoRouteRegistrations(content) {
-				handler, ok := djangoResolveRouteHandler(registration.Handler, file.Path, content, symbolsByFileAndName, knownFiles)
+				symbols := symbolsByFileAndName
+				if registration.AllowTypeHandler {
+					symbols = typeSymbolsByFileAndName
+				}
+				handler, ok := djangoResolveRouteHandler(registration.Handler, file.Path, content, symbols, knownFiles)
 				if !ok {
 					continue
 				}
@@ -7833,7 +7852,11 @@ func djangoRouteRelations(files []FileRecord, recordsByFile map[string][]SymbolR
 				continue
 			}
 			for _, registration := range djangoRouteRegistrations(targetContent) {
-				handler, ok := djangoResolveRouteHandler(registration.Handler, targetFile, targetContent, symbolsByFileAndName, knownFiles)
+				symbols := symbolsByFileAndName
+				if registration.AllowTypeHandler {
+					symbols = typeSymbolsByFileAndName
+				}
+				handler, ok := djangoResolveRouteHandler(registration.Handler, targetFile, targetContent, symbols, knownFiles)
 				if !ok {
 					continue
 				}
@@ -7858,15 +7881,23 @@ func djangoRouteRegistrations(content string) []djangoRouteRegistration {
 		if route == "" || handler == "" {
 			return
 		}
+		allowTypeHandler := false
+		if className, ok := pythonAsViewClassName(handler); ok {
+			handler = className
+			allowTypeHandler = true
+		}
 		registrations = append(registrations, djangoRouteRegistration{
-			Route:        route,
-			Handler:      handler,
-			EvidenceKind: evidence,
-			Detail:       route + " -> " + handler,
+			Route:            route,
+			Handler:          handler,
+			EvidenceKind:     evidence,
+			Detail:           route + " -> " + handler,
+			AllowTypeHandler: allowTypeHandler,
 		})
 	}
-	pathRe := regexp.MustCompile(`\bpath\s*\(\s*([rRuUbB]*["'][^"']*["'])\s*,\s*([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)`)
-	rePathRe := regexp.MustCompile(`\bre_path\s*\(\s*([rRuUbB]*["'][^"']*["'])\s*,\s*([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)`)
+	handlerExpr := `[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?`
+	handlerOrAsViewExpr := `(?:` + handlerExpr + `\.as_view\s*\([^)\n]*\)|` + handlerExpr + `)`
+	pathRe := regexp.MustCompile(`\bpath\s*\(\s*([rRuUbB]*["'][^"']*["'])\s*,\s*(` + handlerOrAsViewExpr + `)`)
+	rePathRe := regexp.MustCompile(`\bre_path\s*\(\s*([rRuUbB]*["'][^"']*["'])\s*,\s*(` + handlerOrAsViewExpr + `)`)
 	for _, match := range pathRe.FindAllStringSubmatch(content, -1) {
 		if len(match) == 3 {
 			add(match[1], match[2], "django_path")
@@ -8669,7 +8700,11 @@ func djangoRoutePatternValue(pattern string, regex bool) string {
 	if value == "" {
 		return "/"
 	}
-	return "/" + value
+	route := "/" + value
+	if !regex {
+		route = normalizeRouteParamSyntax(route)
+	}
+	return route
 }
 
 func routeLiteralPartOfConcat(line string, start, end int) bool {
@@ -8735,10 +8770,11 @@ type goHTTPRouteRegistration struct {
 }
 
 type djangoRouteRegistration struct {
-	Route        string
-	Handler      string
-	EvidenceKind string
-	Detail       string
+	Route            string
+	Handler          string
+	EvidenceKind     string
+	Detail           string
+	AllowTypeHandler bool
 }
 
 type laravelRouteRegistration struct {
