@@ -8,10 +8,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"sort"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -51,7 +53,8 @@ type RepoMetrics struct {
 }
 
 type MeasureOptions struct {
-	Progress func(sem.ProgressEvent)
+	Progress    func(sem.ProgressEvent)
+	MaxRSSBytes uint64
 }
 
 // MeasureRepo measures the streaming provider path (the production path) over
@@ -85,7 +88,12 @@ func MeasureRepoWithOptions(ctx context.Context, name, language, dir, providerVe
 	var summary sem.SnapshotSummary
 	outputBytes := 0
 	start := time.Now()
-	err := sem.StreamSnapshot(ctx, dir, providerVersion, sem.ProviderSnapshotOptions{NoNetwork: true, Profile: profile, Progress: opts.Progress}, func(record any) error {
+	measureCtx, stopRSSGuard, rssExceeded := startRSSGuard(ctx, opts.MaxRSSBytes)
+	defer stopRSSGuard()
+	err := sem.StreamSnapshot(measureCtx, dir, providerVersion, sem.ProviderSnapshotOptions{NoNetwork: true, Profile: profile, Progress: opts.Progress}, func(record any) error {
+		if rss := rssExceeded.Load(); rss > 0 {
+			return fmt.Errorf("memory guardrail failed during measurement: max RSS %d exceeds ceiling %d", rss, opts.MaxRSSBytes)
+		}
 		if encoded, marshalErr := json.Marshal(record); marshalErr == nil {
 			outputBytes += len(encoded) + 1 // record + newline, the NDJSON byte cost
 		}
@@ -121,6 +129,9 @@ func MeasureRepoWithOptions(ctx context.Context, name, language, dir, providerVe
 		return nil
 	})
 	wall := time.Since(start)
+	if rss := rssExceeded.Load(); rss > 0 {
+		err = fmt.Errorf("memory guardrail failed during measurement: max RSS %d exceeds ceiling %d", rss, opts.MaxRSSBytes)
+	}
 	if err != nil {
 		metrics.Error = err.Error()
 		return metrics, err
@@ -151,6 +162,51 @@ func MeasureRepoWithOptions(ctx context.Context, name, language, dir, providerVe
 		metrics.LOCPerSec = round2(float64(metrics.LOC) / seconds)
 	}
 	return metrics, nil
+}
+
+func startRSSGuard(ctx context.Context, maxRSSBytes uint64) (context.Context, func(), *atomic.Uint64) {
+	var exceeded atomic.Uint64
+	if maxRSSBytes == 0 {
+		return ctx, func() {}, &exceeded
+	}
+	guardCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	check := func() bool {
+		rss := maxRSSBytesCurrent()
+		if rss > maxRSSBytes {
+			exceeded.CompareAndSwap(0, rss)
+			cancel()
+			return true
+		}
+		return false
+	}
+	if check() {
+		return guardCtx, func() {
+			cancel()
+			close(done)
+		}, &exceeded
+	}
+	go func() {
+		ticker := time.NewTicker(250 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if check() {
+					return
+				}
+			case <-done:
+				return
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	stop := func() {
+		cancel()
+		close(done)
+	}
+	return guardCtx, stop, &exceeded
 }
 
 // confidenceBand maps a numeric confidence to the v2-plan bands.
@@ -192,6 +248,10 @@ type Hardware struct {
 // maxRSSBytes returns the process peak resident set size (best-effort). It is a
 // process-wide peak, not per-repo; Linux reports kilobytes, macOS reports bytes.
 func maxRSSBytes() uint64 {
+	return maxRSSBytesCurrent()
+}
+
+func maxRSSBytesCurrent() uint64 {
 	var ru syscall.Rusage
 	if err := syscall.Getrusage(syscall.RUSAGE_SELF, &ru); err != nil {
 		return 0

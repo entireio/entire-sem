@@ -666,6 +666,9 @@ func StreamSnapshot(ctx context.Context, repo, providerVersion string, options P
 
 	// Phase 1: parse + emit file/symbol records, build indexes, discard content.
 	for i, path := range sc.paths {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if !Supported(path) {
 			if hint := unsupportedLanguageHint(path); hint != "" {
 				failures = append(failures, PartialFailure{
@@ -789,6 +792,10 @@ func StreamSnapshot(ctx context.Context, repo, providerVersion string, options P
 		if emitErr != nil {
 			return
 		}
+		if err := ctx.Err(); err != nil {
+			emitErr = err
+			return
+		}
 		// Profile filter: emit only relation families the profile includes; in
 		// shallow call resolution, keep only exact (same-file) calls; drop
 		// evidence when the profile omits it.
@@ -827,11 +834,16 @@ func StreamSnapshot(ctx context.Context, repo, providerVersion string, options P
 		})
 	} else {
 		symbolsByID, filesByID := recordIndexes(files, recordsByFile)
-		forEachRelation(sc.key, files, recordsByFile, sc.read, spec, func(r RelationRecord) {
+		forEachRelation(sc.key, files, recordsByFile, sc.read, spec, func() bool {
+			return emitErr != nil || ctx.Err() != nil
+		}, func(r RelationRecord) {
 			emitRelation(r, symbolsByID, filesByID)
 		})
 		if spec.emits("FILE_CHANGES_WITH") {
 			for _, r := range fileChangesWithRelations(ctx, sc.absRepo, sc.key, files) {
+				if emitErr != nil || ctx.Err() != nil {
+					break
+				}
 				emitRelation(r, symbolsByID, filesByID)
 			}
 		}
@@ -847,6 +859,9 @@ func StreamSnapshot(ctx context.Context, repo, providerVersion string, options P
 	}
 	sort.Strings(externalIDs)
 	for _, id := range externalIDs {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if err := emit(externalsByID[id]); err != nil {
 			return err
 		}
@@ -1201,7 +1216,7 @@ func resolveCallTargets(name string, from SymbolRecord, candidates, sameFile []S
 // snapshot path; the streaming path uses forEachRelation directly.
 func buildRelations(repoKey string, files []FileRecord, recordsByFile map[string][]SymbolRecord, readContent contentReader) []RelationRecord {
 	var relations []RelationRecord
-	forEachRelation(repoKey, files, recordsByFile, readContent, resolveProfile(ProfileFull), func(r RelationRecord) {
+	forEachRelation(repoKey, files, recordsByFile, readContent, resolveProfile(ProfileFull), nil, func(r RelationRecord) {
 		relations = append(relations, r)
 	})
 	relations = dedupeRelations(relations)
@@ -1315,7 +1330,7 @@ func emitStructuralRelationsCompact(repoKey string, files []FileRecord, recordsB
 // as it is produced. It never accumulates the full relation set, so a streaming
 // caller can write records out with bounded memory. Callers deduplicate:
 // buildRelations collects-then-dedupes; the streaming path dedupes on emit.
-func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[string][]SymbolRecord, readContent contentReader, spec profileSpec, emit func(RelationRecord)) {
+func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[string][]SymbolRecord, readContent contentReader, spec profileSpec, shouldStop func() bool, emit func(RelationRecord)) {
 	if spec.name == ProfileSyntaxOnly {
 		emitStructuralRelations(repoKey, files, recordsByFile, emit)
 		return
@@ -1342,8 +1357,14 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 	// Iterate files in their (stable) slice order, not the recordsByFile map, so
 	// structural relations stream deterministically.
 	for _, file := range files {
+		if shouldStop != nil && shouldStop() {
+			return
+		}
 		records := recordsByFile[file.Path]
 		for _, symbol := range records {
+			if shouldStop != nil && shouldStop() {
+				return
+			}
 			if symbol.Kind == "route" {
 				routeHandlers[symbol.Name] = append(routeHandlers[symbol.Name], symbol)
 			}
@@ -1428,6 +1449,9 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 	handledRoutes := map[string]struct{}{}
 	knownFiles := map[string]bool{}
 	for _, file := range files {
+		if shouldStop != nil && shouldStop() {
+			return
+		}
 		knownFiles[file.Path] = true
 		if route := nextRouteBoundary(file.Path); route != "" {
 			handledRoutes[route] = struct{}{}
@@ -1435,26 +1459,41 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 	}
 	if spec.emits("HANDLES_ROUTE") {
 		for _, r := range goHTTPRouteRelations(files, recordsByFile, readContent) {
+			if shouldStop != nil && shouldStop() {
+				return
+			}
 			emit(r.Relation)
 			routeHandlers[r.Route] = append(routeHandlers[r.Route], r.Handler)
 			handledRoutes[r.Route] = struct{}{}
 		}
 		for _, r := range djangoRouteRelations(files, recordsByFile, readContent) {
+			if shouldStop != nil && shouldStop() {
+				return
+			}
 			emit(r.Relation)
 			routeHandlers[r.Route] = append(routeHandlers[r.Route], r.Handler)
 			handledRoutes[r.Route] = struct{}{}
 		}
 		for _, r := range laravelRouteRelations(files, recordsByFile, readContent) {
+			if shouldStop != nil && shouldStop() {
+				return
+			}
 			emit(r.Relation)
 			routeHandlers[r.Route] = append(routeHandlers[r.Route], r.Handler)
 			handledRoutes[r.Route] = struct{}{}
 		}
 		for _, r := range railsRouteRelations(files, recordsByFile, readContent) {
+			if shouldStop != nil && shouldStop() {
+				return
+			}
 			emit(r.Relation)
 			routeHandlers[r.Route] = append(routeHandlers[r.Route], r.Handler)
 			handledRoutes[r.Route] = struct{}{}
 		}
 		for _, r := range jsDirectRouteRelations(files, recordsByFile, readContent) {
+			if shouldStop != nil && shouldStop() {
+				return
+			}
 			emit(r.Relation)
 			routeHandlers[r.Route] = append(routeHandlers[r.Route], r.Handler)
 			handledRoutes[r.Route] = struct{}{}
@@ -1463,6 +1502,9 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 	manifestImports := buildManifestImportResolver(files, readContent)
 
 	for _, file := range files {
+		if shouldStop != nil && shouldStop() {
+			return
+		}
 		if !profileNeedsPerFileScan(spec) {
 			break // syntax-only: no content-derived relations
 		}
@@ -1537,6 +1579,9 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 		}
 		importsByName := importedNamesFor(file.Path, content)
 		for _, from := range recordsByFile[file.Path] {
+			if shouldStop != nil && shouldStop() {
+				return
+			}
 			block := symbolBlockFromLines(lines, from)
 			for _, name := range sortedKeysOf(callLikeIdentifiers(block)) {
 				if name == from.Name {
@@ -1778,51 +1823,81 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 
 	if needsOverrides {
 		for _, r := range overrideRelations(inheritanceEdges, methodsByContainer) {
+			if shouldStop != nil && shouldStop() {
+				return
+			}
 			emit(r)
 		}
 	}
 	if spec.emits("HANDLES_ROUTE") {
 		for _, r := range crossFileExpressRouterRelations(files, recordsByFile, readContent, knownFiles) {
+			if shouldStop != nil && shouldStop() {
+				return
+			}
 			emit(r.Relation)
 			routeHandlers[r.Route] = append(routeHandlers[r.Route], r.Handler)
 		}
 		for _, r := range pythonIncludeRouterRelations(files, recordsByFile, readContent, knownFiles) {
+			if shouldStop != nil && shouldStop() {
+				return
+			}
 			emit(r.Relation)
 			routeHandlers[r.Route] = append(routeHandlers[r.Route], r.Handler)
 		}
 	}
 	if spec.emits("CALLS") {
 		for _, r := range routeBridgeRelations(routeHandlers, httpCallsByRoute) {
+			if shouldStop != nil && shouldStop() {
+				return
+			}
 			emit(r)
 		}
 	}
 	if spec.emits("USES_TYPE") {
 		for _, r := range usesTypeRelations(recordsByFile, symbolsByFile, symbolsByShortName) {
+			if shouldStop != nil && shouldStop() {
+				return
+			}
 			emit(r)
 		}
 	}
 	if spec.emits("PARAM_TYPE") || spec.emits("RETURNS_TYPE") {
 		for _, r := range signatureTypeRelations(recordsByFile, symbolsByFile, symbolsByShortName, spec) {
+			if shouldStop != nil && shouldStop() {
+				return
+			}
 			emit(r)
 		}
 	}
 	if spec.emits("TESTS") {
 		for _, r := range testRelations(recordsByFile, symbolsByShortName) {
+			if shouldStop != nil && shouldStop() {
+				return
+			}
 			emit(r)
 		}
 	}
 	if spec.emits("RESOURCE_DEPENDS_ON") {
 		for _, r := range resourceDependsOnRelations(recordsByFile, readContent) {
+			if shouldStop != nil && shouldStop() {
+				return
+			}
 			emit(r)
 		}
 	}
 	if spec.emits("CONFIGURES") {
 		for _, r := range configuresRelations(recordsByFile, readContent) {
+			if shouldStop != nil && shouldStop() {
+				return
+			}
 			emit(r)
 		}
 	}
 	if spec.emits("SIMILAR_TO") {
 		for _, r := range similarityRelations(recordsByFile, readContent) {
+			if shouldStop != nil && shouldStop() {
+				return
+			}
 			emit(r)
 		}
 	}

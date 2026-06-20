@@ -35,11 +35,19 @@ go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go
 go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go -limit 1 -profile syntax-only -provider-version codex-full-plan -out bench/results
 go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go -limit 1 -profile syntax-only -provider-version codex-full-plan -out bench/results
 go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go -limit 1 -profile syntax-only -provider-version codex-full-plan -out bench/results
+go test ./internal/bench -run TestMeasureRepoEnforcesLiveRSSGuard
+go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go -limit 1 -profile syntax-only -provider-version guard-test -out - -max-rss-bytes 1
 ```
 
 ## Results
 
 - Full repository tests passed.
+- Live benchmark RSS guard tests pass: `MeasureRepoWithOptions` cancels the
+  measured provider context as soon as process peak RSS exceeds
+  `MaxRSSBytes`, and the CLI `-max-rss-bytes` flag is wired into that live
+  guard.
+- CLI low-ceiling validation fails as intended with
+  `memory guardrail failed during measurement` before completing a repo.
 - Capability output reports 182 language/filetype labels and 201 deterministic
   suffixes/extensions.
 - Go module imports resolve through `go.mod` to local package files with
@@ -313,3 +321,8 @@ go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go
   invalidate the speed/RSS proof, but it is not quality proof for C semantics.
 - Public large-corpus speed claims still need broader retained runs across more
   cached or supplied repositories and profiles.
+- Attempted cached C/Linux `fast` profile with a 5 GB RSS ceiling exposed a
+  real validation gap before this fix: live process inspection showed the run
+  still active at roughly 7.3 GB RSS because the old guard only checked memory
+  after completion. That run was terminated and is not counted as retained
+  performance proof.

@@ -134,7 +134,7 @@ func run(manifestPath, cacheDir, outDir, lockPath, languages, profileName string
 			fmt.Fprintf(os.Stderr, "  skip %-40s (not cloned)\n", spec.repoPath)
 			continue
 		}
-		var opts bench.MeasureOptions
+		opts := bench.MeasureOptions{MaxRSSBytes: maxRSSBytes}
 		if progress {
 			opts.Progress = func(event sem.ProgressEvent) {
 				fmt.Fprintf(os.Stderr, "  progress %-40s phase=%s files=%d/%d symbols=%d relations=%d heap=%d rss=%d elapsed=%s\n",
