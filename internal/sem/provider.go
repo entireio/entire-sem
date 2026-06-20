@@ -5058,20 +5058,67 @@ func importedJavaScriptNames(content string) map[string][]string {
 	return imports
 }
 
+func importedJavaScriptBindings(content string) map[string][]jsImportBinding {
+	bindings := map[string][]jsImportBinding{}
+	add := func(local string, binding jsImportBinding) {
+		local = strings.TrimSpace(local)
+		if local == "" || binding.Module == "" {
+			return
+		}
+		bindings[local] = append(bindings[local], binding)
+	}
+	namedImport := regexp.MustCompile(`(?m)^\s*import\s+(?:type\s+)?\{([^}]+)\}\s+from\s+['"]([^'"]+)['"]`)
+	defaultImport := regexp.MustCompile(`(?m)^\s*import\s+(?:type\s+)?([A-Za-z_$][A-Za-z0-9_$]*)\s+from\s+['"]([^'"]+)['"]`)
+	namespaceImport := regexp.MustCompile(`(?m)^\s*import\s+\*\s+as\s+([A-Za-z_$][A-Za-z0-9_$]*)\s+from\s+['"]([^'"]+)['"]`)
+	requireNamed := regexp.MustCompile(`(?m)\b(?:const|let|var)\s+\{([^}]+)\}\s*=\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)`)
+	requireDefault := regexp.MustCompile(`(?m)\b(?:const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*(?:await\s+)?(?:require|import)\s*\(\s*['"]([^'"]+)['"]\s*\)`)
+	for _, match := range namedImport.FindAllStringSubmatch(content, -1) {
+		for _, item := range strings.Split(match[1], ",") {
+			imported, local := javascriptImportNames(item)
+			add(local, jsImportBinding{Module: match[2], Imported: imported})
+		}
+	}
+	for _, match := range defaultImport.FindAllStringSubmatch(content, -1) {
+		add(match[1], jsImportBinding{Module: match[2], Imported: "default"})
+	}
+	for _, match := range namespaceImport.FindAllStringSubmatch(content, -1) {
+		add(match[1], jsImportBinding{Module: match[2], Namespace: true})
+	}
+	for _, match := range requireNamed.FindAllStringSubmatch(content, -1) {
+		for _, item := range strings.Split(match[1], ",") {
+			imported, local := javascriptImportNames(item)
+			add(local, jsImportBinding{Module: match[2], Imported: imported})
+		}
+	}
+	for _, match := range requireDefault.FindAllStringSubmatch(content, -1) {
+		add(match[1], jsImportBinding{Module: match[2]})
+	}
+	return bindings
+}
+
 func javascriptImportedLocalName(item string) string {
+	_, local := javascriptImportNames(item)
+	return local
+}
+
+func javascriptImportNames(item string) (string, string) {
 	item = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(item), "type "))
 	if item == "" {
-		return ""
+		return "", ""
 	}
-	if _, after, ok := strings.Cut(item, ":"); ok {
-		return strings.TrimSpace(after)
+	if before, after, ok := strings.Cut(item, ":"); ok {
+		return strings.TrimSpace(before), strings.TrimSpace(after)
 	}
 	parts := strings.Fields(item)
-	local := parts[0]
+	if len(parts) == 0 {
+		return "", ""
+	}
+	imported := parts[0]
+	local := imported
 	if len(parts) >= 3 && parts[len(parts)-2] == "as" {
 		local = parts[len(parts)-1]
 	}
-	return local
+	return imported, local
 }
 
 func importedPythonNames(content string) map[string][]string {
@@ -5368,6 +5415,12 @@ type expressRouteRelation struct {
 	Relation RelationRecord
 }
 
+type jsImportBinding struct {
+	Module    string
+	Imported  string
+	Namespace bool
+}
+
 type pythonRouterMount struct {
 	Prefix string
 	Target string
@@ -5416,7 +5469,7 @@ func jsRouterComposedRouteLiterals(block string) []string {
 }
 
 func jsRouterMounts(block string) []jsRouterMount {
-	re := regexp.MustCompile(`\b([A-Za-z_$][\w$]*)\.use\s*\(\s*["']([^"']+)["']\s*,\s*([A-Za-z_$][\w$]*)`)
+	re := regexp.MustCompile(`\b([A-Za-z_$][\w$]*)\.use\s*\(\s*["']([^"']+)["']\s*,\s*([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)?)`)
 	var mounts []jsRouterMount
 	for _, match := range re.FindAllStringSubmatch(block, -1) {
 		if len(match) == 4 && strings.HasPrefix(match[2], "/") {
@@ -5437,10 +5490,18 @@ func jsRouterRoutes(block string) []jsRouterRoute {
 	return routes
 }
 
+func splitJavaScriptMember(value string) (string, string) {
+	before, after, ok := strings.Cut(strings.TrimSpace(value), ".")
+	if !ok {
+		return strings.TrimSpace(value), ""
+	}
+	return strings.TrimSpace(before), strings.TrimSpace(after)
+}
+
 func crossFileExpressRouterRelations(files []FileRecord, recordsByFile map[string][]SymbolRecord, readContent contentReader, knownFiles map[string]bool) []expressRouteRelation {
 	routesByFile := map[string][]jsRouterRoute{}
 	mountsByFile := map[string][]jsRouterMount{}
-	importsByFile := map[string]map[string][]string{}
+	importBindingsByFile := map[string]map[string][]jsImportBinding{}
 	symbolsByFileAndName := map[string]map[string]SymbolRecord{}
 	for _, file := range files {
 		if !jsLikeExtension(filepath.Ext(file.Path)) {
@@ -5463,19 +5524,27 @@ func crossFileExpressRouterRelations(files []FileRecord, recordsByFile map[strin
 		}
 		routesByFile[file.Path] = jsRouterRoutes(content)
 		mountsByFile[file.Path] = jsRouterMounts(content)
-		importsByFile[file.Path] = importedNamesFor(file.Path, content)
+		importBindingsByFile[file.Path] = importedJavaScriptBindings(content)
 	}
 	var relations []expressRouteRelation
 	seen := map[string]bool{}
 	for _, file := range files {
 		for _, mount := range mountsByFile[file.Path] {
-			for _, imported := range importsByFile[file.Path][mount.Target] {
-				routeFile, ok := resolveLocalImport(file.Path, imported, knownFiles)
+			targetLocal, targetMember := splitJavaScriptMember(mount.Target)
+			for _, binding := range importBindingsByFile[file.Path][targetLocal] {
+				routeFile, ok := resolveLocalImport(file.Path, binding.Module, knownFiles)
 				if !ok || routeFile == file.Path {
 					continue
 				}
+				routeReceiver := binding.Imported
+				if binding.Namespace {
+					routeReceiver = targetMember
+				}
+				if routeReceiver == "" {
+					routeReceiver = targetLocal
+				}
 				for _, route := range routesByFile[routeFile] {
-					if route.Receiver != mount.Target || route.Handler == "" {
+					if route.Receiver != routeReceiver || route.Handler == "" {
 						continue
 					}
 					handler, ok := symbolsByFileAndName[routeFile][route.Handler]

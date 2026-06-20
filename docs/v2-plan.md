@@ -283,9 +283,10 @@ Tasks:
   ASP.NET, PHP Laravel/Symfony. Flask/FastAPI-style Python route decorators are
   implemented for direct app/router decorators. Java Spring-style direct
   mapping annotations are implemented for class-level prefix plus method-level
-  route composition. Express-style JS/TS same-block router mounts and
-  same-name imported router mounts compose `app.use("/prefix", router)` with
-  static `router.get/post/...` registrations. FastAPI/Starlette-style local
+  route composition. Express-style JS/TS same-block router mounts plus
+  same-name, aliased named-import, and namespace-member imported router mounts
+  compose `app.use("/prefix", router)` with static `router.get/post/...`
+  registrations. FastAPI/Starlette-style local
   `include_router(router, prefix="/prefix")` mounts compose with static
   `@router.get/post/...` decorators, including locally resolved relative
   imports. Static constant-prefix route expressions such as
