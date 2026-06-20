@@ -2394,6 +2394,9 @@ func kubernetesResourceReferences(content string) []resourceReference {
 	for _, match := range regexp.MustCompile(`(?im)^\s*serviceName:\s*([A-Za-z0-9_.-]+)\s*$`).FindAllStringSubmatch(content, -1) {
 		add("service", match[1], "kubernetes_ingress_service_name", 0.8)
 	}
+	for _, match := range regexp.MustCompile(`(?is)\bbackendRefs:\s*\n(?:\s+-\s*)?(?:(?:kind:\s*Service\s*\n)|(?:[A-Za-z0-9_-]+:\s*[^\n]*\n))*\s+name:\s*([A-Za-z0-9_.-]+)`).FindAllStringSubmatch(content, -1) {
+		add("service", match[1], "kubernetes_gateway_backend_ref", 0.82)
+	}
 	return dedupeResourceReferences(refs)
 }
 

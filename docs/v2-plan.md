@@ -339,8 +339,8 @@ Delivered:
   present in the same provider snapshot, those named references also resolve to
   exact local `RESOURCE_DEPENDS_ON` symbol edges. The same exact local
   resolution covers RBAC role/subject references, owner references, Ingress
-  Service backends, HPA scale targets, projected ConfigMap/Secret volume refs,
-  and image pull secrets.
+  Service backends, Gateway API HTTPRoute backend refs, HPA scale targets,
+  projected ConfigMap/Secret volume refs, and image pull secrets.
 - Kubernetes resource symbols emit common container image, environment-variable,
   and port declarations as `CONFIGURES` facts, multi-document Kubernetes YAML
   emits one resource symbol per document, and Service, PodDisruptionBudget,
@@ -358,13 +358,13 @@ Delivered:
 Open:
 
 - Cross-file Kubernetes resource resolution is implemented for named
-  ConfigMap/Secret/service-account/PVC/RBAC/owner/Ingress/HPA references,
-  Service selector matches, PodDisruptionBudget selector matches, NetworkPolicy
-  podSelector matches, Prometheus Operator ServiceMonitor selector matches, and
-  Prometheus Operator PodMonitor selector matches when the target resource
-  symbol exists in the same provider snapshot. Remaining Kubernetes resource
-  gaps include less common Kubernetes controllers beyond these selectors and
-  other custom resource conventions.
+  ConfigMap/Secret/service-account/PVC/RBAC/owner/Ingress/HPA/Gateway API
+  HTTPRoute backend references, Service selector matches, PodDisruptionBudget
+  selector matches, NetworkPolicy podSelector matches, Prometheus Operator
+  ServiceMonitor selector matches, and Prometheus Operator PodMonitor selector
+  matches when the target resource symbol exists in the same provider snapshot.
+  Remaining Kubernetes resource gaps include less common Kubernetes controllers
+  beyond these selectors and other custom resource conventions.
 - Broad framework-specific IaC/service modeling remains partial.
 
 Acceptance:

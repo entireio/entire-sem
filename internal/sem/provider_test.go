@@ -918,6 +918,17 @@ metadata:
       kind: Deployment
       name: api
 `)
+	writeFile(t, repo, "k8s/http-route.yaml", `apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: api
+spec:
+  rules:
+    - backendRefs:
+        - name: api
+          kind: Service
+          port: 80
+`)
 
 	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
 	if err != nil {
@@ -926,6 +937,7 @@ metadata:
 	for _, edge := range [][2]string{
 		{"HorizontalPodAutoscaler.api", "Deployment.api"},
 		{"Ingress.api", "Service.api"},
+		{"HTTPRoute.api", "Service.api"},
 		{"RoleBinding.api-readers", "Role.api-reader"},
 		{"RoleBinding.api-readers", "ServiceAccount.api-runner"},
 		{"ClusterRoleBinding.api-admins", "ClusterRole.api-admin"},
