@@ -1813,6 +1813,30 @@ kind: ClusterAnalysisTemplate
 metadata:
   name: global-slo
 `)
+	writeFile(t, repo, "k8s/service-binding.yaml", `apiVersion: servicebinding.io/v1
+kind: ServiceBinding
+metadata:
+  name: api-database
+spec:
+  service:
+    apiVersion: database.example.com/v1
+    kind: PostgreSQL
+    name: user-db
+  workload:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: api
+`)
+	writeFile(t, repo, "k8s/database.yaml", `apiVersion: database.example.com/v1
+kind: PostgreSQL
+metadata:
+  name: user-db
+`)
+	writeFile(t, repo, "k8s/deployment.yaml", `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+`)
 
 	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
 	if err != nil {
@@ -1828,6 +1852,8 @@ metadata:
 		{"Rollout.api", "AnalysisTemplate.success-rate"},
 		{"Rollout.api", "ClusterAnalysisTemplate.global-slo"},
 		{"AnalysisRun.manual-analysis", "AnalysisTemplate.success-rate"},
+		{"ServiceBinding.api-database", "PostgreSQL.user-db"},
+		{"ServiceBinding.api-database", "Deployment.api"},
 	} {
 		if !hasRelationByLastSegment(snapshot.Relations, "RESOURCE_DEPENDS_ON", edge[0], edge[1]) {
 			t.Fatalf("missing custom-controller dependency %s -> %s in %#v", edge[0], edge[1], snapshot.Relations)

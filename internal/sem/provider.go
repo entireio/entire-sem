@@ -2883,6 +2883,14 @@ func kubernetesResourceReferences(content string) []resourceReference {
 			add(ref.Kind, ref.Name, ref.EvidenceKind, ref.Confidence)
 		}
 	}
+	if kubernetesManifestHasAnyKind(content, "ServiceBinding") {
+		for _, ref := range kubernetesNamedRefBlockReferences(content, "service", "kubernetes_service_binding_service_ref", 0.84, kubernetesDefaultReferenceKind("service")) {
+			add(ref.Kind, ref.Name, ref.EvidenceKind, ref.Confidence)
+		}
+		for _, ref := range kubernetesNamedRefBlockReferences(content, "workload", "kubernetes_service_binding_workload_ref", 0.84, kubernetesDefaultReferenceKind("deployment")) {
+			add(ref.Kind, ref.Name, ref.EvidenceKind, ref.Confidence)
+		}
+	}
 	if kubernetesManifestHasAnyKind(content, "HelmRelease", "HelmChart", "Kustomization", "ImageRepository", "ImagePolicy", "ImageUpdateAutomation") {
 		for _, ref := range kubernetesNamedRefBlockReferences(content, "sourceRef", "kubernetes_flux_source_ref", 0.84, kubernetesExplicitReferenceKind) {
 			add(ref.Kind, ref.Name, ref.EvidenceKind, ref.Confidence)

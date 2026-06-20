@@ -200,7 +200,8 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
   `ClusterTriggerAuthentication` when the ref carries that explicit kind.
 - cert-manager `issuerRef`, External Secrets `secretStoreRef`, Argo
   `workflowTemplateRef`/`templateRef`, Argo Rollouts `templateName`
-  AnalysisTemplate refs, and Tekton `pipelineRef`/`taskRef`
+  AnalysisTemplate refs, Tekton `pipelineRef`/`taskRef`, and ServiceBinding
+  `service`/`workload`
   custom-controller references emit exact local `RESOURCE_DEPENDS_ON` edges
   when the referenced resource manifests are present in the snapshot.
 - Flux CD `sourceRef`, `chartRef`, same-kind `dependsOn`, and HelmRelease
@@ -371,6 +372,9 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
   - `bench/results/result-1781971817.json`: Go/gin, syntax-only, 28,618 LOC,
     146,399 LOC/s, max RSS 29,130,752 bytes, estimated output 1,902,634
     bytes; run after Argo Rollouts AnalysisTemplate reference extraction.
+  - `bench/results/result-1781977232.json`: Go/gin, syntax-only, 28,618 LOC,
+    151,042 LOC/s, max RSS 27,295,744 bytes, estimated output 1,902,629
+    bytes; run after ServiceBinding service/workload reference extraction.
   - `bench/results/result-1781972047.json`: Go/gin, syntax-only, 28,618 LOC,
     151,466 LOC/s, max RSS 26,624,000 bytes, estimated output 1,902,634
     bytes; run after Gateway API route backend-ref extraction.
