@@ -63,7 +63,7 @@ Kubernetes YAML, Kustomize, GitHub Actions, protobuf/gRPC, GraphQL, tRPC, and
 Python Flask/FastAPI-style decorator routes, FastAPI/Starlette-style
 `include_router(prefix=...)` composition, Tornado route tuples to handler
 classes, same-block Express router-prefix composition, same-name imported
-Express router mounts, and C# ASP.NET
+and default-imported Express router mounts, and C# ASP.NET
 controller route attributes plus C# minimal API registrations, plus PHP Laravel
 controller route declarations and prefix groups, Symfony/PHP route attributes,
 Ruby on Rails static route declarations and

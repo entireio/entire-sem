@@ -347,7 +347,7 @@ Tasks:
   NestJS controller/method decorators compose class prefixes with method routes
   and bridge matching JS/TS HTTP clients.
   Express/Hono-style JS/TS same-block router mounts plus
-  same-name, aliased named-import, and namespace-member imported router mounts
+  default-imported, same-name, aliased named-import, and namespace-member imported router mounts
   compose `app.use("/prefix", router)` or `app.route("/prefix", router)` with
   static `router.get/post/...` registrations, including local literal constants
   in mount prefixes and child router paths. FastAPI/Starlette-style local

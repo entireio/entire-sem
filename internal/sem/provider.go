@@ -9981,6 +9981,7 @@ func crossFileExpressRouterRelations(files []FileRecord, recordsByFile map[strin
 	mountsByFile := map[string][]jsRouterMount{}
 	pluginMountsByFile := map[string][]jsFastifyPluginMount{}
 	importBindingsByFile := map[string]map[string][]jsImportBinding{}
+	defaultExportsByFile := map[string]string{}
 	symbolsByFileAndName := map[string]map[string]SymbolRecord{}
 	for _, file := range files {
 		if !jsLikeExtension(filepath.Ext(file.Path)) {
@@ -10012,6 +10013,7 @@ func crossFileExpressRouterRelations(files []FileRecord, recordsByFile map[strin
 		mountsByFile[file.Path] = jsRouterMounts(content, constants)
 		pluginMountsByFile[file.Path] = jsFastifyPluginMounts(content, constants)
 		importBindingsByFile[file.Path] = importedJavaScriptBindings(content)
+		defaultExportsByFile[file.Path] = javascriptDefaultExportName(content)
 	}
 	var relations []expressRouteRelation
 	seen := map[string]bool{}
@@ -10068,6 +10070,9 @@ func crossFileExpressRouterRelations(files []FileRecord, recordsByFile map[strin
 				routeReceiver := binding.Imported
 				if binding.Namespace {
 					routeReceiver = targetMember
+				}
+				if routeReceiver == "default" {
+					routeReceiver = defaultExportsByFile[routeFile]
 				}
 				if routeReceiver == "" {
 					routeReceiver = targetLocal
@@ -10174,6 +10179,26 @@ func crossFileExpressRouterRelations(files []FileRecord, recordsByFile map[strin
 		return relations[i].Handler.ID < relations[j].Handler.ID
 	})
 	return relations
+}
+
+func javascriptDefaultExportName(content string) string {
+	for _, match := range regexp.MustCompile(`(?m)^\s*export\s+default\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*;?\s*$`).FindAllStringSubmatch(content, -1) {
+		if len(match) == 2 {
+			return match[1]
+		}
+	}
+	for _, match := range regexp.MustCompile(`(?m)^\s*export\s*\{([^}]+)\}`).FindAllStringSubmatch(content, -1) {
+		if len(match) != 2 {
+			continue
+		}
+		for _, item := range strings.Split(match[1], ",") {
+			imported, local := javascriptImportNames(item)
+			if imported == "default" && local != "" {
+				return local
+			}
+		}
+	}
+	return ""
 }
 
 func pythonIncludeRouterRelations(files []FileRecord, recordsByFile map[string][]SymbolRecord, readContent contentReader, knownFiles map[string]bool) []expressRouteRelation {

@@ -3813,6 +3813,41 @@ export async function ping(): Promise<unknown> {
 	}
 }
 
+func TestExpressDefaultImportedRouterPrefixComposesAndBridgesHTTPClient(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "routes.ts", `const usersRouter = Router()
+
+usersRouter.get("/:id", showUser)
+
+export function showUser(): string {
+  return "ok"
+}
+
+export default usersRouter
+`)
+	writeFile(t, repo, "app.ts", `import usersRouter from "./routes"
+
+export function register(app: any): void {
+  app.use("/api/users", usersRouter)
+}
+
+export async function ping(): Promise<unknown> {
+  return fetch("/api/users/:id")
+}
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasRelationToExternalRoute(snapshot.Relations, "HANDLES_ROUTE", "showUser", "/api/users/:id") {
+		t.Fatalf("missing default-imported Express router route: %#v", snapshot.Relations)
+	}
+	if !hasRelationByLastSegment(snapshot.Relations, "CALLS", "ping", "showUser") {
+		t.Fatalf("missing route bridge CALLS ping->showUser: %#v", snapshot.Relations)
+	}
+}
+
 func TestHonoImportedRouteMountComposesAndBridgesHTTPClient(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "routes.ts", `export const users = new Hono()
