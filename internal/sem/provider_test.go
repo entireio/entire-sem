@@ -1837,6 +1837,28 @@ kind: Deployment
 metadata:
   name: api
 `)
+	writeFile(t, repo, "k8s/knative-trigger.yaml", `apiVersion: eventing.knative.dev/v1
+kind: Trigger
+metadata:
+  name: user-created
+spec:
+  broker: default
+  subscriber:
+    ref:
+      apiVersion: serving.knative.dev/v1
+      kind: Service
+      name: event-handler
+`)
+	writeFile(t, repo, "k8s/knative-broker.yaml", `apiVersion: eventing.knative.dev/v1
+kind: Broker
+metadata:
+  name: default
+`)
+	writeFile(t, repo, "k8s/knative-service.yaml", `apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: event-handler
+`)
 
 	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
 	if err != nil {
@@ -1854,6 +1876,8 @@ metadata:
 		{"AnalysisRun.manual-analysis", "AnalysisTemplate.success-rate"},
 		{"ServiceBinding.api-database", "PostgreSQL.user-db"},
 		{"ServiceBinding.api-database", "Deployment.api"},
+		{"Trigger.user-created", "Broker.default"},
+		{"Trigger.user-created", "Service.event-handler"},
 	} {
 		if !hasRelationByLastSegment(snapshot.Relations, "RESOURCE_DEPENDS_ON", edge[0], edge[1]) {
 			t.Fatalf("missing custom-controller dependency %s -> %s in %#v", edge[0], edge[1], snapshot.Relations)

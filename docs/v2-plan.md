@@ -446,7 +446,7 @@ Open:
   labels and Rollout-style workload labels. Custom-controller coverage also
   includes KEDA authentication refs, cert-manager issuer refs, External Secrets secret-store refs, Argo
   WorkflowTemplate refs, Argo Rollouts AnalysisTemplate refs, Tekton Pipeline/Task refs, ServiceBinding
-  service/workload refs, Flux CD source, chart, dependsOn, and HelmRelease valuesFrom ConfigMap/Secret refs,
+  service/workload refs, Knative Trigger broker/subscriber refs, Flux CD source, chart, dependsOn, and HelmRelease valuesFrom ConfigMap/Secret refs,
   Crossplane ProviderConfig/Composition/resource refs, and Istio
   VirtualService/DestinationRule refs.
   Remaining Kubernetes resource gaps include less common Kubernetes controllers

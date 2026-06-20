@@ -2891,6 +2891,14 @@ func kubernetesResourceReferences(content string) []resourceReference {
 			add(ref.Kind, ref.Name, ref.EvidenceKind, ref.Confidence)
 		}
 	}
+	if kubernetesManifestHasAnyKind(content, "Trigger") {
+		for _, ref := range kubernetesKnativeTriggerBrokerReferences(content) {
+			add(ref.Kind, ref.Name, ref.EvidenceKind, ref.Confidence)
+		}
+		for _, ref := range kubernetesNamedRefBlockReferences(content, "ref", "kubernetes_knative_subscriber_ref", 0.82, kubernetesDefaultReferenceKind("service")) {
+			add(ref.Kind, ref.Name, ref.EvidenceKind, ref.Confidence)
+		}
+	}
 	if kubernetesManifestHasAnyKind(content, "HelmRelease", "HelmChart", "Kustomization", "ImageRepository", "ImagePolicy", "ImageUpdateAutomation") {
 		for _, ref := range kubernetesNamedRefBlockReferences(content, "sourceRef", "kubernetes_flux_source_ref", 0.84, kubernetesExplicitReferenceKind) {
 			add(ref.Kind, ref.Name, ref.EvidenceKind, ref.Confidence)
@@ -3039,6 +3047,22 @@ func kubernetesFluxHelmReleaseValuesFromReferences(content string) []resourceRef
 		switch strings.ToLower(ref.Kind) {
 		case "configmap", "secret":
 			refs = append(refs, ref)
+		}
+	}
+	return refs
+}
+
+func kubernetesKnativeTriggerBrokerReferences(content string) []resourceReference {
+	var refs []resourceReference
+	re := regexp.MustCompile(`(?im)^\s*broker:\s*([A-Za-z0-9_.-]+)\s*$`)
+	for _, match := range re.FindAllStringSubmatch(content, -1) {
+		if len(match) == 2 {
+			refs = append(refs, resourceReference{
+				Kind:         "broker",
+				Name:         match[1],
+				EvidenceKind: "kubernetes_knative_broker_ref",
+				Confidence:   0.82,
+			})
 		}
 	}
 	return refs
