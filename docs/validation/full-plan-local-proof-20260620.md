@@ -117,7 +117,8 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
   direct `CALLS`; assigned and chained `MapGroup(...)` prefixes compose with
   child `MapGet`/`MapPost` registrations, including nested assigned groups,
   without emitting unmounted child routes.
-- PHP Laravel route declarations and `Route::prefix(...)->group(...)` route
+- PHP Laravel route declarations, `Route::prefix(...)->group(...)` route
+  groups, and `Route::controller(...)->prefix(...)->group(...)` controller
   groups resolve local controller methods, Symfony/PHP route attributes compose
   class and method routes, and matching PHP `Http::` facade calls bridge to
   handlers as direct `CALLS`.
@@ -434,6 +435,9 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
   - `bench/results/result-1781979910.json`: Go/gin, syntax-only, 28,618 LOC,
     171,072 LOC/s, max RSS 28,442,624 bytes, estimated output 1,902,635
     bytes; run after Spring multi-line mapping array extraction.
+  - `bench/results/result-1781980081.json`: Go/gin, syntax-only, 28,618 LOC,
+    154,710 LOC/s, max RSS 29,130,752 bytes, estimated output 1,902,637
+    bytes; run after Laravel controller-group route extraction.
   - `bench/results/result-1781972446.json`: Go/gin, syntax-only, 28,618 LOC,
     162,982 LOC/s, max RSS 26,804,224 bytes, estimated output 1,902,630
     bytes; run after IngressClass reference extraction.
@@ -616,6 +620,9 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
     bytes.
   - `bench/results/result-1781979910.json`: Go/gin, syntax-only, 28,618 LOC,
     171,072 LOC/s, max RSS 28,442,624 bytes, estimated output 1,902,635
+    bytes.
+  - `bench/results/result-1781980081.json`: Go/gin, syntax-only, 28,618 LOC,
+    154,710 LOC/s, max RSS 29,130,752 bytes, estimated output 1,902,637
     bytes.
 
 ## Remaining Honesty Notes

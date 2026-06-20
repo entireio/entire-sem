@@ -8199,12 +8199,25 @@ func laravelRouteRegistrations(content string) []laravelRouteRegistration {
 	for _, group := range groups {
 		scan(group.Body, group.Prefix, "_prefix_group")
 	}
+	for _, group := range laravelControllerGroups(content) {
+		for _, match := range laravelControllerGroupMethodRouteRe().FindAllStringSubmatch(group.Body, -1) {
+			if len(match) == 3 {
+				add(joinRoutePaths(group.Prefix, match[1]), group.Controller, match[2], "laravel_route_controller_group")
+			}
+		}
+	}
 	return registrations
 }
 
 type laravelPrefixGroup struct {
 	Prefix string
 	Body   string
+}
+
+type laravelControllerGroup struct {
+	Prefix     string
+	Controller string
+	Body       string
 }
 
 func laravelPrefixGroups(content string) (string, []laravelPrefixGroup) {
@@ -8218,6 +8231,37 @@ func laravelPrefixGroups(content string) (string, []laravelPrefixGroup) {
 		return ""
 	})
 	return top, groups
+}
+
+func laravelControllerGroups(content string) []laravelControllerGroup {
+	re := regexp.MustCompile(`(?is)\bRoute::((?:(?:prefix|controller)\s*\([^)]*\)\s*->\s*)+)group\s*\(\s*function\s*\(\)\s*\{(.*?)\}\s*\);`)
+	prefixRe := regexp.MustCompile(`(?is)\bprefix\s*\(\s*["']([^"']+)["']\s*\)`)
+	controllerRe := regexp.MustCompile(`(?is)\bcontroller\s*\(\s*([A-Za-z_\\][A-Za-z0-9_\\]*)::class\s*\)`)
+	var groups []laravelControllerGroup
+	for _, match := range re.FindAllStringSubmatch(content, -1) {
+		if len(match) != 3 {
+			continue
+		}
+		chain, body := match[1], match[2]
+		controllerMatch := controllerRe.FindStringSubmatch(chain)
+		if len(controllerMatch) != 2 {
+			continue
+		}
+		prefix := "/"
+		if prefixMatch := prefixRe.FindStringSubmatch(chain); len(prefixMatch) == 2 {
+			prefix = normalizeSlashRoute(prefixMatch[1])
+		}
+		groups = append(groups, laravelControllerGroup{
+			Prefix:     prefix,
+			Controller: controllerMatch[1],
+			Body:       body,
+		})
+	}
+	return groups
+}
+
+func laravelControllerGroupMethodRouteRe() *regexp.Regexp {
+	return regexp.MustCompile(`(?is)\bRoute::(?:get|post|put|patch|delete|options|any)\s*\(\s*["']([^"']+)["']\s*,\s*["']([A-Za-z_][A-Za-z0-9_]*)["']`)
 }
 
 func railsRouteRelations(files []FileRecord, recordsByFile map[string][]SymbolRecord, readContent contentReader) []expressRouteRelation {

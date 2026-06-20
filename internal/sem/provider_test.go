@@ -4358,6 +4358,74 @@ class UserController
 	}
 }
 
+func TestLaravelControllerGroupsComposeControllerRoutes(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "routes/web.php", `<?php
+
+use App\Http\Controllers\UserController;
+
+Route::controller(UserController::class)->prefix('api/users')->group(function () {
+    Route::get('/{id}', 'show');
+    Route::post('/', 'store');
+});
+
+Route::prefix('api/admin')->controller(UserController::class)->group(function () {
+    Route::get('/health', 'health');
+});
+
+function ping() {
+    Http::get('/api/users/{id}');
+    Http::post('/api/users');
+    return Http::get('/api/admin/health');
+}
+`)
+	writeFile(t, repo, "app/Http/Controllers/UserController.php", `<?php
+
+namespace App\Http\Controllers;
+
+class UserController
+{
+    public function show(string $id): string
+    {
+        return $id;
+    }
+
+    public function store(): string
+    {
+        return "ok";
+    }
+
+    public function health(): string
+    {
+        return "ok";
+    }
+}
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []struct {
+		method string
+		route  string
+	}{
+		{"UserController.show", "/api/users/{id}"},
+		{"UserController.store", "/api/users"},
+		{"UserController.health", "/api/admin/health"},
+	} {
+		if !hasRelationByLastSegment(snapshot.Relations, "HANDLES_ROUTE", want.method, want.route) {
+			t.Fatalf("missing Laravel controller-group route %s -> %s in %#v", want.method, want.route, snapshot.Relations)
+		}
+		if !hasRelationByLastSegment(snapshot.Relations, "CALLS", "ping", want.method) {
+			t.Fatalf("missing route bridge CALLS ping->%s in %#v", want.method, snapshot.Relations)
+		}
+	}
+	if hasRelationByLastSegment(snapshot.Relations, "HANDLES_ROUTE", "UserController.show", "/{id}") {
+		t.Fatalf("Laravel controller group emitted unprefixed child route: %#v", snapshot.Relations)
+	}
+}
+
 func TestRailsRoutesResolveControllerActionsAndBridgeHTTPClient(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "config/routes.rb", `Rails.application.routes.draw do
