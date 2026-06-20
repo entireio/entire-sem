@@ -64,6 +64,8 @@ go test ./internal/sem -run 'TestURLPathnameRouteConstantComposesAndBridgesHTTPC
 go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out bench/results -lock bench/repos.lock.json -languages Go -limit 1 -skip-clone -profile syntax-only -provider-version codex-static-url-path-routes -min-loc-per-sec 1
 go test ./internal/sem -run 'TestBuildProviderSnapshotEmits(DestructuredAliasForward|AliasForward|ObjectFieldForward|ObjectLiteralForward|CollectionElementForward)DataFlow' -count=1
 go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out bench/results -lock bench/repos.lock.json -languages Go -limit 1 -skip-clone -profile syntax-only -provider-version codex-destructured-alias-flow -min-loc-per-sec 1
+go test ./internal/sem -run 'TestTypeScriptManifestImportsResolveThrough(NestedPackageJSON|PackageAndTSConfig|ExportsImportsAndImportMap)' -count=1
+go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out bench/results -lock bench/repos.lock.json -languages Go -limit 1 -skip-clone -profile syntax-only -provider-version codex-nested-js-package-imports -min-loc-per-sec 1
 ```
 
 ## Results
@@ -83,6 +85,8 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
   `package.json` `imports`, root and scoped import-map entries, and simple
   `tsconfig.json` path aliases resolve to local files with `import_resolved`
   metadata.
+- Nested JS/TS workspace/package `package.json` names and `exports` resolve
+  local package imports to file records with `import_resolved` metadata.
 - JS/TS literal CommonJS `require(...)` and literal dynamic `import(...)`
   calls emit `IMPORTS`; CommonJS bindings also emit imported external `CALLS`
   when called.
@@ -739,6 +743,9 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
     bytes.
   - `bench/results/result-1781995028.json`: Go/gin, syntax-only, 28,618 LOC,
     164,415 LOC/s, max RSS 29,605,888 bytes, estimated output 1,902,635
+    bytes.
+  - `bench/results/result-1781995498.json`: Go/gin, syntax-only, 28,618 LOC,
+    166,007 LOC/s, max RSS 27,525,120 bytes, estimated output 1,902,637
     bytes.
 
 ## Remaining Honesty Notes
