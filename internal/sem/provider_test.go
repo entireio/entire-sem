@@ -1950,6 +1950,45 @@ def ping():
 	}
 }
 
+func TestDjangoURLPatternsResolveHandlersAndBridgeHTTPClients(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "urls.py", `import requests
+from django.urls import path, re_path
+
+def health(request):
+    return "ok"
+
+def ready(request):
+    return "ok"
+
+urlpatterns = [
+    path("health/", health),
+    re_path("^ready/$", ready),
+]
+
+def ping():
+    requests.get("http://localhost/health")
+    requests.get("http://localhost/ready")
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasRelationToExternalRoute(snapshot.Relations, "HANDLES_ROUTE", "health", "/health") {
+		t.Fatalf("missing Django path route handler: %#v", snapshot.Relations)
+	}
+	if !hasRelationToExternalRoute(snapshot.Relations, "HANDLES_ROUTE", "ready", "/ready") {
+		t.Fatalf("missing Django re_path route handler: %#v", snapshot.Relations)
+	}
+	if !hasRelationByLastSegment(snapshot.Relations, "CALLS", "ping", "health") {
+		t.Fatalf("missing route bridge CALLS ping->health: %#v", snapshot.Relations)
+	}
+	if !hasRelationByLastSegment(snapshot.Relations, "CALLS", "ping", "ready") {
+		t.Fatalf("missing route bridge CALLS ping->ready: %#v", snapshot.Relations)
+	}
+}
+
 func TestPythonImportedRouterPrefixComposesAndBridgesHTTPClient(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "routes.py", `from fastapi import APIRouter

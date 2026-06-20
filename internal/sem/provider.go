@@ -1439,6 +1439,11 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 			routeHandlers[r.Route] = append(routeHandlers[r.Route], r.Handler)
 			handledRoutes[r.Route] = struct{}{}
 		}
+		for _, r := range djangoRouteRelations(files, recordsByFile, readContent) {
+			emit(r.Relation)
+			routeHandlers[r.Route] = append(routeHandlers[r.Route], r.Handler)
+			handledRoutes[r.Route] = struct{}{}
+		}
 	}
 	manifestImports := buildManifestImportResolver(files, readContent)
 
@@ -5516,6 +5521,128 @@ func goHTTPRouteRegistrations(content string) []goHTTPRouteRegistration {
 	return registrations
 }
 
+func djangoRouteRelations(files []FileRecord, recordsByFile map[string][]SymbolRecord, readContent contentReader) []expressRouteRelation {
+	var relations []expressRouteRelation
+	seen := map[string]bool{}
+	for _, file := range files {
+		if !strings.EqualFold(filepath.Ext(file.Path), ".py") {
+			continue
+		}
+		content, ok := readContent(file.Path)
+		if !ok {
+			continue
+		}
+		handlers := map[string]SymbolRecord{}
+		for _, symbol := range recordsByFile[file.Path] {
+			if typeLikeKind(symbol.Kind) {
+				continue
+			}
+			if _, exists := handlers[symbol.Name]; !exists {
+				handlers[symbol.Name] = symbol
+			}
+		}
+		for _, registration := range djangoRouteRegistrations(content) {
+			handler, ok := handlers[registration.Handler]
+			if !ok {
+				continue
+			}
+			key := handler.ID + "\x00" + registration.Route
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			relations = append(relations, expressRouteRelation{
+				Route:   registration.Route,
+				Handler: handler,
+				Relation: RelationRecord{
+					RecordType:    "relation",
+					FromID:        handler.ID,
+					ToID:          externalID("route", registration.Route),
+					Type:          "HANDLES_ROUTE",
+					Confidence:    0.84,
+					Reason:        "Django URL pattern resolved to local handler",
+					RelationScope: "external",
+					Resolution:    "exact",
+					TargetKind:    "route",
+					Evidence: []Evidence{{
+						Kind:      registration.EvidenceKind,
+						FilePath:  handler.FilePath,
+						StartLine: handler.StartLine,
+						EndLine:   handler.EndLine,
+						Detail:    registration.Detail,
+					}},
+					WarningCodes: []string{},
+				},
+			})
+		}
+	}
+	sort.Slice(relations, func(i, j int) bool {
+		if relations[i].Route != relations[j].Route {
+			return relations[i].Route < relations[j].Route
+		}
+		return relations[i].Handler.ID < relations[j].Handler.ID
+	})
+	return relations
+}
+
+func djangoRouteRegistrations(content string) []djangoRouteRegistration {
+	var registrations []djangoRouteRegistration
+	add := func(pattern, handler, evidence string) {
+		route := djangoRoutePatternValue(pattern, evidence == "django_re_path")
+		if route == "" || handler == "" {
+			return
+		}
+		registrations = append(registrations, djangoRouteRegistration{
+			Route:        route,
+			Handler:      handler,
+			EvidenceKind: evidence,
+			Detail:       route + " -> " + handler,
+		})
+	}
+	pathRe := regexp.MustCompile(`\bpath\s*\(\s*([rRuUbB]*["'][^"']*["'])\s*,\s*([A-Za-z_][A-Za-z0-9_]*)`)
+	rePathRe := regexp.MustCompile(`\bre_path\s*\(\s*([rRuUbB]*["'][^"']*["'])\s*,\s*([A-Za-z_][A-Za-z0-9_]*)`)
+	for _, match := range pathRe.FindAllStringSubmatch(content, -1) {
+		if len(match) == 3 {
+			add(match[1], match[2], "django_path")
+		}
+	}
+	for _, match := range rePathRe.FindAllStringSubmatch(content, -1) {
+		if len(match) == 3 {
+			add(match[1], match[2], "django_re_path")
+		}
+	}
+	return registrations
+}
+
+func djangoRoutePatternValue(pattern string, regex bool) string {
+	pattern = strings.TrimSpace(pattern)
+	for pattern != "" {
+		first := pattern[0]
+		if first == 'r' || first == 'R' || first == 'u' || first == 'U' || first == 'b' || first == 'B' {
+			pattern = strings.TrimSpace(pattern[1:])
+			continue
+		}
+		break
+	}
+	if len(pattern) < 2 {
+		return ""
+	}
+	quote := pattern[0]
+	if (quote != '"' && quote != '\'') || pattern[len(pattern)-1] != quote {
+		return ""
+	}
+	value := pattern[1 : len(pattern)-1]
+	if regex {
+		value = strings.TrimPrefix(value, "^")
+		value = strings.TrimSuffix(value, "$")
+	}
+	value = strings.Trim(value, "/")
+	if value == "" {
+		return "/"
+	}
+	return "/" + value
+}
+
 func routeLiteralPartOfConcat(line string, start, end int) bool {
 	before := strings.TrimSpace(line[:start])
 	after := strings.TrimSpace(line[end:])
@@ -5568,6 +5695,13 @@ type expressRouteRelation struct {
 }
 
 type goHTTPRouteRegistration struct {
+	Route        string
+	Handler      string
+	EvidenceKind string
+	Detail       string
+}
+
+type djangoRouteRegistration struct {
 	Route        string
 	Handler      string
 	EvidenceKind string

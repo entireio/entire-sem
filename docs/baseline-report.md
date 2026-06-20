@@ -118,8 +118,9 @@ False positives:
   now recorded only when its line carries routing context (an HTTP-verb/route
   method call, mapping decorator, Python Flask/FastAPI-style route decorator,
   FastAPI/Starlette-style `include_router(prefix=...)` mount, Java Spring-style
-  direct mapping annotation, Go `net/http` `HandleFunc`/`HandlerFunc`
-  registration, or same-block Express router mount plus route registration).
+  direct mapping annotation, Django `path(...)`/simple `re_path(...)`
+  registration, Go `net/http` `HandleFunc`/`HandlerFunc` registration, or
+  same-block Express router mount plus route registration).
   Static constant-prefix expressions such as
   `apiPrefix + "/health"` compose to one route and do not emit the suffix as a
   separate route. Matching Python `requests`/`httpx`, Java `RestTemplate`/HTTP
