@@ -1513,7 +1513,8 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 				if childNamesByContainer[from.ID][name] {
 					continue
 				}
-				for _, to := range resolveCallTargets(name, from, symbolsByShortName[name], symbolsByFile[file.Path], importsByName) {
+				targets := resolveCallTargets(name, from, symbolsByShortName[name], symbolsByFile[file.Path], importsByName)
+				for _, to := range targets {
 					emit(RelationRecord{
 						RecordType:    "relation",
 						FromID:        from.ID,
@@ -1533,6 +1534,11 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 						}},
 						WarningCodes: []string{},
 					})
+				}
+				if len(targets) == 0 {
+					for _, relation := range importedExternalCallRelationsForName(from, name, importsByName[name]) {
+						emit(relation)
+					}
 				}
 			}
 			callableSymbol := !typeLikeKind(from.Kind)
@@ -1702,6 +1708,9 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 			}
 			if spec.callResolution == "full" {
 				for _, r := range receiverCallRelations(from, block, methodsByContainer, symbolsByShortName) {
+					emit(r)
+				}
+				for _, r := range importedReceiverCallRelations(from, block, importsByName) {
 					emit(r)
 				}
 			}
@@ -1947,6 +1956,74 @@ func receiverCallRelations(from SymbolRecord, block string, methodsByContainer m
 		})
 	}
 	return relations
+}
+
+func importedExternalCallRelationsForName(from SymbolRecord, name string, modules []string) []RelationRecord {
+	if typeLikeKind(from.Kind) || len(modules) == 0 {
+		return nil
+	}
+	var relations []RelationRecord
+	seen := map[string]bool{}
+	for _, module := range modules {
+		target := importedExternalSymbolName(module, name)
+		if target == "" || seen[target] {
+			continue
+		}
+		seen[target] = true
+		relations = append(relations, importedExternalCallRelation(from, target, name))
+	}
+	return relations
+}
+
+func importedReceiverCallRelations(from SymbolRecord, block string, importsByName map[string][]string) []RelationRecord {
+	if typeLikeKind(from.Kind) {
+		return nil
+	}
+	var relations []RelationRecord
+	seen := map[string]bool{}
+	for _, call := range receiverCalls(block) {
+		for _, module := range importsByName[call.Receiver] {
+			target := importedExternalSymbolName(module, call.Method)
+			if target == "" || seen[target] {
+				continue
+			}
+			seen[target] = true
+			relations = append(relations, importedExternalCallRelation(from, target, call.Receiver+"."+call.Method))
+		}
+	}
+	return relations
+}
+
+func importedExternalCallRelation(from SymbolRecord, target, detail string) RelationRecord {
+	return RelationRecord{
+		RecordType:    "relation",
+		FromID:        from.ID,
+		ToID:          externalID("symbol", target),
+		Type:          "CALLS",
+		Confidence:    0.78,
+		Reason:        "call expression resolved to imported external symbol",
+		RelationScope: "external",
+		Resolution:    "import_external",
+		TargetKind:    "external",
+		Evidence: []Evidence{{
+			Kind:      "imported_call_site",
+			FilePath:  from.FilePath,
+			StartLine: from.StartLine,
+			EndLine:   from.EndLine,
+			Detail:    detail,
+		}},
+		WarningCodes: []string{},
+	}
+}
+
+func importedExternalSymbolName(module, member string) string {
+	module = strings.Trim(strings.TrimSpace(module), `"'`)
+	member = strings.TrimSpace(member)
+	if module == "" || member == "" || strings.HasPrefix(module, ".") {
+		return ""
+	}
+	module = strings.TrimSuffix(module, "/")
+	return module + "." + member
 }
 
 // resourceDependsOnRelations builds the Terraform/HCL resource graph: a
@@ -4727,11 +4804,65 @@ func scanImports(content string, expressions ...*regexp.Regexp) []string {
 
 func importedNamesFor(path, content string) map[string][]string {
 	switch strings.ToLower(filepath.Ext(path)) {
+	case ".go":
+		return importedGoNames(content)
 	case ".js", ".jsx", ".ts", ".tsx":
 		return importedJavaScriptNames(content)
+	case ".py":
+		return importedPythonNames(content)
 	default:
 		return map[string][]string{}
 	}
+}
+
+func importedGoNames(content string) map[string][]string {
+	imports := map[string][]string{}
+	add := func(alias, module string) {
+		if module == "" || alias == "." || alias == "_" {
+			return
+		}
+		if alias == "" {
+			alias = goImportDefaultName(module)
+		}
+		if alias != "" {
+			imports[alias] = append(imports[alias], module)
+		}
+	}
+	singleImport := regexp.MustCompile(`^\s*import\s+(?:(\w+)\s+)?["]([^"]+)["]`)
+	blockImport := regexp.MustCompile(`^\s*(?:(\w+)\s+)?["]([^"]+)["]`)
+	inBlock := false
+	scanner := bufio.NewScanner(strings.NewReader(content))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if !inBlock {
+			if strings.HasPrefix(line, "import (") {
+				inBlock = true
+				continue
+			}
+			if matches := singleImport.FindStringSubmatch(line); len(matches) == 3 {
+				add(matches[1], matches[2])
+			}
+			continue
+		}
+		if strings.HasPrefix(line, ")") {
+			inBlock = false
+			continue
+		}
+		if matches := blockImport.FindStringSubmatch(line); len(matches) == 3 {
+			add(matches[1], matches[2])
+		}
+	}
+	return imports
+}
+
+func goImportDefaultName(module string) string {
+	module = strings.Trim(strings.TrimSpace(module), "/")
+	if module == "" {
+		return ""
+	}
+	base := filepath.Base(filepath.ToSlash(module))
+	base = strings.TrimSuffix(base, ".git")
+	return strings.ReplaceAll(base, "-", "_")
 }
 
 func importedJavaScriptNames(content string) map[string][]string {
@@ -4760,6 +4891,60 @@ func importedJavaScriptNames(content string) map[string][]string {
 		imports[match[1]] = append(imports[match[1]], match[2])
 	}
 	return imports
+}
+
+func importedPythonNames(content string) map[string][]string {
+	imports := map[string][]string{}
+	importRe := regexp.MustCompile(`^\s*import\s+(.+)$`)
+	fromRe := regexp.MustCompile(`^\s*from\s+([A-Za-z_][A-Za-z0-9_\.]*)\s+import\s+(.+)$`)
+	scanner := bufio.NewScanner(strings.NewReader(content))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if strings.HasPrefix(line, "#") {
+			continue
+		}
+		if matches := importRe.FindStringSubmatch(line); len(matches) == 2 {
+			for _, item := range strings.Split(matches[1], ",") {
+				module, alias := parsePythonImportItem(item)
+				if module == "" {
+					continue
+				}
+				local := alias
+				if local == "" {
+					local = strings.Split(module, ".")[0]
+				}
+				imports[local] = append(imports[local], module)
+			}
+			continue
+		}
+		if matches := fromRe.FindStringSubmatch(line); len(matches) == 3 {
+			module := matches[1]
+			for _, item := range strings.Split(matches[2], ",") {
+				name, alias := parsePythonImportItem(item)
+				if name == "" || name == "*" {
+					continue
+				}
+				local := alias
+				if local == "" {
+					local = name
+				}
+				imports[local] = append(imports[local], module)
+			}
+		}
+	}
+	return imports
+}
+
+func parsePythonImportItem(item string) (name, alias string) {
+	item = strings.TrimSpace(item)
+	if item == "" {
+		return "", ""
+	}
+	parts := strings.Fields(item)
+	if len(parts) >= 3 && parts[len(parts)-2] == "as" {
+		return parts[0], parts[len(parts)-1]
+	}
+	return parts[0], ""
 }
 
 func importedNameMatchesFile(modules []string, targetPath string) bool {

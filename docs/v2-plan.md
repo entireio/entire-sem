@@ -215,6 +215,8 @@ Tasks:
 - Scope call lookup by file, module, imports, container/class, receiver, and
   package.
 - Distinguish exact calls from unresolved name-only calls.
+- Emit imported external call edges for common Go, Python, and JS/TS import
+  forms when no local target resolves.
 - Avoid global ambiguous matches unless confidence is low and warning-coded.
 - Add method receiver resolution for Go, Python classes, TS/JS classes, Java,
   C#, Rust impl blocks, PHP classes.
@@ -224,6 +226,8 @@ Acceptance:
 
 - No broad global `sleep`/`run`/`handle` false positive patterns in fixtures.
 - Exact local calls rank above imported and name-only matches.
+- Imported external calls identify `external:symbol:<module>.<member>` targets
+  without fabricating local symbols.
 - Brain impact can trust high-confidence direct callers/callees.
 
 ### WP5: OO And Type Relations

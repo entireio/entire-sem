@@ -8,6 +8,7 @@ Branch: `codex/full-plan-implementation`
 go test ./...
 go run ./cmd/entire-sem capabilities --json
 go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go -limit 1 -profile syntax-only -provider-version codex-full-plan -out bench/results
+go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go -limit 1 -profile syntax-only -provider-version codex-full-plan -out bench/results
 go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go -limit 1 -profile full -provider-version codex-full-plan -out bench/results
 go run ./cmd/sem-bench -skip-clone -manifest bench/repos.json -languages C -limit 1 -profile syntax-only -provider-version codex-full-plan -out bench/results -max-rss-bytes 5000000000
 go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go -limit 1 -profile syntax-only -provider-version codex-full-plan -out bench/results
@@ -65,6 +66,9 @@ go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go
   `CONFIGURES` facts.
 - Static HTTP client calls bridge to exact local route handlers through shared
   route endpoints as direct `CALLS` edges.
+- Imported external calls for common Go, Python, and JS/TS import forms emit
+  `CALLS` edges to `external:symbol:<module>.<member>` with
+  `resolution: import_external`.
 - Retained benchmark reports:
   - `bench/results/result-1781937160.json`: Go/gin, syntax-only, 28,618 LOC,
     152,621 LOC/s.
@@ -84,6 +88,8 @@ go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go
     166,849 LOC/s, max RSS 27,459,584 bytes, output 1,938,906 bytes.
   - `bench/results/result-1781941732.json`: Go/gin, syntax-only, 28,618 LOC,
     163,578 LOC/s, max RSS 27,983,872 bytes, output 1,938,906 bytes.
+  - `bench/results/result-1781944075.json`: Go/gin, syntax-only, 28,618 LOC,
+    150,700 LOC/s, max RSS 29,048,832 bytes, output 1,938,906 bytes.
 
 ## Remaining Honesty Notes
 

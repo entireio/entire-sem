@@ -1731,6 +1731,65 @@ def use(other):
 	}
 }
 
+func TestBuildProviderSnapshotEmitsImportedExternalCalls(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "trim.go", `package api
+
+import "strings"
+
+func Clean(value string) string {
+	return strings.TrimSpace(value)
+}
+`)
+	writeFile(t, repo, "encode.py", `import json
+
+def encode(value):
+    return json.dumps(value)
+`)
+	writeFile(t, repo, "read.ts", `import { readFileSync } from "fs"
+import * as path from "path"
+import axios from "axios"
+
+export function readConfig(name: string): string {
+  axios.get("/config")
+  return path.join("config", readFileSync(name, "utf8"))
+}
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []struct {
+		from   string
+		target string
+		detail string
+	}{
+		{from: "Clean", target: "strings.TrimSpace", detail: "strings.TrimSpace"},
+		{from: "encode", target: "json.dumps", detail: "json.dumps"},
+		{from: "readConfig", target: "fs.readFileSync", detail: "readFileSync"},
+		{from: "readConfig", target: "path.join", detail: "path.join"},
+		{from: "readConfig", target: "axios.get", detail: "axios.get"},
+	} {
+		var found RelationRecord
+		for _, relation := range snapshot.Relations {
+			if relation.Type == "CALLS" && lastSegment(relation.FromID) == want.from && relation.ToID == externalID("symbol", want.target) {
+				found = relation
+				break
+			}
+		}
+		if found.FromID == "" {
+			t.Fatalf("missing imported external call %s -> %s in %#v", want.from, want.target, snapshot.Relations)
+		}
+		if found.Resolution != "import_external" || found.RelationScope != "external" || found.TargetKind != "external" || found.Confidence < 0.78 {
+			t.Fatalf("unexpected imported external call metadata: %#v", found)
+		}
+		if len(found.Evidence) != 1 || found.Evidence[0].Kind != "imported_call_site" || found.Evidence[0].Detail != want.detail {
+			t.Fatalf("unexpected imported external call evidence: %#v", found.Evidence)
+		}
+	}
+}
+
 func TestBuildProviderSnapshotEmitsTypeRelations(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "Animals.java", `package zoo;
@@ -1978,7 +2037,9 @@ func Check(token string) bool {
 	for _, relation := range snapshot.Relations {
 		switch relation.Type {
 		case "CALLS":
-			calls = relation
+			if relation.TargetKind == "symbol" {
+				calls = relation
+			}
 		case "DEFINES":
 			defines = relation
 		}

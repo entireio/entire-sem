@@ -142,9 +142,13 @@ False negatives:
   `t.Validate()`. Receivers whose type can't be inferred (e.g. untyped
   parameters) still produce no edge — by design, no fabricated targets.
   Remaining: typed-parameter receivers and chained/returned receivers. (WP4.)
-- **Imported-symbol calls.** Calls into imported modules (`strings.TrimSpace`,
-  `json.dumps`, `readFileSync`) produce no `CALLS` edge to an external endpoint.
-  (WP3/WP4.)
+- **Imported-symbol calls — external endpoints implemented for common import
+  forms.** Go package calls (`strings.TrimSpace`), Python module/member calls
+  (`json.dumps` and `from json import dumps`), and JS/TS named, default, or
+  namespace import calls (`readFileSync`, `path.join`) now emit `CALLS` to
+  `external:symbol:<module>.<member>` when no local symbol target resolves.
+  Remaining: compiler/type-aware package APIs, chained/returned receivers, and
+  dynamic import/module behavior. (WP3/WP4.)
 - **Module-root import resolution.** Relative imports (`./util`, `.util`), Go
   module imports covered by `go.mod`, JS/TS package self-imports covered by root
   `package.json` `name`, root `package.json` `exports`/`imports`, root import
