@@ -1407,6 +1407,109 @@ spec:
 	}
 }
 
+func TestKubernetesCustomControllerReferenceDependencies(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "k8s/cert.yaml", `apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: api-cert
+spec:
+  secretName: api-tls
+  issuerRef:
+    name: letsencrypt
+    kind: ClusterIssuer
+`)
+	writeFile(t, repo, "k8s/issuer.yaml", `apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt
+`)
+	writeFile(t, repo, "k8s/external-secret.yaml", `apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: api-secrets
+spec:
+  secretStoreRef:
+    name: vault
+    kind: ClusterSecretStore
+  target:
+    name: api-runtime
+`)
+	writeFile(t, repo, "k8s/secret-store.yaml", `apiVersion: external-secrets.io/v1beta1
+kind: ClusterSecretStore
+metadata:
+  name: vault
+`)
+	writeFile(t, repo, "k8s/cron-workflow.yaml", `apiVersion: argoproj.io/v1alpha1
+kind: CronWorkflow
+metadata:
+  name: nightly-report
+spec:
+  workflowSpec:
+    workflowTemplateRef:
+      name: report-template
+    templates:
+      - name: run
+        steps:
+          - - name: render
+              templateRef:
+                name: shared-template
+                clusterScope: true
+                template: render
+`)
+	writeFile(t, repo, "k8s/workflow-template.yaml", `apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: report-template
+---
+apiVersion: argoproj.io/v1alpha1
+kind: ClusterWorkflowTemplate
+metadata:
+  name: shared-template
+`)
+	writeFile(t, repo, "k8s/pipeline-run.yaml", `apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: api-build
+spec:
+  pipelineRef:
+    name: build-pipeline
+`)
+	writeFile(t, repo, "k8s/pipeline.yaml", `apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: build-pipeline
+spec:
+  tasks:
+    - name: image
+      taskRef:
+        name: kaniko
+        kind: ClusterTask
+`)
+	writeFile(t, repo, "k8s/cluster-task.yaml", `apiVersion: tekton.dev/v1
+kind: ClusterTask
+metadata:
+  name: kaniko
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, edge := range [][2]string{
+		{"Certificate.api-cert", "ClusterIssuer.letsencrypt"},
+		{"ExternalSecret.api-secrets", "ClusterSecretStore.vault"},
+		{"CronWorkflow.nightly-report", "WorkflowTemplate.report-template"},
+		{"CronWorkflow.nightly-report", "ClusterWorkflowTemplate.shared-template"},
+		{"PipelineRun.api-build", "Pipeline.build-pipeline"},
+		{"Pipeline.build-pipeline", "ClusterTask.kaniko"},
+	} {
+		if !hasRelationByLastSegment(snapshot.Relations, "RESOURCE_DEPENDS_ON", edge[0], edge[1]) {
+			t.Fatalf("missing custom-controller dependency %s -> %s in %#v", edge[0], edge[1], snapshot.Relations)
+		}
+	}
+}
+
 func TestKustomizeResourceDependencies(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "overlays/prod/kustomization.yaml", `resources:

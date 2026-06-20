@@ -2635,6 +2635,32 @@ func kubernetesResourceReferences(content string) []resourceReference {
 	for _, ref := range kubernetesScaledObjectScaleTargetReferences(content) {
 		add(ref.Kind, ref.Name, ref.EvidenceKind, ref.Confidence)
 	}
+	if kubernetesManifestHasAnyKind(content, "Certificate", "CertificateRequest") {
+		for _, ref := range kubernetesNamedRefBlockReferences(content, "issuerRef", "kubernetes_cert_manager_issuer_ref", 0.84, kubernetesDefaultReferenceKind("issuer")) {
+			add(ref.Kind, ref.Name, ref.EvidenceKind, ref.Confidence)
+		}
+	}
+	if kubernetesManifestHasAnyKind(content, "ExternalSecret", "ClusterExternalSecret", "PushSecret") {
+		for _, ref := range kubernetesNamedRefBlockReferences(content, "secretStoreRef", "kubernetes_external_secret_store_ref", 0.84, kubernetesDefaultReferenceKind("secretstore")) {
+			add(ref.Kind, ref.Name, ref.EvidenceKind, ref.Confidence)
+		}
+	}
+	if kubernetesManifestHasAnyKind(content, "Workflow", "CronWorkflow", "WorkflowTemplate") {
+		for _, ref := range kubernetesNamedRefBlockReferences(content, "workflowTemplateRef", "kubernetes_argo_workflow_template_ref", 0.84, kubernetesWorkflowTemplateReferenceKind) {
+			add(ref.Kind, ref.Name, ref.EvidenceKind, ref.Confidence)
+		}
+		for _, ref := range kubernetesNamedRefBlockReferences(content, "templateRef", "kubernetes_argo_template_ref", 0.8, kubernetesWorkflowTemplateReferenceKind) {
+			add(ref.Kind, ref.Name, ref.EvidenceKind, ref.Confidence)
+		}
+	}
+	if kubernetesManifestHasAnyKind(content, "PipelineRun", "TaskRun", "Pipeline") {
+		for _, ref := range kubernetesNamedRefBlockReferences(content, "pipelineRef", "kubernetes_tekton_pipeline_ref", 0.84, kubernetesDefaultReferenceKind("pipeline")) {
+			add(ref.Kind, ref.Name, ref.EvidenceKind, ref.Confidence)
+		}
+		for _, ref := range kubernetesNamedRefBlockReferences(content, "taskRef", "kubernetes_tekton_task_ref", 0.82, kubernetesDefaultReferenceKind("task")) {
+			add(ref.Kind, ref.Name, ref.EvidenceKind, ref.Confidence)
+		}
+	}
 	for _, ref := range kubernetesKindNameBlockReferences(content, "ownerReferences", "kubernetes_owner_reference", 0.78) {
 		add(ref.Kind, ref.Name, ref.EvidenceKind, ref.Confidence)
 	}
@@ -2665,6 +2691,89 @@ func kubernetesKindNameBlockReferences(content, blockKey, evidence string, confi
 		}
 	}
 	return refs
+}
+
+func kubernetesNamedRefBlockReferences(content, blockKey, evidence string, confidence float64, kindFor func(map[string]string) string) []resourceReference {
+	lines := strings.Split(content, "\n")
+	var refs []resourceReference
+	for i := 0; i < len(lines); i++ {
+		key, ok := yamlLineKey(lines[i])
+		if !ok || key != blockKey {
+			continue
+		}
+		parentIndent := yamlIndent(lines[i])
+		fields := map[string]string{}
+		flush := func() {
+			name := strings.Trim(strings.TrimSpace(fields["name"]), `"'`)
+			if name == "" {
+				fields = map[string]string{}
+				return
+			}
+			kind := strings.Trim(strings.TrimSpace(kindFor(fields)), `"'`)
+			if kind == "" {
+				fields = map[string]string{}
+				return
+			}
+			refs = append(refs, resourceReference{
+				Kind:         strings.ToLower(kind),
+				Name:         name,
+				EvidenceKind: evidence,
+				Confidence:   confidence,
+			})
+			fields = map[string]string{}
+		}
+		for j := i + 1; j < len(lines); j++ {
+			line := lines[j]
+			if yamlIgnoreLine(line) {
+				continue
+			}
+			indent := yamlIndent(line)
+			if indent <= parentIndent {
+				break
+			}
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "- ") {
+				flush()
+				trimmed = strings.TrimSpace(strings.TrimPrefix(trimmed, "- "))
+			}
+			childKey, ok := yamlLineKey(trimmed)
+			if !ok {
+				continue
+			}
+			fields[childKey] = yamlLineValue(trimmed)
+		}
+		flush()
+	}
+	return refs
+}
+
+func kubernetesDefaultReferenceKind(defaultKind string) func(map[string]string) string {
+	return func(fields map[string]string) string {
+		if kind := fields["kind"]; kind != "" {
+			return kind
+		}
+		return defaultKind
+	}
+}
+
+func kubernetesWorkflowTemplateReferenceKind(fields map[string]string) string {
+	if kind := fields["kind"]; kind != "" {
+		return kind
+	}
+	if strings.EqualFold(fields["clusterScope"], "true") {
+		return "clusterworkflowtemplate"
+	}
+	return "workflowtemplate"
+}
+
+func kubernetesManifestHasAnyKind(content string, kinds ...string) bool {
+	for _, kind := range kinds {
+		re := regexp.MustCompile(`(?im)^\s*kind:\s*` + regexp.QuoteMeta(kind) + `\s*$`)
+		if re.MatchString(content) {
+			return true
+		}
+	}
+	return false
 }
 
 func kubernetesScaledObjectScaleTargetReferences(content string) []resourceReference {

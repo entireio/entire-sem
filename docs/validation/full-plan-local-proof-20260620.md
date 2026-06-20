@@ -39,6 +39,7 @@ go test ./internal/bench -run TestMeasureRepoEnforcesLiveRSSGuard
 go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go -limit 1 -profile syntax-only -provider-version guard-test -out - -max-rss-bytes 1
 go build -o /tmp/sem-bench ./cmd/sem-bench
 /tmp/sem-bench -skip-clone -manifest bench/repos.json -languages C -limit 1 -profile fast -provider-version codex-fast-c-scan -out bench/results -max-rss-bytes 5000000000 -min-loc-per-sec 150000
+go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go -limit 1 -profile syntax-only -provider-version codex-k8s-crd-refs -out bench/results
 ```
 
 ## Results
@@ -155,6 +156,10 @@ go build -o /tmp/sem-bench ./cmd/sem-bench
 - KEDA ScaledObject name-only scale targets emit exact local
   `RESOURCE_DEPENDS_ON` edges to Deployment resources by convention when the
   target manifest is present in the snapshot.
+- cert-manager `issuerRef`, External Secrets `secretStoreRef`, Argo
+  `workflowTemplateRef`/`templateRef`, and Tekton `pipelineRef`/`taskRef`
+  custom-controller references emit exact local `RESOURCE_DEPENDS_ON` edges
+  when the referenced resource manifests are present in the snapshot.
 - Kubernetes projected ConfigMap/Secret volume refs and image pull secrets emit
   external and exact local `RESOURCE_DEPENDS_ON` edges when the referenced
   resource manifests are present in the snapshot.
@@ -318,6 +323,9 @@ go build -o /tmp/sem-bench ./cmd/sem-bench
     relations, 136,672.59 ms provider wall time, 291,124 LOC/s, max RSS
     3,753,017,344 bytes, estimated output 1,739,142,766 bytes, 125 parse
     failures, `completeness_level: degraded`.
+  - `bench/results/result-1781965760.json`: Go/gin, syntax-only, 28,618 LOC,
+    136,147 LOC/s, max RSS 27,410,432 bytes, estimated output 1,902,624
+    bytes.
 
 ## Remaining Honesty Notes
 
