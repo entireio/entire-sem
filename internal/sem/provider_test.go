@@ -3668,6 +3668,37 @@ func TestStringRawTemplateRouteExpressionComposesAndBridgesHTTPClient(t *testing
 	}
 }
 
+func TestURLPathnameRouteConstantComposesAndBridgesHTTPClient(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "api.ts", "const base = \"https://example.invalid\"\n"+
+		"const version = \"v1\"\n"+
+		"const usersRoute = new URL(`/api/${version}/users/:id`, base).pathname\n\n"+
+		"export function register(app: any): void {\n"+
+		"  app.get(usersRoute, showUser)\n"+
+		"}\n\n"+
+		"export function showUser(): string {\n"+
+		"  return \"ok\"\n"+
+		"}\n\n"+
+		"export async function ping(): Promise<unknown> {\n"+
+		"  const route = new URL(\"/api/\" + version + \"/users/:id\", base).pathname\n"+
+		"  return fetch(route)\n"+
+		"}\n")
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasRelationToExternalRoute(snapshot.Relations, "HANDLES_ROUTE", "showUser", "/api/v1/users/:id") {
+		t.Fatalf("missing URL pathname route expression: %#v", snapshot.Relations)
+	}
+	if !hasRelationToExternalRoute(snapshot.Relations, "HTTP_CALLS", "ping", "/api/v1/users/:id") {
+		t.Fatalf("missing URL pathname HTTP call relation: %#v", snapshot.Relations)
+	}
+	if !hasRelationByLastSegment(snapshot.Relations, "CALLS", "ping", "showUser") {
+		t.Fatalf("missing URL pathname route bridge CALLS ping->showUser: %#v", snapshot.Relations)
+	}
+}
+
 func TestFastifyDirectRouteResolvesHandlerAndBridge(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "api.ts", `const userRoute = "/api/users/:id"

@@ -9667,6 +9667,9 @@ func staticStringExpressionValue(expr string, constants map[string]string) (stri
 		return "", false
 	}
 	if (strings.HasPrefix(expr, `"`) && strings.HasSuffix(expr, `"`)) || (strings.HasPrefix(expr, `'`) && strings.HasSuffix(expr, `'`)) {
+		if parts := splitStaticConcatExpression(expr); len(parts) > 1 {
+			return staticConcatStringValue(parts, constants)
+		}
 		return strings.Trim(expr, `"'`), true
 	}
 	if strings.HasPrefix(expr, "`") && strings.HasSuffix(expr, "`") {
@@ -9678,11 +9681,14 @@ func staticStringExpressionValue(expr string, constants map[string]string) (stri
 	if value, ok := staticArrayJoinStringValue(expr, constants); ok {
 		return value, true
 	}
-	if value := constants[expr]; value != "" {
+	if value, ok := staticURLPathnameStringValue(expr, constants); ok {
 		return value, true
 	}
 	if parts := splitStaticConcatExpression(expr); len(parts) > 1 {
 		return staticConcatStringValue(parts, constants)
+	}
+	if value := constants[expr]; value != "" {
+		return value, true
 	}
 	return "", false
 }
@@ -9759,6 +9765,30 @@ func staticArrayJoinStringValue(expr string, constants map[string]string) (strin
 		values = append(values, value)
 	}
 	return strings.Join(values, separator), true
+}
+
+func staticURLPathnameStringValue(expr string, constants map[string]string) (string, bool) {
+	expr = strings.TrimSpace(expr)
+	if !strings.HasPrefix(expr, "new URL") {
+		return "", false
+	}
+	call := strings.TrimSpace(strings.TrimPrefix(expr, "new URL"))
+	if !strings.HasPrefix(call, "(") {
+		return "", false
+	}
+	callEnd := findMatchingStaticDelimiter(call, 0, '(', ')')
+	if callEnd < 0 || strings.TrimSpace(call[callEnd+1:]) != ".pathname" {
+		return "", false
+	}
+	args := splitTopLevelStaticComma(call[1:callEnd])
+	if len(args) == 0 {
+		return "", false
+	}
+	value, ok := staticStringExpressionValue(args[0], constants)
+	if !ok || !strings.HasPrefix(value, "/") {
+		return "", false
+	}
+	return value, true
 }
 
 func staticConcatStringValue(parts []string, constants map[string]string) (string, bool) {

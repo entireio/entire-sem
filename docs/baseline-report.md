@@ -168,15 +168,17 @@ False positives:
   Deterministic static computed route expressions such as
   `apiPrefix + "/health"`, template literals with known local route constants,
   `String.raw` template literals with deterministic local holes, and static
-  array joins such as `[apiPrefix, version, "users"].join("/")` compose to one
-  route and do not emit suffixes as separate routes. Runtime
+  array joins such as `[apiPrefix, version, "users"].join("/")`, and
+  `new URL("/path", base).pathname` constants compose to one route and do not
+  emit suffixes as separate routes. Runtime
   builders remain intentionally skipped. Matching Python
   `requests`/`httpx`, Java `RestTemplate`/HTTP client calls, Go HTTP client
   calls, C# `HttpClient` calls, PHP `Http::` facade calls, and JS/TS
   `fetch`/Axios calls, including deterministic static computed JS/TS client
-  paths, inline static array joins, `String.raw` templates, and Next.js
-  bracket parameter paths, can bridge to local decorated or registered handlers
-  through the shared route endpoint. (WP6.)
+  paths, inline static array joins, `String.raw` templates, deterministic
+  `new URL("/path", base).pathname` constants, and Next.js bracket parameter
+  paths, can bridge to local decorated or registered handlers through the
+  shared route endpoint. (WP6.)
 - **Global-unique name match (Go `go-basic`).** `LoginHandler CALLS CheckToken`
   is emitted at `0.68` purely because the name is unique repo-wide, not because
   the call was resolved through imports/scope. Correct here, but fragile.
