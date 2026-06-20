@@ -1377,8 +1377,12 @@ func parameterAliasMap(block string, params map[string]bool) map[string]string {
 			continue
 		}
 		alias := strings.TrimPrefix(match[1], "$")
-		param := strings.TrimPrefix(match[2], "$")
-		if alias == "" || alias == param || !params[param] {
+		source := strings.TrimPrefix(match[2], "$")
+		param := source
+		if !params[param] {
+			param = aliases[source]
+		}
+		if alias == "" || alias == param || param == "" {
 			continue
 		}
 		aliases[alias] = param

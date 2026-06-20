@@ -84,6 +84,8 @@ go test ./internal/sem -run 'TestBuildProviderSnapshotEmits(ParameterPropertyAli
 go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out bench/results -lock bench/repos.lock.json -languages Go -limit 1 -skip-clone -profile syntax-only -provider-version codex-param-property-alias-flow -min-loc-per-sec 1
 go test ./internal/sem -run 'TestBuildProviderSnapshotEmits(AliasContainerForward|PythonAliasContainerForward|AliasForward|ObjectFieldForward|ObjectLiteralForward|ObjectShorthandForward|PythonDictLiteralForward|CollectionElementForward|CollectionLiteralElementForward|PythonCollectionLiteralElementForward|DirectLiteralArgumentForward|PythonDirectLiteralArgumentForward)DataFlow' -count=1
 go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out bench/results -lock bench/repos.lock.json -languages Go -limit 1 -skip-clone -profile syntax-only -provider-version codex-alias-container-flow -min-loc-per-sec 1
+go test ./internal/sem -run 'TestBuildProviderSnapshotEmits(MultiHopAliasForward|PythonMultiHopAliasForward|AliasForward|AliasContainerForward|PythonAliasContainerForward|ObjectFieldForward|ObjectLiteralForward|PythonDictLiteralForward|CollectionElementForward|DirectLiteralArgumentForward|PythonDirectLiteralArgumentForward)DataFlow' -count=1
+go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out bench/results -lock bench/repos.lock.json -languages Go -limit 1 -skip-clone -profile syntax-only -provider-version codex-multihop-alias-flow -min-loc-per-sec 1
 go test ./internal/sem -run 'TestKubernetes(MonitorSelectorsDependOnTargets|PrometheusMonitorSecretDependencies)' -count=1
 go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out bench/results -lock bench/repos.lock.json -languages Go -limit 1 -skip-clone -profile syntax-only -provider-version codex-prom-monitor-secrets -min-loc-per-sec 1
 ```
@@ -389,7 +391,9 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
   passed to a known callee; unrelated local object properties are ignored.
 - Conservative parameter-alias forwarding emits caller-to-callee `DATA_FLOWS`
   when a caller parameter is assigned to a local alias and that alias is passed
-  to a known callee.
+  to a known callee; straight-line multi-hop alias chains such as
+  `const first = input; const second = first; normalize(second)` resolve back
+  to the source parameter.
 - Conservative object-field forwarding emits caller-to-callee `DATA_FLOWS` when
   a caller parameter is assigned into a local object field and that object is
   passed to a known callee; direct parameter aliases assigned into object
@@ -830,6 +834,9 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
   - `bench/results/result-1781997931.json`: Go/gin, syntax-only, 28,618 LOC,
     161,984 LOC/s, max RSS 28,540,928 bytes, estimated output 1,902,632
     bytes.
+  - `bench/results/result-1781998685.json`: Go/gin, syntax-only, 28,618 LOC,
+    164,150 LOC/s, max RSS 26,968,064 bytes, estimated output 1,902,631
+    bytes.
   - `bench/results/result-1781997407.json`: Go/gin, syntax-only, 28,618 LOC,
     165,967 LOC/s, max RSS 30,015,488 bytes, estimated output 1,902,632
     bytes.
@@ -858,11 +865,11 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
   such as `const { value } = input; normalize(value)`, in addition to direct
   parameter, direct parameter-property, parameter-property alias, alias,
   object-field/object-literal, and collection-element forwarding, including
-  direct parameter aliases inside object fields, object/dict literals,
-  collection/array/list literals, and direct literal callee arguments, JS/TS
-  shorthand object literals, Python dict literals, direct array/list literals
-  such as `const values = [input]; normalize(values)`, and direct literal
-  callee arguments such as
+  direct and straight-line multi-hop parameter aliases inside object fields,
+  object/dict literals, collection/array/list literals, and direct literal
+  callee arguments, JS/TS shorthand object literals, Python dict literals,
+  direct array/list literals such as `const values = [input]; normalize(values)`,
+  and direct literal callee arguments such as
   `normalize({ value: input })` or `collect([input])`. Broad program slicing
   remains intentionally out of scope.
 - GraphQL support covers operation literals, JS/TS resolver-map fields,

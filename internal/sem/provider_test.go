@@ -7197,6 +7197,148 @@ def run(input):
 	}
 }
 
+func TestBuildProviderSnapshotEmitsMultiHopAliasForwardDataFlow(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "flow.ts", `type Payload = { value?: string }
+
+function normalize(value: string): string {
+  return value.trim()
+}
+
+function wrap(payload: Payload): string {
+  return payload.value ?? ""
+}
+
+function collect(values: string[]): string {
+  return values.join(",")
+}
+
+function direct(payload: Payload): string {
+  return payload.value ?? ""
+}
+
+function ignore(value: string): string {
+  return "ignored"
+}
+
+export function run(input: string): string {
+  const first = input
+  const second = first
+  normalize(second)
+  const payload = { value: second }
+  wrap(payload)
+  const values = [second]
+  collect(values)
+  direct({ value: second })
+  const local = "input"
+  const localAlias = local
+  ignore(localAlias)
+  return second
+}
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []struct {
+		callee string
+		kind   string
+		detail string
+	}{
+		{callee: "normalize", kind: "alias_forward_flow", detail: "input -> second -> normalize()"},
+		{callee: "wrap", kind: "object_field_forward_flow", detail: "input -> payload -> wrap()"},
+		{callee: "collect", kind: "collection_element_forward_flow", detail: "input -> values[] -> collect()"},
+		{callee: "direct", kind: "literal_argument_forward_flow", detail: "input -> literal -> direct()"},
+	} {
+		var found RelationRecord
+		for _, relation := range snapshot.Relations {
+			if relation.Type == "DATA_FLOWS" && lastSegment(relation.FromID) == "run" && lastSegment(relation.ToID) == want.callee && len(relation.Evidence) == 1 && relation.Evidence[0].Kind == want.kind {
+				found = relation
+				break
+			}
+		}
+		if found.FromID == "" {
+			t.Fatalf("missing multi-hop alias DATA_FLOWS run->%s: %#v", want.callee, snapshot.Relations)
+		}
+		if len(found.Evidence) != 1 || found.Evidence[0].Detail != want.detail {
+			t.Fatalf("unexpected multi-hop alias flow evidence for %s: %#v", want.callee, found.Evidence)
+		}
+	}
+	for _, relation := range snapshot.Relations {
+		if relation.Type == "DATA_FLOWS" && lastSegment(relation.FromID) == "run" && lastSegment(relation.ToID) == "ignore" {
+			t.Fatalf("non-parameter multi-hop alias produced DATA_FLOWS: %#v", relation)
+		}
+	}
+}
+
+func TestBuildProviderSnapshotEmitsPythonMultiHopAliasForwardDataFlow(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "flow.py", `def normalize(value):
+    return value.strip()
+
+def wrap(payload):
+    return payload.get("value", "")
+
+def collect(values):
+    return ",".join(values)
+
+def direct(payload):
+    return payload.get("value", "")
+
+def ignore(value):
+    return "ignored"
+
+def run(input):
+    first = input
+    second = first
+    normalize(second)
+    payload = {"value": second}
+    wrap(payload)
+    values = [second]
+    collect(values)
+    direct({"value": second})
+    local = "input"
+    local_alias = local
+    ignore(local_alias)
+    return second
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []struct {
+		callee string
+		kind   string
+		detail string
+	}{
+		{callee: "normalize", kind: "alias_forward_flow", detail: "input -> second -> normalize()"},
+		{callee: "wrap", kind: "object_field_forward_flow", detail: "input -> payload -> wrap()"},
+		{callee: "collect", kind: "collection_element_forward_flow", detail: "input -> values[] -> collect()"},
+		{callee: "direct", kind: "literal_argument_forward_flow", detail: "input -> literal -> direct()"},
+	} {
+		var found RelationRecord
+		for _, relation := range snapshot.Relations {
+			if relation.Type == "DATA_FLOWS" && lastSegment(relation.FromID) == "run" && lastSegment(relation.ToID) == want.callee && len(relation.Evidence) == 1 && relation.Evidence[0].Kind == want.kind {
+				found = relation
+				break
+			}
+		}
+		if found.FromID == "" {
+			t.Fatalf("missing Python multi-hop alias DATA_FLOWS run->%s: %#v", want.callee, snapshot.Relations)
+		}
+		if len(found.Evidence) != 1 || found.Evidence[0].Detail != want.detail {
+			t.Fatalf("unexpected Python multi-hop alias flow evidence for %s: %#v", want.callee, found.Evidence)
+		}
+	}
+	for _, relation := range snapshot.Relations {
+		if relation.Type == "DATA_FLOWS" && lastSegment(relation.FromID) == "run" && lastSegment(relation.ToID) == "ignore" {
+			t.Fatalf("non-parameter Python multi-hop alias produced DATA_FLOWS: %#v", relation)
+		}
+	}
+}
+
 func TestBuildProviderSnapshotEmitsDestructuredAliasForwardDataFlow(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "flow.ts", `type Input = { value: string }
