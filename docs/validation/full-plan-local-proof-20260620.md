@@ -167,6 +167,11 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
   `workflowTemplateRef`/`templateRef`, and Tekton `pipelineRef`/`taskRef`
   custom-controller references emit exact local `RESOURCE_DEPENDS_ON` edges
   when the referenced resource manifests are present in the snapshot.
+- Flux CD `sourceRef` references emit exact local `RESOURCE_DEPENDS_ON` edges
+  for `HelmRelease` to `HelmRepository` and Flux `Kustomization` to
+  `GitRepository` when the referenced source manifests are present, including
+  Flux `kustomization.yaml` files that would otherwise collide with ordinary
+  Kustomize overlay detection.
 - Istio VirtualService route destinations and gateway refs, plus
   DestinationRule hosts, emit exact local `RESOURCE_DEPENDS_ON` edges to
   Service/Gateway resources when the referenced manifests are present in the
@@ -361,6 +366,9 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
     bytes.
   - `bench/results/result-1781967564.json`: Go/gin, syntax-only, 28,618 LOC,
     134,592 LOC/s, max RSS 29,081,600 bytes, estimated output 1,902,631
+    bytes.
+  - `bench/results/result-1781967930.json`: Go/gin, syntax-only, 28,618 LOC,
+    132,509 LOC/s, max RSS 27,246,592 bytes, estimated output 1,902,628
     bytes.
 
 ## Remaining Honesty Notes

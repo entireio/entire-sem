@@ -119,6 +119,9 @@ func (TreeSitterParser) ParseWithStatus(path, content string) ([]Entity, string,
 	if !ok {
 		return nil, "", ParseStatus{}
 	}
+	if spec.language == "Kustomize" && looksLikeFluxKustomizationManifest(content) {
+		spec = treeSitterLanguages[".yaml"]
+	}
 	if spec.language == "SQL" {
 		spec.grammar = pgsql.GetLanguage()
 	}
@@ -172,6 +175,11 @@ func (TreeSitterParser) ParseWithStatus(path, content string) ([]Entity, string,
 func Supported(path string) bool {
 	_, ok := languageForPath(path)
 	return ok
+}
+
+func looksLikeFluxKustomizationManifest(content string) bool {
+	return regexp.MustCompile(`(?m)^apiVersion:\s*kustomize\.toolkit\.fluxcd\.io/`).MatchString(content) &&
+		regexp.MustCompile(`(?m)^kind:\s*Kustomization\s*$`).MatchString(content)
 }
 
 func languageForPath(path string) (languageSpec, bool) {

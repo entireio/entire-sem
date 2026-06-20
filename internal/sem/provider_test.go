@@ -1566,6 +1566,60 @@ spec:
 	}
 }
 
+func TestKubernetesFluxSourceReferenceDependencies(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "k8s/helm-repository.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: podinfo
+spec:
+  url: https://stefanprodan.github.io/podinfo
+`)
+	writeFile(t, repo, "k8s/git-repository.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: platform-config
+spec:
+  interval: 1m
+  url: https://example.com/platform/config.git
+`)
+	writeFile(t, repo, "k8s/helm-release.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: podinfo
+spec:
+  chart:
+    spec:
+      chart: podinfo
+      sourceRef:
+        kind: HelmRepository
+        name: podinfo
+`)
+	writeFile(t, repo, "k8s/kustomization.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: platform
+spec:
+  sourceRef:
+    kind: GitRepository
+    name: platform-config
+  path: ./clusters/prod
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, edge := range [][2]string{
+		{"HelmRelease.podinfo", "HelmRepository.podinfo"},
+		{"Kustomization.platform", "GitRepository.platform-config"},
+	} {
+		if !hasRelationByLastSegment(snapshot.Relations, "RESOURCE_DEPENDS_ON", edge[0], edge[1]) {
+			t.Fatalf("missing Flux source dependency %s -> %s in %#v", edge[0], edge[1], snapshot.Relations)
+		}
+	}
+}
+
 func TestKustomizeResourceDependencies(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "overlays/prod/kustomization.yaml", `resources:

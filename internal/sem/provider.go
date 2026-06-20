@@ -2750,6 +2750,11 @@ func kubernetesResourceReferences(content string) []resourceReference {
 			add(ref.Kind, ref.Name, ref.EvidenceKind, ref.Confidence)
 		}
 	}
+	if kubernetesManifestHasAnyKind(content, "HelmRelease", "Kustomization", "ImageRepository", "ImagePolicy", "ImageUpdateAutomation") {
+		for _, ref := range kubernetesNamedRefBlockReferences(content, "sourceRef", "kubernetes_flux_source_ref", 0.84, kubernetesExplicitReferenceKind) {
+			add(ref.Kind, ref.Name, ref.EvidenceKind, ref.Confidence)
+		}
+	}
 	for _, ref := range kubernetesKindNameBlockReferences(content, "ownerReferences", "kubernetes_owner_reference", 0.78) {
 		add(ref.Kind, ref.Name, ref.EvidenceKind, ref.Confidence)
 	}
@@ -2846,6 +2851,10 @@ func kubernetesDefaultReferenceKind(defaultKind string) func(map[string]string) 
 		}
 		return defaultKind
 	}
+}
+
+func kubernetesExplicitReferenceKind(fields map[string]string) string {
+	return fields["kind"]
 }
 
 func kubernetesWorkflowTemplateReferenceKind(fields map[string]string) string {
