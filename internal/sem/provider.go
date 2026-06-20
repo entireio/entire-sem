@@ -7104,17 +7104,42 @@ func laravelRouteRegistrations(content string) []laravelRouteRegistration {
 	}
 	arrayRe := regexp.MustCompile(`(?is)\bRoute::(?:get|post|put|patch|delete|options|any)\s*\(\s*["']([^"']+)["']\s*,\s*\[\s*([A-Za-z_\\][A-Za-z0-9_\\]*)::class\s*,\s*["']([A-Za-z_][A-Za-z0-9_]*)["']\s*\]`)
 	stringRe := regexp.MustCompile(`(?is)\bRoute::(?:get|post|put|patch|delete|options|any)\s*\(\s*["']([^"']+)["']\s*,\s*["']([A-Za-z_\\][A-Za-z0-9_\\]*)@([A-Za-z_][A-Za-z0-9_]*)["']`)
-	for _, match := range arrayRe.FindAllStringSubmatch(content, -1) {
-		if len(match) == 4 {
-			add(match[1], match[2], match[3], "laravel_route_controller_array")
+	scan := func(body, prefix, evidenceSuffix string) {
+		for _, match := range arrayRe.FindAllStringSubmatch(body, -1) {
+			if len(match) == 4 {
+				add(joinRoutePaths(prefix, match[1]), match[2], match[3], "laravel_route_controller_array"+evidenceSuffix)
+			}
+		}
+		for _, match := range stringRe.FindAllStringSubmatch(body, -1) {
+			if len(match) == 4 {
+				add(joinRoutePaths(prefix, match[1]), match[2], match[3], "laravel_route_controller_string"+evidenceSuffix)
+			}
 		}
 	}
-	for _, match := range stringRe.FindAllStringSubmatch(content, -1) {
-		if len(match) == 4 {
-			add(match[1], match[2], match[3], "laravel_route_controller_string")
-		}
+	topLevel, groups := laravelPrefixGroups(content)
+	scan(topLevel, "", "")
+	for _, group := range groups {
+		scan(group.Body, group.Prefix, "_prefix_group")
 	}
 	return registrations
+}
+
+type laravelPrefixGroup struct {
+	Prefix string
+	Body   string
+}
+
+func laravelPrefixGroups(content string) (string, []laravelPrefixGroup) {
+	re := regexp.MustCompile(`(?is)Route::prefix\s*\(\s*["']([^"']+)["']\s*\)\s*->\s*group\s*\(\s*function\s*\(\)\s*\{(.*?)\}\s*\);`)
+	var groups []laravelPrefixGroup
+	top := re.ReplaceAllStringFunc(content, func(block string) string {
+		match := re.FindStringSubmatch(block)
+		if len(match) == 3 {
+			groups = append(groups, laravelPrefixGroup{Prefix: normalizeSlashRoute(match[1]), Body: match[2]})
+		}
+		return ""
+	})
+	return top, groups
 }
 
 func railsRouteRelations(files []FileRecord, recordsByFile map[string][]SymbolRecord, readContent contentReader) []expressRouteRelation {

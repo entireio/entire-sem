@@ -3151,6 +3151,48 @@ class UserController
 	}
 }
 
+func TestLaravelPrefixGroupsComposeControllerRoutes(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "routes/api.php", `<?php
+
+use App\Http\Controllers\UserController;
+
+Route::prefix('api')->group(function () {
+    Route::get('users/{id}', [UserController::class, 'show']);
+});
+
+function ping() {
+    return Http::get('/api/users/{id}');
+}
+`)
+	writeFile(t, repo, "app/Http/Controllers/UserController.php", `<?php
+
+namespace App\Http\Controllers;
+
+class UserController
+{
+    public function show(string $id): string
+    {
+        return $id;
+    }
+}
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasRelationByLastSegment(snapshot.Relations, "HANDLES_ROUTE", "UserController.show", "/api/users/{id}") {
+		t.Fatalf("missing Laravel prefixed route handler: %#v", snapshot.Relations)
+	}
+	if hasRelationByLastSegment(snapshot.Relations, "HANDLES_ROUTE", "UserController.show", "/users/{id}") {
+		t.Fatalf("Laravel prefix group emitted unprefixed child route: %#v", snapshot.Relations)
+	}
+	if !hasRelationByLastSegment(snapshot.Relations, "CALLS", "ping", "UserController.show") {
+		t.Fatalf("missing route bridge CALLS ping->UserController.show: %#v", snapshot.Relations)
+	}
+}
+
 func TestRailsRoutesResolveControllerActionsAndBridgeHTTPClient(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "config/routes.rb", `Rails.application.routes.draw do

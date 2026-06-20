@@ -310,8 +310,8 @@ Tasks:
   mapping annotations are implemented for class-level prefix plus method-level
   route composition. C# ASP.NET controller `[Route]` prefixes and HTTP-verb
   attributes compose and bridge matching `HttpClient` calls. PHP Laravel route
-  declarations resolve local controller methods, and Symfony/PHP route
-  attributes compose class and method routes. Direct Fastify/app/server JS/TS
+  declarations and prefix groups resolve local controller methods, and
+  Symfony/PHP route attributes compose class and method routes. Direct Fastify/app/server JS/TS
   route registrations resolve local handler functions. Ruby on Rails static
   route declarations and `resources` declarations with default REST actions,
   `only:`, and `except:` resolve local controller actions. Next.js route-file

@@ -92,9 +92,10 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
 - C# ASP.NET controller route attributes compose class-level `[Route]`
   prefixes with method-level HTTP verb attributes, emit `HANDLES_ROUTE`, and
   bridge matching `HttpClient` calls to handlers as direct `CALLS`.
-- PHP Laravel route declarations resolve local controller methods, Symfony/PHP
-  route attributes compose class and method routes, and matching PHP `Http::`
-  facade calls bridge to handlers as direct `CALLS`.
+- PHP Laravel route declarations and `Route::prefix(...)->group(...)` route
+  groups resolve local controller methods, Symfony/PHP route attributes compose
+  class and method routes, and matching PHP `Http::` facade calls bridge to
+  handlers as direct `CALLS`.
 - Ruby on Rails static route declarations and `resources` declarations with
   default REST actions, `only:`, and `except:` resolve local controller
   actions, and matching HTTP client calls bridge to handlers as direct `CALLS`.
@@ -384,6 +385,8 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
   - `bench/results/result-1781968842.json`: Go/gin, syntax-only, 28,618 LOC,
     142,102 LOC/s, max RSS 26,853,376 bytes, estimated output 1,902,626
     bytes.
+  - `bench/results/result-1781969096.json`: Go/gin, syntax-only, 28,618 LOC,
+    79,237 LOC/s, max RSS 26,804,224 bytes, estimated output 1,902,626 bytes.
 
 ## Remaining Honesty Notes
 
