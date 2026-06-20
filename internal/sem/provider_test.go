@@ -1999,6 +1999,40 @@ kind: ClusterAnalysisTemplate
 metadata:
   name: global-slo
 `)
+	writeFile(t, repo, "k8s/argocd-application.yaml", `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: web
+spec:
+  project: platform
+  source:
+    repoURL: https://example.com/acme/web.git
+    path: deploy
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: web
+`)
+	writeFile(t, repo, "k8s/argocd-applicationset.yaml", `apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: workers
+spec:
+  template:
+    metadata:
+      name: worker
+    spec:
+      project: workloads
+`)
+	writeFile(t, repo, "k8s/argocd-projects.yaml", `apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: platform
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: workloads
+`)
 	writeFile(t, repo, "k8s/service-binding.yaml", `apiVersion: servicebinding.io/v1
 kind: ServiceBinding
 metadata:
@@ -2105,6 +2139,8 @@ metadata:
 		{"Rollout.api", "AnalysisTemplate.success-rate"},
 		{"Rollout.api", "ClusterAnalysisTemplate.global-slo"},
 		{"AnalysisRun.manual-analysis", "AnalysisTemplate.success-rate"},
+		{"Application.web", "AppProject.platform"},
+		{"ApplicationSet.workers", "AppProject.workloads"},
 		{"ServiceBinding.api-database", "PostgreSQL.user-db"},
 		{"ServiceBinding.api-database", "Deployment.api"},
 		{"Trigger.user-created", "Broker.default"},

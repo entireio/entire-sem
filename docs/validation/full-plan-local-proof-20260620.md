@@ -225,7 +225,8 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
 - cert-manager `issuerRef`, External Secrets `secretStoreRef` and
   `target.name` Secret refs, Argo
   `workflowTemplateRef`/`templateRef`, Argo Rollouts `templateName`
-  AnalysisTemplate refs, Tekton `pipelineRef`/`taskRef`, and ServiceBinding
+  AnalysisTemplate refs, Argo CD `Application`/`ApplicationSet` project refs,
+  Tekton `pipelineRef`/`taskRef`, and ServiceBinding
   `service`/`workload`, Knative Trigger `broker`/`subscriber.ref`, and
   Knative Subscription `channel`/`subscriber.ref`/`reply.ref`
   and Knative Serving `Route`/`Service` traffic `revisionName`/
@@ -498,6 +499,9 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
   - `bench/results/result-1781983799.json`: Go/gin, syntax-only, 28,618 LOC,
     159,839 LOC/s, max RSS 27,738,112 bytes, estimated output 1,902,635
     bytes; run after aliased Python `importlib` module extraction.
+  - `bench/results/result-1781983962.json`: Go/gin, syntax-only, 28,618 LOC,
+    164,366 LOC/s, max RSS 26,968,064 bytes, estimated output 1,902,624
+    bytes; run after Argo CD Application/AppProject dependency extraction.
   - `bench/results/result-1781972446.json`: Go/gin, syntax-only, 28,618 LOC,
     162,982 LOC/s, max RSS 26,804,224 bytes, estimated output 1,902,630
     bytes; run after IngressClass reference extraction.

@@ -3025,6 +3025,9 @@ func kubernetesResourceReferences(content string) []resourceReference {
 	for _, ref := range kubernetesRolloutsAnalysisTemplateReferences(content) {
 		add(ref.Kind, ref.Name, ref.EvidenceKind, ref.Confidence)
 	}
+	for _, ref := range kubernetesArgoCDApplicationProjectReferences(content) {
+		add(ref.Kind, ref.Name, ref.EvidenceKind, ref.Confidence)
+	}
 	if kubernetesManifestHasAnyKind(content, "PipelineRun", "TaskRun", "Pipeline") {
 		for _, ref := range kubernetesNamedRefBlockReferences(content, "pipelineRef", "kubernetes_tekton_pipeline_ref", 0.84, kubernetesDefaultReferenceKind("pipeline")) {
 			add(ref.Kind, ref.Name, ref.EvidenceKind, ref.Confidence)
@@ -3390,6 +3393,25 @@ func kubernetesRolloutsAnalysisTemplateReferences(content string) []resourceRefe
 			fields[childKey] = yamlLineValue(trimmed)
 		}
 		flush()
+	}
+	return refs
+}
+
+func kubernetesArgoCDApplicationProjectReferences(content string) []resourceReference {
+	if !kubernetesManifestAPIMatches(content, `argoproj\.io/`) || !kubernetesManifestHasAnyKind(content, "Application", "ApplicationSet") {
+		return nil
+	}
+	var refs []resourceReference
+	for _, match := range regexp.MustCompile(`(?im)^\s*project:\s*([A-Za-z0-9_.-]+)\s*$`).FindAllStringSubmatch(content, -1) {
+		if len(match) != 2 || match[1] == "" {
+			continue
+		}
+		refs = append(refs, resourceReference{
+			Kind:         "appproject",
+			Name:         match[1],
+			EvidenceKind: "kubernetes_argocd_project_ref",
+			Confidence:   0.82,
+		})
 	}
 	return refs
 }
