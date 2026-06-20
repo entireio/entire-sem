@@ -88,10 +88,10 @@ Confidence bands follow the v2-plan schema section (`0.90-1.00 exact`,
   Kubernetes, and Kustomize dependency patterns; Kubernetes named
   ConfigMap/Secret/service-account/PVC/RBAC/owner/Ingress/HPA references,
   Gateway API HTTPRoute backend refs and parent Gateway refs, projected
-  ConfigMap/Secret volume refs, image pull secrets, Service selectors,
-  PodDisruptionBudget selectors, NetworkPolicy pod selectors, ServiceMonitor
-  selectors, and PodMonitor selectors resolve to local resource symbols when
-  those manifests are present).
+  ConfigMap/Secret volume refs, ConfigMap/Secret key refs, image pull secrets,
+  Service selectors, PodDisruptionBudget selectors, NetworkPolicy pod
+  selectors, ServiceMonitor selectors, and PodMonitor selectors resolve to
+  local resource symbols when those manifests are present).
 
 `capabilities --json` reports per-language relation support
 (`relation_support_by_language`) and pattern-driven relations separately in

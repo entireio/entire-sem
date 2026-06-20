@@ -361,8 +361,8 @@ Delivered:
   exact local `RESOURCE_DEPENDS_ON` symbol edges. The same exact local
   resolution covers RBAC role/subject references, owner references, Ingress
   Service backends, Gateway API HTTPRoute backend refs and parent Gateway refs,
-  HPA scale targets, projected ConfigMap/Secret volume refs, and image pull
-  secrets.
+  HPA scale targets, projected ConfigMap/Secret volume refs, ConfigMap/Secret
+  key refs, and image pull secrets.
 - Kubernetes resource symbols emit common container image, environment-variable,
   and port declarations as `CONFIGURES` facts, multi-document Kubernetes YAML
   emits one resource symbol per document, and Service, PodDisruptionBudget,

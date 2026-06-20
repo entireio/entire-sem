@@ -678,6 +678,16 @@ spec:
           env:
             - name: LOG_LEVEL
               value: debug
+            - name: FEATURE_FLAG
+              valueFrom:
+                configMapKeyRef:
+                  name: api-key-config
+                  key: FEATURE_FLAG
+            - name: API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: api-key-secret
+                  key: token
           envFrom:
             - configMapRef:
                 name: api-config
@@ -693,6 +703,11 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: api-projected-config
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: api-key-config
 `)
 	writeFile(t, repo, "k8s/secret.yaml", `apiVersion: v1
 kind: Secret
@@ -713,6 +728,11 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: registry-creds
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: api-key-secret
 `)
 	writeFile(t, repo, "k8s/service-account.yaml", `apiVersion: v1
 kind: ServiceAccount
@@ -732,8 +752,10 @@ metadata:
 
 	for _, target := range []string{
 		"external:config:kubernetes/configmap/api-config",
+		"external:config:kubernetes/configmap/api-key-config",
 		"external:config:kubernetes/secret/api-secret",
 		"external:config:kubernetes/secret/api-env",
+		"external:config:kubernetes/secret/api-key-secret",
 		"external:config:kubernetes/secret/api-projected-secret",
 		"external:config:kubernetes/secret/registry-creds",
 		"external:config:kubernetes/serviceaccount/api-runner",
@@ -755,9 +777,11 @@ metadata:
 	}
 	for _, target := range []string{
 		"ConfigMap.api-config",
+		"ConfigMap.api-key-config",
 		"ConfigMap.api-projected-config",
 		"Secret.api-secret",
 		"Secret.api-env",
+		"Secret.api-key-secret",
 		"Secret.api-projected-secret",
 		"Secret.registry-creds",
 		"ServiceAccount.api-runner",

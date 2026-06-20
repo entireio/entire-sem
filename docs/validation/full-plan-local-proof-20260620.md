@@ -130,6 +130,9 @@ go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go
 - Kubernetes projected ConfigMap/Secret volume refs and image pull secrets emit
   external and exact local `RESOURCE_DEPENDS_ON` edges when the referenced
   resource manifests are present in the snapshot.
+- Kubernetes ConfigMap/Secret key refs emit external and exact local
+  `RESOURCE_DEPENDS_ON` edges when the referenced resource manifests are
+  present in the snapshot.
 - Kubernetes resource config tests pass for common container image,
   environment-variable, and port declarations emitted as `CONFIGURES` facts.
 - Docker Compose service extraction emits service resource symbols, exact
@@ -268,6 +271,8 @@ go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go
     131,801 LOC/s, max RSS 26,755,072 bytes, output 1,938,906 bytes.
   - `bench/results/result-1781955778.json`: Go/gin, syntax-only, 28,618 LOC,
     148,719 LOC/s, max RSS 28,573,696 bytes, output 1,938,906 bytes.
+  - `bench/results/result-1781956065.json`: Go/gin, syntax-only, 28,618 LOC,
+    161,821 LOC/s, max RSS 28,999,680 bytes, output 1,938,906 bytes.
 
 ## Remaining Honesty Notes
 
