@@ -19,6 +19,7 @@ go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go
 go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go -limit 1 -profile syntax-only -provider-version codex-full-plan -out bench/results
 go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go -limit 1 -profile syntax-only -provider-version codex-full-plan -out bench/results
 go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go -limit 1 -profile syntax-only -provider-version codex-full-plan -out bench/results
+go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go -limit 1 -profile syntax-only -provider-version codex-full-plan -out bench/results
 go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go -limit 1 -profile full -provider-version codex-full-plan -out bench/results
 go run ./cmd/sem-bench -skip-clone -manifest bench/repos.json -languages C -limit 1 -profile syntax-only -provider-version codex-full-plan -out bench/results -max-rss-bytes 5000000000
 go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go -limit 1 -profile syntax-only -provider-version codex-full-plan -out bench/results
@@ -40,6 +41,9 @@ go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go
   `package.json` `imports`, root import-map entries, and simple
   `tsconfig.json` path aliases resolve to local files with `import_resolved`
   metadata.
+- JS/TS literal CommonJS `require(...)` and literal dynamic `import(...)`
+  calls emit `IMPORTS`; CommonJS bindings also emit imported external `CALLS`
+  when called.
 - Python project/module imports resolve through local module files, repo-root
   `src`, configured setuptools package-find roots, inferred nested `*/src`
   namespace roots, `pyproject.toml`, and `setup.cfg` with `import_resolved`
@@ -146,6 +150,8 @@ go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go
     110,725 LOC/s, max RSS 28,327,936 bytes, output 1,938,906 bytes.
   - `bench/results/result-1781949067.json`: Go/gin, syntax-only, 28,618 LOC,
     159,290 LOC/s, max RSS 27,852,800 bytes, output 1,938,906 bytes.
+  - `bench/results/result-1781949246.json`: Go/gin, syntax-only, 28,618 LOC,
+    151,162 LOC/s, max RSS 28,753,920 bytes, output 1,938,906 bytes.
 
 ## Remaining Honesty Notes
 

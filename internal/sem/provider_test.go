@@ -1955,6 +1955,14 @@ export function readConfig(name: string): string {
   return path.join("config", readFileSync(name, "utf8"))
 }
 `)
+	writeFile(t, repo, "cjs.js", `const fs = require("fs")
+const { join } = require("path")
+
+export async function readCommonJS(name) {
+  await import("crypto")
+  return join("config", fs.readFileSync(name, "utf8"))
+}
+`)
 
 	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
 	if err != nil {
@@ -1970,6 +1978,8 @@ export function readConfig(name: string): string {
 		{from: "readConfig", target: "fs.readFileSync", detail: "readFileSync"},
 		{from: "readConfig", target: "path.join", detail: "path.join"},
 		{from: "readConfig", target: "axios.get", detail: "axios.get"},
+		{from: "readCommonJS", target: "fs.readFileSync", detail: "fs.readFileSync"},
+		{from: "readCommonJS", target: "path.join", detail: "join"},
 	} {
 		var found RelationRecord
 		for _, relation := range snapshot.Relations {
@@ -1986,6 +1996,11 @@ export function readConfig(name: string): string {
 		}
 		if len(found.Evidence) != 1 || found.Evidence[0].Kind != "imported_call_site" || found.Evidence[0].Detail != want.detail {
 			t.Fatalf("unexpected imported external call evidence: %#v", found.Evidence)
+		}
+	}
+	for _, target := range []string{"external:import:fs", "external:import:path", "external:import:crypto"} {
+		if !hasRelationTo(snapshot.Relations, "IMPORTS", target) {
+			t.Fatalf("missing JS dynamic/CommonJS import to %s in %#v", target, snapshot.Relations)
 		}
 	}
 }

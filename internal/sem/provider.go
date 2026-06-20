@@ -4890,7 +4890,7 @@ func importsFor(path, content string) []string {
 	case ".py":
 		return scanImports(content, regexp.MustCompile(`(?m)^\s*(?:from\s+(\.*[A-Za-z0-9_\.]+)\s+import|import\s+([A-Za-z0-9_\.]+))`))
 	case ".js", ".jsx", ".ts", ".tsx":
-		return scanImports(content, regexp.MustCompile(`(?m)^\s*import\s+.*?\s+from\s+['"]([^'"]+)['"]|^\s*import\s+['"]([^'"]+)['"]`))
+		return scanImports(content, regexp.MustCompile(`(?m)^\s*import\s+.*?\s+from\s+['"]([^'"]+)['"]|^\s*import\s+['"]([^'"]+)['"]|require\s*\(\s*['"]([^'"]+)['"]\s*\)|import\s*\(\s*['"]([^'"]+)['"]\s*\)`))
 	case ".lua":
 		return scanImports(content, regexp.MustCompile(`(?m)require\s*(?:\(|\s)\s*["']([^"']+)["']`))
 	case ".ml", ".mli":
@@ -5030,18 +5030,13 @@ func importedJavaScriptNames(content string) map[string][]string {
 	namedImport := regexp.MustCompile(`(?m)^\s*import\s+(?:type\s+)?\{([^}]+)\}\s+from\s+['"]([^'"]+)['"]`)
 	defaultImport := regexp.MustCompile(`(?m)^\s*import\s+(?:type\s+)?([A-Za-z_$][A-Za-z0-9_$]*)\s+from\s+['"]([^'"]+)['"]`)
 	namespaceImport := regexp.MustCompile(`(?m)^\s*import\s+\*\s+as\s+([A-Za-z_$][A-Za-z0-9_$]*)\s+from\s+['"]([^'"]+)['"]`)
+	requireNamed := regexp.MustCompile(`(?m)\b(?:const|let|var)\s+\{([^}]+)\}\s*=\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)`)
+	requireDefault := regexp.MustCompile(`(?m)\b(?:const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*(?:await\s+)?(?:require|import)\s*\(\s*['"]([^'"]+)['"]\s*\)`)
 	for _, match := range namedImport.FindAllStringSubmatch(content, -1) {
 		for _, item := range strings.Split(match[1], ",") {
-			item = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(item), "type "))
-			if item == "" {
-				continue
+			if local := javascriptImportedLocalName(item); local != "" {
+				imports[local] = append(imports[local], match[2])
 			}
-			parts := strings.Fields(item)
-			local := parts[0]
-			if len(parts) >= 3 && parts[len(parts)-2] == "as" {
-				local = parts[len(parts)-1]
-			}
-			imports[local] = append(imports[local], match[2])
 		}
 	}
 	for _, match := range defaultImport.FindAllStringSubmatch(content, -1) {
@@ -5050,7 +5045,33 @@ func importedJavaScriptNames(content string) map[string][]string {
 	for _, match := range namespaceImport.FindAllStringSubmatch(content, -1) {
 		imports[match[1]] = append(imports[match[1]], match[2])
 	}
+	for _, match := range requireNamed.FindAllStringSubmatch(content, -1) {
+		for _, item := range strings.Split(match[1], ",") {
+			if local := javascriptImportedLocalName(item); local != "" {
+				imports[local] = append(imports[local], match[2])
+			}
+		}
+	}
+	for _, match := range requireDefault.FindAllStringSubmatch(content, -1) {
+		imports[match[1]] = append(imports[match[1]], match[2])
+	}
 	return imports
+}
+
+func javascriptImportedLocalName(item string) string {
+	item = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(item), "type "))
+	if item == "" {
+		return ""
+	}
+	if _, after, ok := strings.Cut(item, ":"); ok {
+		return strings.TrimSpace(after)
+	}
+	parts := strings.Fields(item)
+	local := parts[0]
+	if len(parts) >= 3 && parts[len(parts)-2] == "as" {
+		local = parts[len(parts)-1]
+	}
+	return local
 }
 
 func importedPythonNames(content string) map[string][]string {

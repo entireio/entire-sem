@@ -156,12 +156,13 @@ False negatives:
   (WP4.)
 - **Imported-symbol calls — external endpoints implemented for common import
   forms.** Go package calls (`strings.TrimSpace`), Python module/member calls
-  (`json.dumps` and `from json import dumps`), and JS/TS named, default, or
-  namespace import calls (`readFileSync`, `path.join`) now emit `CALLS` to
+  (`json.dumps` and `from json import dumps`), JS/TS named, default, or
+  namespace import calls (`readFileSync`, `path.join`), and literal CommonJS
+  `require(...)` bindings now emit `CALLS` to
   `external:symbol:<module>.<member>` when no local symbol target resolves.
   Remaining: compiler/type-aware package APIs, arbitrary returned receivers
-  beyond explicit same-file factory return types, and dynamic import/module
-  behavior. (WP3/WP4.)
+  beyond explicit same-file factory return types, and computed dynamic
+  import/module behavior. (WP3/WP4.)
 - **Module-root import resolution.** Relative imports (`./util`, `.util`), Go
   module imports covered by `go.mod`, JS/TS package self-imports covered by root
   `package.json` `name`, root `package.json` `exports`/`imports`, root import

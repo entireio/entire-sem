@@ -192,8 +192,11 @@ Tasks:
   Java/Kotlin/Scala package imports are implemented through package declarations
   and source file names; Cargo package names, deterministic `#[path] mod`
   aliases, and straightforward `pub use` re-exports are implemented for local
-  Rust module files. Maven/Gradle classpath modeling and macro-expanded or
-  complex Rust name resolution remain open.
+  Rust module files. JS/TS literal CommonJS `require("...")` and literal
+  dynamic `import("...")` calls emit `IMPORTS`; CommonJS bindings also
+  participate in imported external call resolution. Maven/Gradle classpath
+  modeling, computed dynamic module names, and macro-expanded or complex Rust
+  name resolution remain open.
 - Normalize module/package roots and file-to-module ownership.
 - Resolve relative imports for Go, Python, JS/TS, Rust, Java, C#, PHP.
 - Emit `IMPORTS` edges to symbols/files when resolved, external endpoints when
@@ -204,6 +207,8 @@ Acceptance:
 
 - Fixture imports resolve to local files/modules where possible.
 - External imports remain explicit external records.
+- Literal dynamic imports are represented; computed module names remain
+  unresolved rather than fabricated.
 - Import failures are counted in completeness metrics, not hidden.
 
 ### WP4: Calls And Method Resolution
