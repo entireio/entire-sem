@@ -1763,6 +1763,43 @@ export async function ping(): Promise<unknown> {
 	}
 }
 
+func TestExpressStaticConstantRouterPrefixComposesAndBridgesHTTPClient(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "routes.ts", `const detailRoute = "/:id"
+export const usersRouter = Router()
+
+usersRouter.get(detailRoute, showUser)
+
+export function showUser(): string {
+  return "ok"
+}
+`)
+	writeFile(t, repo, "app.ts", `import { usersRouter } from "./routes"
+
+const apiPrefix = "/api"
+const userPrefix = apiPrefix + "/users"
+
+export function register(app: any): void {
+  app.use(userPrefix, usersRouter)
+}
+
+export async function ping(): Promise<unknown> {
+  return fetch("/api/users/:id")
+}
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasRelationToExternalRoute(snapshot.Relations, "HANDLES_ROUTE", "showUser", "/api/users/:id") {
+		t.Fatalf("missing static-constant imported Express router route: %#v", snapshot.Relations)
+	}
+	if !hasRelationByLastSegment(snapshot.Relations, "CALLS", "ping", "showUser") {
+		t.Fatalf("missing route bridge CALLS ping->showUser: %#v", snapshot.Relations)
+	}
+}
+
 func TestPythonRouteDecoratorsBridgeToHTTPClients(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "app.py", `from fastapi import FastAPI

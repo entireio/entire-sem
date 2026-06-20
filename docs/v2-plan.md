@@ -286,7 +286,8 @@ Tasks:
   route composition. Express-style JS/TS same-block router mounts plus
   same-name, aliased named-import, and namespace-member imported router mounts
   compose `app.use("/prefix", router)` with static `router.get/post/...`
-  registrations. FastAPI/Starlette-style local
+  registrations, including local literal constants in mount prefixes and child
+  router paths. FastAPI/Starlette-style local
   `include_router(router, prefix="/prefix")` mounts compose with static
   `@router.get/post/...` decorators, including locally resolved relative
   imports. Static constant-prefix route expressions such as
@@ -312,7 +313,8 @@ Acceptance:
   route handler/boundary symbol.
 - Dynamic route/client paths do not create high-confidence false edges.
 - Static constant-prefix route paths compose when all parts are local string
-  literals; arbitrary runtime builders remain out of scope.
+  literals, including Express router mount prefixes and child route paths;
+  arbitrary runtime builders remain out of scope.
 
 ### WP7: IaC And Resource Graph
 

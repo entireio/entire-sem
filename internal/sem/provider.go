@@ -5315,6 +5315,7 @@ var (
 	routeLiteralRe      = regexp.MustCompile(`["'](/[A-Za-z0-9_\-/{}:.]*)["']`)
 	staticRouteConcatRe = regexp.MustCompile(`\b([A-Za-z_$][A-Za-z0-9_$]*)\s*\+\s*["']([^"']*)["']`)
 	staticStringConstRe = regexp.MustCompile(`(?m)\b(?:(?:const|let|var)\s+)?([A-Za-z_$][A-Za-z0-9_$]*)\s*(?::[^=\n]+)?=\s*["'](/[A-Za-z0-9_\-/{}:.]*)["']`)
+	staticConcatConstRe = regexp.MustCompile(`(?m)\b(?:(?:const|let|var)\s+)?([A-Za-z_$][A-Za-z0-9_$]*)\s*(?::[^=\n]+)?=\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*\+\s*["']([^"']*)["']`)
 	// routingCallRe marks a line as a route registration: an HTTP-verb or
 	// routing method call, or a mapping decorator, immediately before "(".
 	// Requiring this context next to the path literal avoids treating every
@@ -5369,7 +5370,7 @@ func routeLiteralsForSymbol(path, content, block string, symbol SymbolRecord, sy
 		seen[route] = struct{}{}
 	}
 	if jsLikeExtension(filepath.Ext(path)) {
-		for _, route := range jsRouterComposedRouteLiterals(block) {
+		for _, route := range jsRouterComposedRouteLiterals(block, staticStringConstants(content)) {
 			seen[route] = struct{}{}
 		}
 	}
@@ -5392,6 +5393,23 @@ func staticStringConstants(content string) map[string]string {
 	for _, match := range staticStringConstRe.FindAllStringSubmatch(content, -1) {
 		if len(match) == 3 {
 			constants[match[1]] = match[2]
+		}
+	}
+	for i := 0; i < 3; i++ {
+		changed := false
+		for _, match := range staticConcatConstRe.FindAllStringSubmatch(content, -1) {
+			if len(match) != 4 || constants[match[2]] == "" {
+				continue
+			}
+			value := joinRoutePaths(constants[match[2]], match[3])
+			if constants[match[1]] == value {
+				continue
+			}
+			constants[match[1]] = value
+			changed = true
+		}
+		if !changed {
+			break
 		}
 	}
 	return constants
@@ -5432,9 +5450,9 @@ type pythonRouterRoute struct {
 	Handler  SymbolRecord
 }
 
-func jsRouterComposedRouteLiterals(block string) []string {
-	mounts := jsRouterMounts(block)
-	routes := jsRouterRoutes(block)
+func jsRouterComposedRouteLiterals(block string, constants map[string]string) []string {
+	mounts := jsRouterMounts(block, constants)
+	routes := jsRouterRoutes(block, constants)
 	if len(mounts) == 0 || len(routes) == 0 {
 		return nil
 	}
@@ -5468,26 +5486,54 @@ func jsRouterComposedRouteLiterals(block string) []string {
 	return sortedKeys(seen)
 }
 
-func jsRouterMounts(block string) []jsRouterMount {
-	re := regexp.MustCompile(`\b([A-Za-z_$][\w$]*)\.use\s*\(\s*["']([^"']+)["']\s*,\s*([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)?)`)
+func jsRouterMounts(block string, constants map[string]string) []jsRouterMount {
+	re := regexp.MustCompile(`\b([A-Za-z_$][\w$]*)\.use\s*\(\s*([^,\n]+)\s*,\s*([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)?)`)
 	var mounts []jsRouterMount
 	for _, match := range re.FindAllStringSubmatch(block, -1) {
-		if len(match) == 4 && strings.HasPrefix(match[2], "/") {
-			mounts = append(mounts, jsRouterMount{Receiver: match[1], Prefix: match[2], Target: match[3]})
+		if len(match) != 4 {
+			continue
+		}
+		prefix, ok := staticRouteExpressionValue(match[2], constants)
+		if ok {
+			mounts = append(mounts, jsRouterMount{Receiver: match[1], Prefix: prefix, Target: match[3]})
 		}
 	}
 	return mounts
 }
 
-func jsRouterRoutes(block string) []jsRouterRoute {
-	re := regexp.MustCompile(`(?i)\b([A-Za-z_$][\w$]*)\.(get|post|put|patch|delete|head|options)\s*\(\s*["']([^"']+)["'](?:\s*,\s*([A-Za-z_$][\w$]*))?`)
+func jsRouterRoutes(block string, constants map[string]string) []jsRouterRoute {
+	re := regexp.MustCompile(`(?i)\b([A-Za-z_$][\w$]*)\.(get|post|put|patch|delete|head|options)\s*\(\s*([^,\n)]+)(?:\s*,\s*([A-Za-z_$][\w$]*))?`)
 	var routes []jsRouterRoute
 	for _, match := range re.FindAllStringSubmatch(block, -1) {
-		if len(match) == 5 && strings.HasPrefix(match[3], "/") {
-			routes = append(routes, jsRouterRoute{Receiver: match[1], Route: match[3], Handler: match[4]})
+		if len(match) != 5 {
+			continue
+		}
+		route, ok := staticRouteExpressionValue(match[3], constants)
+		if ok {
+			routes = append(routes, jsRouterRoute{Receiver: match[1], Route: route, Handler: match[4]})
 		}
 	}
 	return routes
+}
+
+func staticRouteExpressionValue(expr string, constants map[string]string) (string, bool) {
+	expr = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(expr), ";"))
+	if expr == "" {
+		return "", false
+	}
+	if (strings.HasPrefix(expr, `"`) && strings.HasSuffix(expr, `"`)) || (strings.HasPrefix(expr, `'`) && strings.HasSuffix(expr, `'`)) {
+		route := strings.Trim(expr, `"'`)
+		return route, strings.HasPrefix(route, "/")
+	}
+	if route := constants[expr]; route != "" {
+		return route, true
+	}
+	for _, match := range staticRouteConcatRe.FindAllStringSubmatch(expr, -1) {
+		if len(match) == 3 && constants[match[1]] != "" {
+			return joinRoutePaths(constants[match[1]], match[2]), true
+		}
+	}
+	return "", false
 }
 
 func splitJavaScriptMember(value string) (string, string) {
@@ -5522,8 +5568,9 @@ func crossFileExpressRouterRelations(files []FileRecord, recordsByFile map[strin
 		if !ok {
 			continue
 		}
-		routesByFile[file.Path] = jsRouterRoutes(content)
-		mountsByFile[file.Path] = jsRouterMounts(content)
+		constants := staticStringConstants(content)
+		routesByFile[file.Path] = jsRouterRoutes(content, constants)
+		mountsByFile[file.Path] = jsRouterMounts(content, constants)
 		importBindingsByFile[file.Path] = importedJavaScriptBindings(content)
 	}
 	var relations []expressRouteRelation
