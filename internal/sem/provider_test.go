@@ -94,6 +94,45 @@ export function handleRoute() {
 	}
 }
 
+func TestGoModuleImportsResolveThroughGoMod(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "go.mod", "module example.com/acme/service\n\ngo 1.22\n")
+	writeFile(t, repo, "cmd/api/main.go", `package main
+
+import "example.com/acme/service/internal/auth"
+
+func main() {
+	auth.Validate()
+}
+`)
+	writeFile(t, repo, "internal/auth/auth.go", `package auth
+
+func Validate() {}
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := fileID(snapshot.Header.RepoKey, "internal/auth/auth.go")
+	var found RelationRecord
+	for _, relation := range snapshot.Relations {
+		if relation.Type == "IMPORTS" && strings.HasSuffix(relation.FromID, "file:cmd/api/main.go") && relation.ToID == target {
+			found = relation
+			break
+		}
+	}
+	if found.FromID == "" {
+		t.Fatalf("missing go.mod resolved import to %s in %#v", target, snapshot.Relations)
+	}
+	if found.Resolution != "import_resolved" || found.RelationScope != "module" || found.TargetKind != "file" || found.Confidence < 0.9 {
+		t.Fatalf("unexpected go.mod import metadata: %#v", found)
+	}
+	if len(found.Evidence) != 1 || found.Evidence[0].Kind != "go_mod_import" {
+		t.Fatalf("unexpected go.mod import evidence: %#v", found.Evidence)
+	}
+}
+
 func TestResourceDependsOnGraph(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "main.tf", `resource "aws_vpc" "main" {

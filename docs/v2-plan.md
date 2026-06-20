@@ -180,9 +180,10 @@ Objective: improve the graph backbone used by call resolution and impact.
 Tasks:
 
 - Build manifest readers for priority ecosystems:
-  `go.mod`, `package.json`, `tsconfig.json`, `pyproject.toml`, `setup.cfg`,
+  `package.json`, `tsconfig.json`, `pyproject.toml`, `setup.cfg`,
   `requirements.txt`, `Cargo.toml`, `pom.xml`, `build.gradle`, `.csproj`,
-  `composer.json`.
+  `composer.json`. `go.mod` module import resolution is implemented for local
+  Go packages present in the snapshot.
 - Normalize module/package roots and file-to-module ownership.
 - Resolve relative imports for Go, Python, JS/TS, Rust, Java, C#, PHP.
 - Emit `IMPORTS` edges to symbols/files when resolved, external endpoints when

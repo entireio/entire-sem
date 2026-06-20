@@ -1422,6 +1422,7 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 			handledRoutes[route] = struct{}{}
 		}
 	}
+	manifestImports := buildManifestImportResolver(files, readContent)
 
 	for _, file := range files {
 		if !profileNeedsPerFileScan(spec) {
@@ -1447,6 +1448,26 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 					TargetKind:    "file",
 					Evidence: []Evidence{{
 						Kind:     "import_statement",
+						FilePath: file.Path,
+						Detail:   imported,
+					}},
+					WarningCodes: []string{},
+				})
+				continue
+			}
+			if resolved, ok := manifestImports.resolve(file.Path, imported); ok {
+				emit(RelationRecord{
+					RecordType:    "relation",
+					FromID:        fromID,
+					ToID:          fileID(repoKey, resolved.Path),
+					Type:          "IMPORTS",
+					Confidence:    resolved.Confidence,
+					Reason:        resolved.Reason,
+					RelationScope: resolved.Scope,
+					Resolution:    "import_resolved",
+					TargetKind:    "file",
+					Evidence: []Evidence{{
+						Kind:     resolved.EvidenceKind,
 						FilePath: file.Path,
 						Detail:   imported,
 					}},
@@ -3068,8 +3089,8 @@ func isRelativeImportSpec(importingPath, spec string) bool {
 // resolveLocalImport maps a relative import spec to a known repo file path. It
 // returns the resolved path and true when the import points at a file present
 // in the snapshot, so the IMPORTS edge can target a local file record instead
-// of an external endpoint. Only relative specs are resolved here; module-root
-// resolution via manifests is a later WP3 step.
+// of an external endpoint. Module-root resolution is handled by
+// manifestImportResolver after this relative-import pass.
 func resolveLocalImport(importingPath, spec string, knownFiles map[string]bool) (string, bool) {
 	switch strings.ToLower(filepath.Ext(importingPath)) {
 	case ".js", ".jsx", ".ts", ".tsx":
@@ -3118,6 +3139,89 @@ func resolveLocalImport(importingPath, spec string, knownFiles map[string]bool) 
 	default:
 		return "", false
 	}
+}
+
+type manifestImportResolver struct {
+	goModule   string
+	goPackages map[string]string
+}
+
+type manifestImportResolution struct {
+	Path         string
+	Confidence   float64
+	Scope        string
+	Reason       string
+	EvidenceKind string
+}
+
+func buildManifestImportResolver(files []FileRecord, readContent contentReader) manifestImportResolver {
+	resolver := manifestImportResolver{goPackages: map[string]string{}}
+	if content, ok := readContent("go.mod"); ok {
+		resolver.goModule = parseGoModulePath(content)
+	}
+	if resolver.goModule == "" {
+		return resolver
+	}
+	var paths []string
+	for _, file := range files {
+		if strings.EqualFold(filepath.Ext(file.Path), ".go") {
+			paths = append(paths, filepath.ToSlash(file.Path))
+		}
+	}
+	sort.Slice(paths, func(i, j int) bool {
+		leftTest := strings.HasSuffix(paths[i], "_test.go")
+		rightTest := strings.HasSuffix(paths[j], "_test.go")
+		if leftTest != rightTest {
+			return !leftTest
+		}
+		return paths[i] < paths[j]
+	})
+	for _, path := range paths {
+		dir := filepath.ToSlash(filepath.Dir(path))
+		importPath := resolver.goModule
+		if dir != "." {
+			importPath += "/" + dir
+		}
+		if _, exists := resolver.goPackages[importPath]; !exists {
+			resolver.goPackages[importPath] = path
+		}
+	}
+	return resolver
+}
+
+func parseGoModulePath(content string) string {
+	scanner := bufio.NewScanner(strings.NewReader(content))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "//") {
+			continue
+		}
+		if strings.HasPrefix(line, "module ") {
+			return strings.Trim(strings.TrimSpace(strings.TrimPrefix(line, "module ")), `"`)
+		}
+	}
+	return ""
+}
+
+func (resolver manifestImportResolver) resolve(importingPath, spec string) (manifestImportResolution, bool) {
+	if strings.ToLower(filepath.Ext(importingPath)) != ".go" {
+		return manifestImportResolution{}, false
+	}
+	spec = strings.TrimSpace(spec)
+	if spec == "" || resolver.goModule == "" || (spec != resolver.goModule && !strings.HasPrefix(spec, resolver.goModule+"/")) {
+		return manifestImportResolution{}, false
+	}
+	path, ok := resolver.goPackages[spec]
+	if !ok || path == filepath.ToSlash(importingPath) {
+		return manifestImportResolution{}, false
+	}
+	return manifestImportResolution{
+		Path:         path,
+		Confidence:   0.93,
+		Scope:        "module",
+		Reason:       "Go module import resolved through go.mod",
+		EvidenceKind: "go_mod_import",
+	}, true
 }
 
 func importsFor(path, content string) []string {

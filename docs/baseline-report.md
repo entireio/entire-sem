@@ -63,7 +63,8 @@ Confidence bands follow the v2-plan schema section (`0.90-1.00 exact`,
 `0.70-0.89 strong`, `0.40-0.69 heuristic`, `<0.40 weak`).
 
 - Structural: `DEFINES`, `CONTAINS` (1.0).
-- Imports: `IMPORTS` (0.8; relative imports resolve to local files at 0.95).
+- Imports: `IMPORTS` (0.8; relative imports resolve to local files at 0.95;
+  Go module imports resolved through `go.mod` resolve locally at 0.93).
 - Calls: `CALLS` — same-file 0.92, imported 0.86, type-inferred receiver
   0.85-0.9, globally-unique name 0.68.
 - OO/type: `EXTENDS`, `IMPLEMENTS` (0.9; C# 0.7 heuristic), `OVERRIDES` (0.85),
@@ -130,11 +131,12 @@ False negatives:
 - **Imported-symbol calls.** Calls into imported modules (`strings.TrimSpace`,
   `json.dumps`, `readFileSync`) produce no `CALLS` edge to an external endpoint.
   (WP3/WP4.)
-- **Module-root import resolution.** Relative imports (`./util`, `.util`) now
-  resolve to local file records (`resolution: import_resolved`,
-  `target_kind: file`). Non-relative local imports that depend on a manifest
-  module root (`go.mod` path, `package.json` name, `tsconfig` paths) are not yet
-  resolved and remain external. (WP3 follow-up: manifest readers.)
+- **Module-root import resolution.** Relative imports (`./util`, `.util`) and
+  Go module imports covered by `go.mod` now resolve to local file records
+  (`resolution: import_resolved`, `target_kind: file`). Non-relative local
+  imports that depend on JS/TS, Python, Java, or other ecosystem manifests
+  (`package.json` name, `tsconfig` paths, `pyproject.toml`, Maven/Gradle) are
+  not yet resolved and remain external.
 - **Field-access relations.** `READS_FIELD`/`WRITES_FIELD`/`ACCESSES` are now
   emitted for `receiver.field` accesses resolved through the receiver's type
   (this/self, Go method receiver, or constructor-assigned local) to a known

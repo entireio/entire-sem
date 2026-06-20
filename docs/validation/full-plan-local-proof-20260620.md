@@ -18,6 +18,8 @@ go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go
 - Full repository tests passed.
 - Capability output reports 182 language/filetype labels and 201 deterministic
   suffixes/extensions.
+- Go module imports resolve through `go.mod` to local package files with
+  `import_resolved` metadata.
 - Kubernetes resource extraction and Service-selector dependency tests pass
   (`Service` -> matching workload resource by selector labels).
 - Kubernetes resource config tests pass for common container image,
