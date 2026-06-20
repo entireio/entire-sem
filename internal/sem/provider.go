@@ -3008,6 +3008,14 @@ func kubernetesResourceReferences(content string) []resourceReference {
 	for _, match := range regexp.MustCompile(`(?im)^\s*volumeName:\s*([A-Za-z0-9_.-]+)\s*$`).FindAllStringSubmatch(content, -1) {
 		add("persistentvolume", match[1], "kubernetes_persistent_volume", 0.78)
 	}
+	if kubernetesManifestHasAnyKind(content, "PersistentVolumeClaim") {
+		for _, ref := range kubernetesNamedRefBlockReferences(content, "dataSource", "kubernetes_pvc_data_source_ref", 0.82, kubernetesExplicitReferenceKind) {
+			add(ref.Kind, ref.Name, ref.EvidenceKind, ref.Confidence)
+		}
+		for _, ref := range kubernetesNamedRefBlockReferences(content, "dataSourceRef", "kubernetes_pvc_data_source_ref", 0.82, kubernetesExplicitReferenceKind) {
+			add(ref.Kind, ref.Name, ref.EvidenceKind, ref.Confidence)
+		}
+	}
 	for _, match := range regexp.MustCompile(`(?im)^\s*ingressClassName:\s*([A-Za-z0-9_.-]+)\s*$`).FindAllStringSubmatch(content, -1) {
 		add("ingressclass", match[1], "kubernetes_ingress_class", 0.8)
 	}

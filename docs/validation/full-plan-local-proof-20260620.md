@@ -213,7 +213,8 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
   backends, Gateway API route backend refs, Gateway API route parent Gateway
   refs, Gateway listener `certificateRefs`, Gateway API policy `targetRef`/
   `targetRefs`, Ingress `ingressClassName` refs, PVC `storageClassName` refs,
-  PVC `volumeName` refs, pod `runtimeClassName` refs, pod
+  PVC `volumeName` refs, PVC `dataSource`/`dataSourceRef` refs, pod
+  `runtimeClassName` refs, pod
   `priorityClassName` refs, and HPA scale targets emit exact local
   `RESOURCE_DEPENDS_ON` edges when the referenced resource manifests are
   present in the snapshot.

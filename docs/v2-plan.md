@@ -449,7 +449,8 @@ Open:
   ConfigMap/Secret/service-account/PVC/RBAC/owner/Ingress/HPA/Gateway API
   HTTPRoute backend, parent Gateway, and Gateway listener certificate
   references, IngressClass, StorageClass, and PersistentVolume references,
-  RuntimeClass references, PriorityClass references, Service selector matches,
+  PVC dataSource/dataSourceRef references, RuntimeClass references,
+  PriorityClass references, Service selector matches,
   PodDisruptionBudget selector and matchExpression matches, NetworkPolicy podSelector and
   matchExpression matches, Prometheus Operator ServiceMonitor selector and
   matchExpression matches, and Prometheus Operator PodMonitor selector and
