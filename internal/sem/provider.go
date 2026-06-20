@@ -2748,6 +2748,9 @@ func kubernetesResourceReferences(content string) []resourceReference {
 			add(ref.Kind, ref.Name, ref.EvidenceKind, ref.Confidence)
 		}
 	}
+	for _, ref := range kubernetesRolloutsAnalysisTemplateReferences(content) {
+		add(ref.Kind, ref.Name, ref.EvidenceKind, ref.Confidence)
+	}
 	if kubernetesManifestHasAnyKind(content, "PipelineRun", "TaskRun", "Pipeline") {
 		for _, ref := range kubernetesNamedRefBlockReferences(content, "pipelineRef", "kubernetes_tekton_pipeline_ref", 0.84, kubernetesDefaultReferenceKind("pipeline")) {
 			add(ref.Kind, ref.Name, ref.EvidenceKind, ref.Confidence)
@@ -2917,6 +2920,62 @@ func kubernetesWorkflowTemplateReferenceKind(fields map[string]string) string {
 		return "clusterworkflowtemplate"
 	}
 	return "workflowtemplate"
+}
+
+func kubernetesRolloutsAnalysisTemplateReferences(content string) []resourceReference {
+	if !kubernetesManifestHasAnyKind(content, "Rollout", "AnalysisRun", "Experiment") {
+		return nil
+	}
+	lines := strings.Split(content, "\n")
+	var refs []resourceReference
+	for i := 0; i < len(lines); i++ {
+		key, ok := yamlLineKey(lines[i])
+		if !ok || key != "templates" {
+			continue
+		}
+		parentIndent := yamlIndent(lines[i])
+		fields := map[string]string{}
+		flush := func() {
+			name := strings.Trim(strings.TrimSpace(fields["templateName"]), `"'`)
+			if name == "" {
+				fields = map[string]string{}
+				return
+			}
+			kind := "analysistemplate"
+			if strings.EqualFold(strings.Trim(strings.TrimSpace(fields["clusterScope"]), `"'`), "true") {
+				kind = "clusteranalysistemplate"
+			}
+			refs = append(refs, resourceReference{
+				Kind:         kind,
+				Name:         name,
+				EvidenceKind: "kubernetes_argo_rollouts_analysis_template_ref",
+				Confidence:   0.84,
+			})
+			fields = map[string]string{}
+		}
+		for j := i + 1; j < len(lines); j++ {
+			line := lines[j]
+			if yamlIgnoreLine(line) {
+				continue
+			}
+			indent := yamlIndent(line)
+			if indent <= parentIndent {
+				break
+			}
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "- ") {
+				flush()
+				trimmed = strings.TrimSpace(strings.TrimPrefix(trimmed, "- "))
+			}
+			childKey, ok := yamlLineKey(trimmed)
+			if !ok {
+				continue
+			}
+			fields[childKey] = yamlLineValue(trimmed)
+		}
+		flush()
+	}
+	return refs
 }
 
 func kubernetesManifestHasAnyKind(content string, kinds ...string) bool {

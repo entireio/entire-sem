@@ -1526,6 +1526,40 @@ kind: ClusterTask
 metadata:
   name: kaniko
 `)
+	writeFile(t, repo, "k8s/rollout.yaml", `apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: api
+spec:
+  strategy:
+    canary:
+      analysis:
+        templates:
+          - templateName: success-rate
+            args:
+              - name: service-name
+                value: api
+          - templateName: global-slo
+            clusterScope: true
+`)
+	writeFile(t, repo, "k8s/analysis-run.yaml", `apiVersion: argoproj.io/v1alpha1
+kind: AnalysisRun
+metadata:
+  name: manual-analysis
+spec:
+  templates:
+    - templateName: success-rate
+`)
+	writeFile(t, repo, "k8s/analysis-templates.yaml", `apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: success-rate
+---
+apiVersion: argoproj.io/v1alpha1
+kind: ClusterAnalysisTemplate
+metadata:
+  name: global-slo
+`)
 
 	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
 	if err != nil {
@@ -1538,6 +1572,9 @@ metadata:
 		{"CronWorkflow.nightly-report", "ClusterWorkflowTemplate.shared-template"},
 		{"PipelineRun.api-build", "Pipeline.build-pipeline"},
 		{"Pipeline.build-pipeline", "ClusterTask.kaniko"},
+		{"Rollout.api", "AnalysisTemplate.success-rate"},
+		{"Rollout.api", "ClusterAnalysisTemplate.global-slo"},
+		{"AnalysisRun.manual-analysis", "AnalysisTemplate.success-rate"},
 	} {
 		if !hasRelationByLastSegment(snapshot.Relations, "RESOURCE_DEPENDS_ON", edge[0], edge[1]) {
 			t.Fatalf("missing custom-controller dependency %s -> %s in %#v", edge[0], edge[1], snapshot.Relations)

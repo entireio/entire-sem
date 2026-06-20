@@ -178,7 +178,8 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
   emit exact local edges to `TriggerAuthentication` by default and to
   `ClusterTriggerAuthentication` when the ref carries that explicit kind.
 - cert-manager `issuerRef`, External Secrets `secretStoreRef`, Argo
-  `workflowTemplateRef`/`templateRef`, and Tekton `pipelineRef`/`taskRef`
+  `workflowTemplateRef`/`templateRef`, Argo Rollouts `templateName`
+  AnalysisTemplate refs, and Tekton `pipelineRef`/`taskRef`
   custom-controller references emit exact local `RESOURCE_DEPENDS_ON` edges
   when the referenced resource manifests are present in the snapshot.
 - Flux CD `sourceRef`, `chartRef`, and same-kind `dependsOn` references emit
@@ -308,6 +309,9 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
   - `bench/results/result-1781971341.json`: Go/gin, syntax-only, 28,618 LOC,
     141,372 LOC/s, max RSS 28,852,224 bytes, estimated output 1,902,633
     bytes; run after GraphQL schema root field boundary extraction.
+  - `bench/results/result-1781971817.json`: Go/gin, syntax-only, 28,618 LOC,
+    146,399 LOC/s, max RSS 29,130,752 bytes, estimated output 1,902,634
+    bytes; run after Argo Rollouts AnalysisTemplate reference extraction.
   - `bench/results/result-1781944479.json`: Go/gin, syntax-only, 28,618 LOC,
     154,533 LOC/s, max RSS 27,115,520 bytes, output 1,938,906 bytes.
   - `bench/results/result-1781944927.json`: Go/gin, syntax-only, 28,618 LOC,

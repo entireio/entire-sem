@@ -410,7 +410,7 @@ Open:
   provider snapshot. Workload selector matching includes CronJob job-template
   labels and Rollout-style workload labels. Custom-controller coverage also
   includes KEDA authentication refs, cert-manager issuer refs, External Secrets secret-store refs, Argo
-  WorkflowTemplate refs, Tekton Pipeline/Task refs, Flux CD source, chart, and
+  WorkflowTemplate refs, Argo Rollouts AnalysisTemplate refs, Tekton Pipeline/Task refs, Flux CD source, chart, and
   dependsOn refs, Crossplane ProviderConfig/Composition/resource refs, and Istio
   VirtualService/DestinationRule refs.
   Remaining Kubernetes resource gaps include less common Kubernetes controllers
