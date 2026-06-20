@@ -450,8 +450,8 @@ Open:
   HTTPRoute backend, parent Gateway, and Gateway listener certificate
   references, IngressClass, StorageClass, and PersistentVolume references,
   PVC dataSource/dataSourceRef references, VolumeSnapshot PVC source
-  references, VolumeSnapshotContent snapshot references, RuntimeClass references,
-  PriorityClass references, Service selector matches,
+  references, VolumeSnapshotContent snapshot references, metadata Namespace
+  references, RuntimeClass references, PriorityClass references, Service selector matches,
   PodDisruptionBudget selector and matchExpression matches, NetworkPolicy podSelector and
   matchExpression matches, Prometheus Operator ServiceMonitor selector and
   matchExpression matches, and Prometheus Operator PodMonitor selector and

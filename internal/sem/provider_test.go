@@ -1021,6 +1021,7 @@ func TestKubernetesResourceDependencies(t *testing.T) {
 kind: Deployment
 metadata:
   name: api
+  namespace: web
 spec:
   template:
     spec:
@@ -1066,6 +1067,11 @@ spec:
                 name: api-config
             - secretRef:
                 name: api-env
+`)
+	writeFile(t, repo, "k8s/namespace.yaml", `apiVersion: v1
+kind: Namespace
+metadata:
+  name: web
 `)
 	writeFile(t, repo, "k8s/configmap.yaml", `apiVersion: v1
 kind: ConfigMap
@@ -1200,6 +1206,7 @@ metadata:
 		"external:config:kubernetes/persistentvolume/api-cache-pv",
 		"external:config:kubernetes/runtimeclass/sandboxed",
 		"external:config:kubernetes/priorityclass/critical",
+		"external:config:kubernetes/namespace/web",
 	} {
 		if !hasRelationTo(snapshot.Relations, "RESOURCE_DEPENDS_ON", target) {
 			t.Fatalf("missing Kubernetes dependency to %s in %#v", target, snapshot.Relations)
@@ -1227,6 +1234,7 @@ metadata:
 		"PersistentVolumeClaim.api-cache",
 		"RuntimeClass.sandboxed",
 		"PriorityClass.critical",
+		"Namespace.web",
 	} {
 		if !hasRelationByLastSegment(snapshot.Relations, "RESOURCE_DEPENDS_ON", "Deployment.api", target) {
 			t.Fatalf("missing exact Kubernetes resource dependency Deployment.api -> %s in %#v", target, snapshot.Relations)

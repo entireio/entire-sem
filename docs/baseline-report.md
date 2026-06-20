@@ -102,8 +102,9 @@ Confidence bands follow the v2-plan schema section (`0.90-1.00 exact`,
   Gateway API route backend refs, parent Gateway refs, and listener
   certificateRefs, IngressClass refs, StorageClass refs, PersistentVolume refs,
   PVC dataSource/dataSourceRef refs, VolumeSnapshot PVC source refs,
-  VolumeSnapshotContent snapshot refs, RuntimeClass refs, PriorityClass refs, projected
-  ConfigMap/Secret volume refs, ConfigMap/Secret key refs, image pull secrets,
+  VolumeSnapshotContent snapshot refs, metadata Namespace refs,
+  RuntimeClass refs, PriorityClass refs, projected ConfigMap/Secret volume
+  refs, ConfigMap/Secret key refs, image pull secrets,
   Service selectors, PodDisruptionBudget selectors, NetworkPolicy pod
   selectors, ServiceMonitor selectors, and PodMonitor selectors, including
   CronJob job-template label targets and Argo Rollout-style workload targets,

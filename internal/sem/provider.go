@@ -2972,6 +2972,11 @@ func kubernetesResourceReferences(content string) []resourceReference {
 		}
 		refs = append(refs, resourceReference{Kind: strings.ToLower(kind), Name: name, EvidenceKind: evidence, Confidence: confidence})
 	}
+	if metadata := yamlMapAtPath(content, "metadata"); len(metadata) > 0 {
+		if namespace := metadata["namespace"]; namespace != "" {
+			add("namespace", namespace, "kubernetes_metadata_namespace", 0.84)
+		}
+	}
 	for _, match := range regexp.MustCompile(`(?is)\bconfigMapRef:\s*\n(?:\s+[A-Za-z0-9_-]+:\s*[^\n]*\n)*\s+name:\s*([A-Za-z0-9_.-]+)`).FindAllStringSubmatch(content, -1) {
 		add("configmap", match[1], "kubernetes_configmap_ref", 0.8)
 	}
