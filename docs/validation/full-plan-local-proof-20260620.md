@@ -222,8 +222,9 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
 - Kubernetes resource config tests pass for common container image,
   environment-variable, and port declarations emitted as `CONFIGURES` facts.
 - Docker Compose service extraction emits service resource symbols, exact
-  service-to-service `depends_on` edges, and common image/env/port
-  `CONFIGURES` facts.
+  service-to-service `depends_on`, `links`, `extends.service`, and
+  `network_mode: service:<name>` edges, and common image/env/port `CONFIGURES`
+  facts.
 - Static HTTP client calls bridge to exact local route handlers through shared
   route endpoints as direct `CALLS` edges.
 - Deterministic static computed JS/TS route expressions, including
@@ -376,6 +377,9 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
   - `bench/results/result-1781975273.json`: Go/gin, syntax-only, 28,618 LOC,
     149,410 LOC/s, max RSS 29,556,736 bytes, estimated output 1,902,635
     bytes; run after SvelteKit route-boundary extraction.
+  - `bench/results/result-1781975430.json`: Go/gin, syntax-only, 28,618 LOC,
+    153,893 LOC/s, max RSS 27,672,576 bytes, estimated output 1,902,641
+    bytes; run after Docker Compose service reference dependency extraction.
   - `bench/results/result-1781973208.json`: Go/gin, syntax-only, 28,618 LOC,
     151,226 LOC/s, max RSS 27,066,368 bytes, estimated output 1,902,628
     bytes; run after Go router group-prefix extraction.

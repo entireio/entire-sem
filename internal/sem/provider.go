@@ -3855,7 +3855,7 @@ func composeResourceDependsOnRelations(recordsByFile map[string][]SymbolRecord, 
 			}
 			body := symbolBlockFromLines(lines, symbol)
 			for _, dep := range composeServiceDependencyRefs(body) {
-				target, ok := services[dep]
+				target, ok := services[dep.Name]
 				if !ok || target.ID == symbol.ID {
 					continue
 				}
@@ -3864,17 +3864,17 @@ func composeResourceDependsOnRelations(recordsByFile map[string][]SymbolRecord, 
 					FromID:        symbol.ID,
 					ToID:          target.ID,
 					Type:          "RESOURCE_DEPENDS_ON",
-					Confidence:    0.9,
-					Reason:        "Docker Compose service depends_on references another service",
+					Confidence:    dep.Confidence,
+					Reason:        dep.Reason,
 					RelationScope: "file",
 					Resolution:    "exact",
 					TargetKind:    "symbol",
 					Evidence: []Evidence{{
-						Kind:      "compose_depends_on",
+						Kind:      dep.EvidenceKind,
 						FilePath:  symbol.FilePath,
 						StartLine: symbol.StartLine,
 						EndLine:   symbol.EndLine,
-						Detail:    composeServiceName(symbol) + " -> " + dep,
+						Detail:    composeServiceName(symbol) + " -> " + dep.Name,
 					}},
 					WarningCodes: []string{},
 				})
@@ -3884,14 +3884,72 @@ func composeResourceDependsOnRelations(recordsByFile map[string][]SymbolRecord, 
 	return relations
 }
 
-func composeServiceDependencyRefs(block string) []string {
-	refs := composeBlockListValues(block, "depends_on")
-	refs = append(refs, composeBlockMapKeys(block, "depends_on")...)
-	for i := range refs {
-		refs[i] = strings.Trim(strings.TrimSpace(refs[i]), `"'`)
+type composeServiceDependencyRef struct {
+	Name         string
+	Reason       string
+	EvidenceKind string
+	Confidence   float64
+}
+
+func composeServiceDependencyRefs(block string) []composeServiceDependencyRef {
+	var refs []composeServiceDependencyRef
+	add := func(name, reason, evidenceKind string, confidence float64) {
+		name = normalizeComposeServiceReference(name)
+		if name == "" {
+			return
+		}
+		refs = append(refs, composeServiceDependencyRef{
+			Name:         name,
+			Reason:       reason,
+			EvidenceKind: evidenceKind,
+			Confidence:   confidence,
+		})
 	}
-	sort.Strings(refs)
-	return dedupeStrings(refs)
+	for _, value := range composeBlockListValues(block, "depends_on") {
+		add(value, "Docker Compose service depends_on references another service", "compose_depends_on", 0.9)
+	}
+	for _, value := range composeBlockMapKeys(block, "depends_on") {
+		add(value, "Docker Compose service depends_on references another service", "compose_depends_on", 0.9)
+	}
+	for _, value := range composeBlockListValues(block, "links") {
+		add(value, "Docker Compose service link references another service", "compose_link", 0.78)
+	}
+	if value := composeNestedMapScalarValue(block, "extends", "service"); value != "" {
+		add(value, "Docker Compose service extends another service", "compose_extends", 0.82)
+	}
+	if value := composeBlockScalarValue(block, "network_mode"); strings.HasPrefix(strings.TrimSpace(value), "service:") {
+		add(strings.TrimPrefix(strings.TrimSpace(value), "service:"), "Docker Compose service network_mode references another service", "compose_network_mode", 0.76)
+	}
+	return dedupeComposeServiceDependencyRefs(refs)
+}
+
+func normalizeComposeServiceReference(value string) string {
+	value = strings.Trim(strings.TrimSpace(value), `"'`)
+	value = strings.TrimPrefix(value, "service:")
+	if before, _, ok := strings.Cut(value, ":"); ok {
+		value = before
+	}
+	return strings.Trim(strings.TrimSpace(value), `"'`)
+}
+
+func dedupeComposeServiceDependencyRefs(refs []composeServiceDependencyRef) []composeServiceDependencyRef {
+	seen := map[string]bool{}
+	var out []composeServiceDependencyRef
+	for _, ref := range refs {
+		key := ref.Name + "\x00" + ref.EvidenceKind
+		if ref.Name == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, ref)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Name != out[j].Name {
+			return out[i].Name < out[j].Name
+		}
+		return out[i].EvidenceKind < out[j].EvidenceKind
+	})
+	return out
 }
 
 func firstSymbol(symbols []SymbolRecord, language string, preferredNames ...string) (SymbolRecord, bool) {
@@ -4102,6 +4160,50 @@ func composeBlockMapKeys(block, key string) []string {
 	}
 	sort.Strings(keys)
 	return dedupeStrings(keys)
+}
+
+func composeBlockScalarValue(block, key string) string {
+	for _, line := range strings.Split(block, "\n") {
+		if yamlIgnoreLine(line) {
+			continue
+		}
+		lineKey, hasKey := yamlLineKey(line)
+		if !hasKey || lineKey != key {
+			continue
+		}
+		return strings.Trim(strings.TrimSpace(yamlLineValue(line)), `"'`)
+	}
+	return ""
+}
+
+func composeNestedMapScalarValue(block, key, childKey string) string {
+	lines := strings.Split(block, "\n")
+	inBlock := false
+	blockIndent := 0
+	for _, line := range lines {
+		if yamlIgnoreLine(line) {
+			continue
+		}
+		indent := yamlIndent(line)
+		lineKey, hasKey := yamlLineKey(line)
+		if inBlock && indent <= blockIndent {
+			inBlock = false
+		}
+		if hasKey && lineKey == key {
+			value := strings.Trim(strings.TrimSpace(yamlLineValue(line)), `"'`)
+			if value != "" && childKey == "" {
+				return value
+			}
+			inBlock = true
+			blockIndent = indent
+			continue
+		}
+		if !inBlock || !hasKey || indent <= blockIndent || lineKey != childKey {
+			continue
+		}
+		return strings.Trim(strings.TrimSpace(yamlLineValue(line)), `"'`)
+	}
+	return ""
 }
 
 // hclReferenceableName maps a block symbol name to the form used to reference it

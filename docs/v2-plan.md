@@ -400,9 +400,9 @@ Delivered:
   `scaleTargetRef` entries resolve to Deployment targets by convention.
 - Kustomize manifests emit overlay/resource sections plus external
   dependencies for listed resources, patches, and components.
-- Docker Compose manifests emit service resources, exact `depends_on`
-  `RESOURCE_DEPENDS_ON` edges between services, and common image/env/port
-  `CONFIGURES` facts.
+- Docker Compose manifests emit service resources, exact `depends_on`, `links`,
+  `extends.service`, and `network_mode: service:<name>` `RESOURCE_DEPENDS_ON`
+  edges between services, and common image/env/port `CONFIGURES` facts.
 - Koa/@koa-router `router.routes()` mounts, including static `koa-mount`
   prefixes, compose with static router registrations and bridge exact matching
   HTTP clients to local handlers.

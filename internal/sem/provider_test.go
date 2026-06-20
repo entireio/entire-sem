@@ -1965,6 +1965,15 @@ func TestDockerComposeServiceDependenciesAndConfig(t *testing.T) {
     image: postgres:16
   redis:
     image: redis:7
+  base:
+    image: example/base:latest
+  worker:
+    image: example/worker:latest
+    links:
+      - redis:cache
+    extends:
+      service: base
+    network_mode: "service:db"
 `)
 
 	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
@@ -1972,7 +1981,7 @@ func TestDockerComposeServiceDependenciesAndConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, service := range []string{"compose.service.api", "compose.service.db", "compose.service.redis"} {
+	for _, service := range []string{"compose.service.api", "compose.service.db", "compose.service.redis", "compose.service.base", "compose.service.worker"} {
 		found := false
 		for _, symbol := range snapshot.Symbols {
 			if symbol.Kind == "resource" && symbol.QualifiedName == service {
@@ -1989,6 +1998,15 @@ func TestDockerComposeServiceDependenciesAndConfig(t *testing.T) {
 	}
 	if !hasRelationByLastSegment(snapshot.Relations, "RESOURCE_DEPENDS_ON", "compose.service.api", "compose.service.redis") {
 		t.Fatalf("missing api->redis Compose dependency in %#v", snapshot.Relations)
+	}
+	if !hasRelationByLastSegment(snapshot.Relations, "RESOURCE_DEPENDS_ON", "compose.service.worker", "compose.service.redis") {
+		t.Fatalf("missing worker->redis Compose link dependency in %#v", snapshot.Relations)
+	}
+	if !hasRelationByLastSegment(snapshot.Relations, "RESOURCE_DEPENDS_ON", "compose.service.worker", "compose.service.base") {
+		t.Fatalf("missing worker->base Compose extends dependency in %#v", snapshot.Relations)
+	}
+	if !hasRelationByLastSegment(snapshot.Relations, "RESOURCE_DEPENDS_ON", "compose.service.worker", "compose.service.db") {
+		t.Fatalf("missing worker->db Compose network_mode dependency in %#v", snapshot.Relations)
 	}
 	for _, target := range []string{
 		"external:config:compose/service/api",
