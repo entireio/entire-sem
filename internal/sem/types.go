@@ -285,6 +285,7 @@ var (
 	spawnCallRe         = regexp.MustCompile(`\b(?:Promise\.all|Promise\.race|asyncio\.gather|tokio::spawn|Task\.Run)\s*\([^)]*?([A-Za-z_]\w*)\s*\(`)
 	returnCallRe        = regexp.MustCompile(`(?m)\breturn\s+(?:await\s+)?([A-Za-z_$][\w$]*)\s*\(`)
 	ternaryReturnCallRe = regexp.MustCompile(`(?m)\breturn\s+[^?\n]+?\?\s*(?:await\s+)?([A-Za-z_$][\w$]*)\s*\([^:\n]*\)\s*:\s*(?:await\s+)?([A-Za-z_$][\w$]*)\s*\(`)
+	pythonIfReturnRe    = regexp.MustCompile(`(?m)\breturn\s+(?:await\s+)?([A-Za-z_$][\w$]*)\s*\([^\n]*?\)\s+if\s+[^\n]+?\s+else\s+(?:await\s+)?([A-Za-z_$][\w$]*)\s*\(`)
 	assignCallRe        = regexp.MustCompile(`(?m)\b(?:const|let|var)?\s*\$?([A-Za-z_$][\w$]*)\s*(?:\:\s*[^=\n]+)?\s*(?::=|=)\s*(?:await\s+)?([A-Za-z_$][\w$]*)\s*\(`)
 	returnVarRe         = regexp.MustCompile(`(?m)\breturn\s+\$?([A-Za-z_$][\w$]*)\b`)
 	aliasAssignRe       = regexp.MustCompile(`(?m)\b(?:const|let|var)?\s*\$?([A-Za-z_$][\w$]*)\s*(?:\:\s*[^=\n]+)?\s*(?::=|=)\s*\$?([A-Za-z_$][\w$]*)\b`)
@@ -311,12 +312,34 @@ func asyncCallNames(block string) []string {
 func returnFlowCallNames(block string) []string {
 	stripped := stripCodeLiteralsAndComments(block)
 	seen := map[string]struct{}{}
-	for _, match := range returnCallRe.FindAllStringSubmatch(stripped, -1) {
-		if len(match) > 1 && match[1] != "" {
-			seen[strings.TrimPrefix(match[1], "$")] = struct{}{}
+	for _, match := range returnCallRe.FindAllStringSubmatchIndex(stripped, -1) {
+		if len(match) < 4 || match[2] < 0 || match[3] < 0 {
+			continue
+		}
+		if isPythonConditionalReturnLine(stripped, match[0]) {
+			continue
+		}
+		name := stripped[match[2]:match[3]]
+		if name != "" {
+			seen[strings.TrimPrefix(name, "$")] = struct{}{}
 		}
 	}
 	return sortedStringSet(seen)
+}
+
+func isPythonConditionalReturnLine(block string, pos int) bool {
+	if pos < 0 || pos >= len(block) {
+		return false
+	}
+	start := strings.LastIndex(block[:pos], "\n") + 1
+	end := strings.Index(block[pos:], "\n")
+	if end < 0 {
+		end = len(block)
+	} else {
+		end += pos
+	}
+	line := block[start:end]
+	return strings.Contains(line, " if ") && strings.Contains(line, " else ")
 }
 
 type returnFlowCall struct {
@@ -394,30 +417,33 @@ func returnFlowCalls(block, signature string) []returnFlowCall {
 }
 
 func ternaryReturnFlows(block string) []returnFlowCall {
-	matches := ternaryReturnCallRe.FindAllStringSubmatch(block, -1)
-	if len(matches) == 0 {
-		return nil
-	}
 	seen := map[string]bool{}
 	var flows []returnFlowCall
-	for _, match := range matches {
-		if len(match) != 3 {
-			continue
-		}
-		for _, name := range []string{match[1], match[2]} {
-			name = strings.TrimPrefix(name, "$")
-			if name == "" || seen[name] {
+	addMatches := func(re *regexp.Regexp) {
+		for _, match := range re.FindAllStringSubmatch(block, -1) {
+			if len(match) != 3 {
 				continue
 			}
-			seen[name] = true
-			flows = append(flows, returnFlowCall{
-				Name:         name,
-				Reason:       "callee return value returned through conditional expression",
-				EvidenceKind: "conditional_return_flow",
-				Detail:       name,
-				Direction:    "callee_to_caller",
-			})
+			for _, name := range []string{match[1], match[2]} {
+				name = strings.TrimPrefix(name, "$")
+				if name == "" || seen[name] {
+					continue
+				}
+				seen[name] = true
+				flows = append(flows, returnFlowCall{
+					Name:         name,
+					Reason:       "callee return value returned through conditional expression",
+					EvidenceKind: "conditional_return_flow",
+					Detail:       name,
+					Direction:    "callee_to_caller",
+				})
+			}
 		}
+	}
+	addMatches(ternaryReturnCallRe)
+	addMatches(pythonIfReturnRe)
+	if len(flows) == 0 {
+		return nil
 	}
 	sort.Slice(flows, func(i, j int) bool {
 		return flows[i].Name < flows[j].Name

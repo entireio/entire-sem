@@ -2703,6 +2703,57 @@ export async function run(flag: boolean): Promise<string> {
 	}
 }
 
+func TestBuildProviderSnapshotEmitsPythonConditionalReturnDataFlow(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "flow.py", `def primary():
+    return "primary"
+
+def fallback():
+    return "fallback"
+
+def side():
+    return "side"
+
+def run(flag):
+    side()
+    return primary() if flag else fallback()
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"primary", "fallback"} {
+		var found RelationRecord
+		for _, relation := range snapshot.Relations {
+			if relation.Type == "DATA_FLOWS" && lastSegment(relation.FromID) == want && lastSegment(relation.ToID) == "run" && len(relation.Evidence) == 1 && relation.Evidence[0].Kind == "conditional_return_flow" {
+				found = relation
+				break
+			}
+		}
+		if found.FromID == "" {
+			t.Fatalf("missing Python conditional DATA_FLOWS %s->run: %#v", want, snapshot.Relations)
+		}
+		if found.Reason != "callee return value returned through conditional expression" || found.Confidence > 0.75 {
+			t.Fatalf("unexpected Python conditional return flow metadata: %#v", found)
+		}
+		if len(found.Evidence) != 1 || found.Evidence[0].Detail != want {
+			t.Fatalf("unexpected Python conditional return flow evidence: %#v", found.Evidence)
+		}
+	}
+	for _, relation := range snapshot.Relations {
+		if relation.Type != "DATA_FLOWS" || lastSegment(relation.ToID) != "run" {
+			continue
+		}
+		if lastSegment(relation.FromID) == "side" {
+			t.Fatalf("non-returned Python side call produced DATA_FLOWS: %#v", relation)
+		}
+		if lastSegment(relation.FromID) == "primary" && len(relation.Evidence) == 1 && relation.Evidence[0].Kind == "return_flow" {
+			t.Fatalf("Python conditional branch was mislabeled as unconditional return flow: %#v", relation)
+		}
+	}
+}
+
 func TestBuildProviderSnapshotSequentialAssignmentKeepsLastReturnDataFlow(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "flow.ts", `function first(): string {

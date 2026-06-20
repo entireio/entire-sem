@@ -202,8 +202,9 @@ False negatives:
   returned directly (`return helper()`) or assigned to a local and then returned
   as a bare variable (`value = helper(); return value`), including simple
   `if/else` branches where each branch assigns a known callee result to the
-  same returned local, and simple conditional return expressions
-  (`return flag ? primary() : fallback()`). Caller parameters passed into
+  same returned local, and simple conditional return expressions such as
+  JS/TS `return flag ? primary() : fallback()` and Python
+  `return primary() if flag else fallback()`. Caller parameters passed into
   exact/import-resolved callees, including conservative local alias
   (`alias = input; callee(alias)`) and object-field forwarding
   (`payload.field = input; callee(payload)`) cases, also emit
