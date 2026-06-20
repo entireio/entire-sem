@@ -2465,14 +2465,15 @@ func kubernetesResourceKey(kind, name string) string {
 }
 
 type kubernetesResourceInfo struct {
-	Symbol             SymbolRecord
-	Kind               string
-	Name               string
-	Labels             map[string]string
-	Selector           map[string]string
-	SelectorEvidence   string
-	SelectorReason     string
-	SelectorConfidence float64
+	Symbol              SymbolRecord
+	Kind                string
+	Name                string
+	Labels              map[string]string
+	Selector            map[string]string
+	SelectorTargetKinds map[string]bool
+	SelectorEvidence    string
+	SelectorReason      string
+	SelectorConfidence  float64
 }
 
 type yamlPathFrame struct {
@@ -2499,16 +2500,17 @@ func kubernetesSelectorResourceRelations(recordsByFile map[string][]SymbolRecord
 			if len(labels) == 0 {
 				labels = yamlMapAtPath(content, "metadata", "labels")
 			}
-			selector, evidence, reason, confidence := kubernetesSelectorForResource(strings.ToLower(kind), content)
+			selector, targetKinds, evidence, reason, confidence := kubernetesSelectorForResource(strings.ToLower(kind), content)
 			resources = append(resources, kubernetesResourceInfo{
-				Symbol:             symbol,
-				Kind:               strings.ToLower(kind),
-				Name:               name,
-				Labels:             labels,
-				Selector:           selector,
-				SelectorEvidence:   evidence,
-				SelectorReason:     reason,
-				SelectorConfidence: confidence,
+				Symbol:              symbol,
+				Kind:                strings.ToLower(kind),
+				Name:                name,
+				Labels:              labels,
+				Selector:            selector,
+				SelectorTargetKinds: targetKinds,
+				SelectorEvidence:    evidence,
+				SelectorReason:      reason,
+				SelectorConfidence:  confidence,
 			})
 		}
 	}
@@ -2519,6 +2521,9 @@ func kubernetesSelectorResourceRelations(recordsByFile map[string][]SymbolRecord
 		}
 		for _, target := range resources {
 			if target.Symbol.ID == source.Symbol.ID || len(target.Labels) == 0 {
+				continue
+			}
+			if len(source.SelectorTargetKinds) > 0 && !source.SelectorTargetKinds[target.Kind] {
 				continue
 			}
 			if !kubernetesSelectorMatches(source.Selector, target.Labels) {
@@ -2548,25 +2553,53 @@ func kubernetesSelectorResourceRelations(recordsByFile map[string][]SymbolRecord
 	return relations
 }
 
-func kubernetesSelectorForResource(kind, content string) (map[string]string, string, string, float64) {
+func kubernetesSelectorForResource(kind, content string) (map[string]string, map[string]bool, string, string, float64) {
 	switch kind {
 	case "service":
 		return yamlMapAtPath(content, "spec", "selector"),
+			kubernetesWorkloadKinds(),
 			"kubernetes_service_selector",
 			"Kubernetes Service selector matches workload labels",
 			0.88
 	case "poddisruptionbudget":
 		return yamlMapAtPath(content, "spec", "selector", "matchLabels"),
+			kubernetesWorkloadKinds(),
 			"kubernetes_pdb_selector",
 			"Kubernetes PodDisruptionBudget selector matches workload labels",
 			0.84
 	case "networkpolicy":
 		return yamlMapAtPath(content, "spec", "podSelector", "matchLabels"),
+			kubernetesWorkloadKinds(),
 			"kubernetes_network_policy_selector",
 			"Kubernetes NetworkPolicy podSelector matches workload labels",
 			0.82
+	case "servicemonitor":
+		return yamlMapAtPath(content, "spec", "selector", "matchLabels"),
+			map[string]bool{"service": true},
+			"kubernetes_service_monitor_selector",
+			"Kubernetes ServiceMonitor selector matches Service labels",
+			0.8
+	case "podmonitor":
+		return yamlMapAtPath(content, "spec", "selector", "matchLabels"),
+			kubernetesWorkloadKinds(),
+			"kubernetes_pod_monitor_selector",
+			"Kubernetes PodMonitor selector matches workload labels",
+			0.8
 	default:
-		return nil, "", "", 0
+		return nil, nil, "", "", 0
+	}
+}
+
+func kubernetesWorkloadKinds() map[string]bool {
+	return map[string]bool{
+		"pod":                   true,
+		"deployment":            true,
+		"statefulset":           true,
+		"daemonset":             true,
+		"replicaset":            true,
+		"replicationcontroller": true,
+		"job":                   true,
+		"cronjob":               true,
 	}
 }
 

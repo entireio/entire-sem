@@ -765,6 +765,72 @@ spec:
 	}
 }
 
+func TestKubernetesMonitorSelectorsDependOnTargets(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "k8s/deployment.yaml", `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+spec:
+  template:
+    metadata:
+      labels:
+        app: api
+    spec:
+      containers:
+        - name: api
+          image: example/api:latest
+`)
+	writeFile(t, repo, "k8s/service.yaml", `apiVersion: v1
+kind: Service
+metadata:
+  name: api
+  labels:
+    app: api
+spec:
+  selector:
+    app: api
+  ports:
+    - port: 80
+`)
+	writeFile(t, repo, "k8s/service-monitor.yaml", `apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: api
+spec:
+  selector:
+    matchLabels:
+      app: api
+`)
+	writeFile(t, repo, "k8s/pod-monitor.yaml", `apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: api
+spec:
+  selector:
+    matchLabels:
+      app: api
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !hasRelationByLastSegment(snapshot.Relations, "RESOURCE_DEPENDS_ON", "ServiceMonitor.api", "Service.api") {
+		t.Fatalf("missing ServiceMonitor.api -> Service.api selector dependency in %#v", snapshot.Relations)
+	}
+	if hasRelationByLastSegment(snapshot.Relations, "RESOURCE_DEPENDS_ON", "ServiceMonitor.api", "Deployment.api") {
+		t.Fatalf("ServiceMonitor selector incorrectly matched workload target: %#v", snapshot.Relations)
+	}
+	if !hasRelationByLastSegment(snapshot.Relations, "RESOURCE_DEPENDS_ON", "PodMonitor.api", "Deployment.api") {
+		t.Fatalf("missing PodMonitor.api -> Deployment.api selector dependency in %#v", snapshot.Relations)
+	}
+	if hasRelationByLastSegment(snapshot.Relations, "RESOURCE_DEPENDS_ON", "PodMonitor.api", "Service.api") {
+		t.Fatalf("PodMonitor selector incorrectly matched Service target: %#v", snapshot.Relations)
+	}
+}
+
 func TestKubernetesRbacIngressAndScaleTargetDependencies(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "k8s/deployment.yaml", `apiVersion: apps/v1

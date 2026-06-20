@@ -335,8 +335,9 @@ Delivered:
   and image pull secrets.
 - Kubernetes resource symbols emit common container image, environment-variable,
   and port declarations as `CONFIGURES` facts, multi-document Kubernetes YAML
-  emits one resource symbol per document, and Services can depend on matching
-  workload resources by selector labels.
+  emits one resource symbol per document, and Service, PodDisruptionBudget,
+  NetworkPolicy, ServiceMonitor, and PodMonitor selectors can depend on
+  matching target resources by labels with target-kind filters.
 - Kustomize manifests emit overlay/resource sections plus external
   dependencies for listed resources, patches, and components.
 - Docker Compose manifests emit service resources, exact `depends_on`
@@ -350,11 +351,12 @@ Open:
 
 - Cross-file Kubernetes resource resolution is implemented for named
   ConfigMap/Secret/service-account/PVC/RBAC/owner/Ingress/HPA references,
-  Service selector matches, PodDisruptionBudget selector matches, and
-  NetworkPolicy podSelector matches when the target resource symbol exists in
-  the same provider snapshot. Remaining Kubernetes resource gaps include less
-  common Kubernetes controllers beyond these selectors and custom resource
-  conventions.
+  Service selector matches, PodDisruptionBudget selector matches, NetworkPolicy
+  podSelector matches, Prometheus Operator ServiceMonitor selector matches, and
+  Prometheus Operator PodMonitor selector matches when the target resource
+  symbol exists in the same provider snapshot. Remaining Kubernetes resource
+  gaps include less common Kubernetes controllers beyond these selectors and
+  other custom resource conventions.
 - Broad framework-specific IaC/service modeling remains partial.
 
 Acceptance:

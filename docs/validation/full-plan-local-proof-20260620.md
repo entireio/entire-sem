@@ -22,6 +22,7 @@ go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go
 go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go -limit 1 -profile syntax-only -provider-version codex-full-plan -out bench/results
 go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go -limit 1 -profile syntax-only -provider-version codex-full-plan -out bench/results
 go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go -limit 1 -profile syntax-only -provider-version codex-full-plan -out bench/results
+go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go -limit 1 -profile syntax-only -provider-version codex-full-plan -out bench/results
 go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go -limit 1 -profile full -provider-version codex-full-plan -out bench/results
 go run ./cmd/sem-bench -skip-clone -manifest bench/repos.json -languages C -limit 1 -profile syntax-only -provider-version codex-full-plan -out bench/results -max-rss-bytes 5000000000
 go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go -limit 1 -profile syntax-only -provider-version codex-full-plan -out bench/results
@@ -88,6 +89,9 @@ go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go
   resource by selector labels).
 - PodDisruptionBudget and NetworkPolicy selectors emit exact local
   `RESOURCE_DEPENDS_ON` edges to matching workload resources by labels.
+- ServiceMonitor and PodMonitor selectors emit exact local
+  `RESOURCE_DEPENDS_ON` edges to target-kind-filtered Service and workload
+  resources by labels.
 - Kubernetes named resource references for ConfigMaps, Secrets, service
   accounts, and PVCs emit exact local `RESOURCE_DEPENDS_ON` edges when the
   referenced resource manifests are present in the snapshot.
@@ -165,6 +169,8 @@ go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go
     160,491 LOC/s, max RSS 28,098,560 bytes, output 1,938,906 bytes.
   - `bench/results/result-1781949766.json`: Go/gin, syntax-only, 28,618 LOC,
     131,698 LOC/s, max RSS 29,261,824 bytes, output 1,938,906 bytes.
+  - `bench/results/result-1781949898.json`: Go/gin, syntax-only, 28,618 LOC,
+    133,673 LOC/s, max RSS 26,411,008 bytes, output 1,938,906 bytes.
 
 ## Remaining Honesty Notes
 
