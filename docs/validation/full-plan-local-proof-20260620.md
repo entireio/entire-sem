@@ -34,6 +34,9 @@ go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go
 - Python Flask/FastAPI-style route decorators emit `HANDLES_ROUTE`, and matching
   Python `requests`/`httpx` calls bridge to decorated handlers as direct
   `CALLS` through shared route endpoints.
+- Java Spring-style route annotations compose class-level prefixes with
+  method-level routes, emit `HANDLES_ROUTE`, and bridge matching
+  `RestTemplate`/HTTP client calls to handlers as direct `CALLS`.
 - Kubernetes resource extraction and Service-selector dependency tests pass
   (`Service` -> matching workload resource by selector labels).
 - Kubernetes resource config tests pass for common container image,

@@ -254,7 +254,9 @@ Tasks:
 - Improve route handler detection:
   Express/Fastify/Next.js, Django, Go `net/http`/chi/gin, Java Spring, C#
   ASP.NET, PHP Laravel/Symfony. Flask/FastAPI-style Python route decorators are
-  implemented for direct app/router decorators.
+  implemented for direct app/router decorators. Java Spring-style direct
+  mapping annotations are implemented for class-level prefix plus method-level
+  route composition.
 - Add route client detection:
   `fetch`, Axios, Python requests/httpx, Go `http.Client`, Java HTTP clients,
   C# HttpClient.

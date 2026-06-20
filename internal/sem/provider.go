@@ -1329,6 +1329,7 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 	needsAsyncCalls := spec.emits("ASYNC_CALLS")
 	needsDataFlow := spec.emits("DATA_FLOWS")
 	needsServiceRelations := spec.emits("HANDLES_GRPC") || spec.emits("HANDLES_GRAPHQL") || spec.emits("HANDLES_TRPC")
+	symbolsByID := map[string]SymbolRecord{}
 	symbolsByShortName := map[string][]SymbolRecord{}
 	symbolsByFile := map[string][]SymbolRecord{}
 	childNamesByContainer := map[string]map[string]bool{}
@@ -1345,6 +1346,7 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 			if symbol.Kind == "route" {
 				routeHandlers[symbol.Name] = append(routeHandlers[symbol.Name], symbol)
 			}
+			symbolsByID[symbol.ID] = symbol
 			emit(RelationRecord{
 				RecordType:    "relation",
 				FromID:        fileID(repoKey, symbol.FilePath),
@@ -1616,7 +1618,7 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 					})
 				}
 			}
-			for _, route := range routeLiteralsForSymbol(file.Path, content, block, from) {
+			for _, route := range routeLiteralsForSymbol(file.Path, content, block, from, symbolsByID) {
 				if _, ok := handledRoutes[route]; ok {
 					continue
 				}
@@ -1642,35 +1644,37 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 				emit(relation)
 				routeHandlers[route] = append(routeHandlers[route], from)
 			}
-			for _, call := range httpCalls(block) {
-				if !spec.emits("HTTP_CALLS") {
-					break
+			if callableSymbol {
+				for _, call := range httpCalls(block) {
+					if !spec.emits("HTTP_CALLS") {
+						break
+					}
+					confidence := 0.7
+					if call.Absolute {
+						confidence = 0.6 // host ignored; cross-service path match is weaker
+					}
+					relation := RelationRecord{
+						RecordType:    "relation",
+						FromID:        from.ID,
+						ToID:          externalID("route", call.Path),
+						Type:          "HTTP_CALLS",
+						Confidence:    confidence,
+						Reason:        "outbound HTTP client call to " + call.Method + " " + call.Path,
+						RelationScope: "external",
+						Resolution:    "pattern",
+						TargetKind:    "route",
+						Evidence: []Evidence{{
+							Kind:      "http_call_site",
+							FilePath:  from.FilePath,
+							StartLine: from.StartLine,
+							EndLine:   from.EndLine,
+							Detail:    call.Method + " " + call.Path,
+						}},
+						WarningCodes: []string{},
+					}
+					emit(relation)
+					httpCallsByRoute[call.Path] = append(httpCallsByRoute[call.Path], relation)
 				}
-				confidence := 0.7
-				if call.Absolute {
-					confidence = 0.6 // host ignored; cross-service path match is weaker
-				}
-				relation := RelationRecord{
-					RecordType:    "relation",
-					FromID:        from.ID,
-					ToID:          externalID("route", call.Path),
-					Type:          "HTTP_CALLS",
-					Confidence:    confidence,
-					Reason:        "outbound HTTP client call to " + call.Method + " " + call.Path,
-					RelationScope: "external",
-					Resolution:    "pattern",
-					TargetKind:    "route",
-					Evidence: []Evidence{{
-						Kind:      "http_call_site",
-						FilePath:  from.FilePath,
-						StartLine: from.StartLine,
-						EndLine:   from.EndLine,
-						Detail:    call.Method + " " + call.Path,
-					}},
-					WarningCodes: []string{},
-				}
-				emit(relation)
-				httpCallsByRoute[call.Path] = append(httpCallsByRoute[call.Path], relation)
 			}
 			for _, event := range channelEvents(block) {
 				if !spec.emits(event.Relation) {
@@ -4098,8 +4102,19 @@ func routeLiterals(content string) []string {
 	return sortedKeys(seen)
 }
 
-func routeLiteralsForSymbol(path, content, block string, symbol SymbolRecord) []string {
+func routeLiteralsForSymbol(path, content, block string, symbol SymbolRecord, symbolsByID map[string]SymbolRecord) []string {
 	seen := map[string]struct{}{}
+	if jvmLikeExtension(filepath.Ext(path)) {
+		if typeLikeKind(symbol.Kind) {
+			return nil
+		}
+		for _, route := range jvmAnnotationRouteLiterals(content, symbol, symbolsByID) {
+			seen[route] = struct{}{}
+		}
+		if len(seen) > 0 {
+			return sortedKeys(seen)
+		}
+	}
 	for _, route := range routeLiterals(block) {
 		seen[route] = struct{}{}
 	}
@@ -4112,8 +4127,41 @@ func routeLiteralsForSymbol(path, content, block string, symbol SymbolRecord) []
 }
 
 func pythonDecoratorRouteLiterals(content string, symbol SymbolRecord) []string {
+	return annotationRouteLiteralsNearSymbol(content, symbol, false)
+}
+
+func jvmAnnotationRouteLiterals(content string, symbol SymbolRecord, symbolsByID map[string]SymbolRecord) []string {
+	if symbol.Kind != "method" && symbol.Kind != "function" {
+		return nil
+	}
+	methodRoutes := annotationRouteLiteralsNearSymbol(content, symbol, true)
+	if len(methodRoutes) == 0 {
+		return nil
+	}
+	var classPrefixes []string
+	if symbol.ContainerID != "" {
+		if container, ok := symbolsByID[symbol.ContainerID]; ok && typeLikeKind(container.Kind) {
+			classPrefixes = annotationRouteLiteralsNearSymbol(content, container, true)
+		}
+	}
+	if len(classPrefixes) == 0 {
+		return methodRoutes
+	}
+	seen := map[string]struct{}{}
+	for _, prefix := range classPrefixes {
+		for _, route := range methodRoutes {
+			seen[joinRoutePaths(prefix, route)] = struct{}{}
+		}
+	}
+	return sortedKeys(seen)
+}
+
+func annotationRouteLiteralsNearSymbol(content string, symbol SymbolRecord, springOnly bool) []string {
 	if symbol.StartLine <= 0 {
 		return nil
+	}
+	if springOnly {
+		return springAnnotationRouteLiteralsAroundSymbol(content, symbol)
 	}
 	lines := strings.Split(content, "\n")
 	index := symbol.StartLine - 1
@@ -4137,6 +4185,92 @@ func pythonDecoratorRouteLiterals(content string, symbol SymbolRecord) []string 
 		}
 	}
 	return sortedKeys(seen)
+}
+
+func springAnnotationRouteLiteralsAroundSymbol(content string, symbol SymbolRecord) []string {
+	lines := strings.Split(content, "\n")
+	index := symbol.StartLine - 1
+	if index >= len(lines) {
+		index = len(lines) - 1
+	}
+	seen := map[string]struct{}{}
+	collect := func(line string) {
+		if !springRouteAnnotationLine(line) {
+			return
+		}
+		for _, route := range routeLiterals(line) {
+			seen[route] = struct{}{}
+		}
+	}
+	current := ""
+	if index >= 0 && index < len(lines) {
+		current = strings.TrimSpace(lines[index])
+	}
+	if strings.HasPrefix(current, "@") {
+		collect(current)
+		for i := index + 1; i < len(lines) && i-index <= 8; i++ {
+			line := strings.TrimSpace(lines[i])
+			if line == "" {
+				continue
+			}
+			if !strings.HasPrefix(line, "@") {
+				break
+			}
+			collect(line)
+		}
+	}
+	for i := index - 1; i >= 0 && index-i <= 8; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		if !strings.HasPrefix(line, "@") {
+			break
+		}
+		collect(line)
+	}
+	return sortedKeys(seen)
+}
+
+func springRouteAnnotationLine(line string) bool {
+	lower := strings.ToLower(line)
+	for _, marker := range []string{
+		"@requestmapping",
+		"@getmapping",
+		"@postmapping",
+		"@putmapping",
+		"@deletemapping",
+		"@patchmapping",
+	} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func joinRoutePaths(prefix, route string) string {
+	if prefix == "" || prefix == "/" {
+		if route == "" {
+			return "/"
+		}
+		if strings.HasPrefix(route, "/") {
+			return route
+		}
+		return "/" + route
+	}
+	if route == "" || route == "/" {
+		if strings.HasPrefix(prefix, "/") {
+			return prefix
+		}
+		return "/" + prefix
+	}
+	left := strings.TrimRight(prefix, "/")
+	right := strings.TrimLeft(route, "/")
+	if !strings.HasPrefix(left, "/") {
+		left = "/" + left
+	}
+	return left + "/" + right
 }
 
 func nextRouteBoundary(path string) string {

@@ -107,10 +107,11 @@ False positives:
 - **Route over-firing — fixed.** `HANDLES_ROUTE` previously fired for any
   path-like string literal in any symbol (gin reported 1039 routes). A route is
   now recorded only when its line carries routing context (an HTTP-verb/route
-  method call, mapping decorator, or Python Flask/FastAPI-style route
-  decorator), cutting gin to 206 and dropping path returns and file paths.
-  Matching Python `requests`/`httpx` calls can bridge to local decorated
-  handlers through the shared route endpoint. (WP6.)
+  method call, mapping decorator, Python Flask/FastAPI-style route decorator,
+  or Java Spring-style direct mapping annotation), cutting gin to 206 and
+  dropping path returns and file paths. Matching Python `requests`/`httpx` and
+  Java `RestTemplate`/HTTP client calls can bridge to local decorated handlers
+  through the shared route endpoint. (WP6.)
 - **Global-unique name match (Go `go-basic`).** `LoginHandler CALLS CheckToken`
   is emitted at `0.68` purely because the name is unique repo-wide, not because
   the call was resolved through imports/scope. Correct here, but fragile.

@@ -1187,6 +1187,47 @@ def ping():
 	}
 }
 
+func TestSpringRouteAnnotationsComposeClassPrefixAndBridgeHTTPClient(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "src/main/java/com/acme/UserController.java", `package com.acme;
+
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.client.RestTemplate;
+
+@RestController
+@RequestMapping("/api")
+class UserController {
+  @GetMapping("/users/{id}")
+  String show(String id) {
+    return id;
+  }
+
+  String ping(RestTemplate restTemplate) {
+    return restTemplate.getForObject("/api/users/{id}", String.class);
+  }
+}
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasRelationByLastSegment(snapshot.Relations, "HANDLES_ROUTE", "UserController.show", "/api/users/{id}") {
+		t.Fatalf("missing composed Spring route annotation: %#v", snapshot.Relations)
+	}
+	if !hasRelationByLastSegment(snapshot.Relations, "HTTP_CALLS", "UserController.ping", "/api/users/{id}") {
+		t.Fatalf("missing RestTemplate HTTP_CALLS relation: %#v", snapshot.Relations)
+	}
+	if !hasRelationByLastSegment(snapshot.Relations, "CALLS", "UserController.ping", "UserController.show") {
+		t.Fatalf("missing route bridge CALLS ping->show: %#v", snapshot.Relations)
+	}
+	if hasRelationByLastSegment(snapshot.Relations, "HTTP_CALLS", "UserController", "/api/users/{id}") {
+		t.Fatalf("class body misclassified as HTTP_CALLS caller: %#v", snapshot.Relations)
+	}
+}
+
 func TestRouteDetectionRequiresRoutingContext(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "server.js", `function register(app) {
