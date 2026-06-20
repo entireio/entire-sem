@@ -2419,6 +2419,11 @@ export function labelFromFactory(): string {
   return makeWidget().label()
 }
 
+export function labelFromAssignedFactory(): string {
+  const widget = makeWidget()
+  return widget.label()
+}
+
 export function labelFor(widget: Widget): string {
   return widget.label()
 }
@@ -2451,6 +2456,10 @@ export function labelFor(widget: Widget): string {
 	// makeWidget(): Widget; makeWidget().label() -> resolves through the factory return type.
 	if r, ok := inferred["labelFromFactory->Widget.label"]; !ok || r.Confidence != 0.78 {
 		t.Fatalf("returned-receiver call not resolved (0.78): %#v", inferred)
+	}
+	// const widget = makeWidget(); widget.label() -> resolves through the assigned factory return type.
+	if r, ok := inferred["labelFromAssignedFactory->Widget.label"]; !ok || r.Confidence != 0.77 {
+		t.Fatalf("assigned factory receiver call not resolved (0.77): %#v", inferred)
 	}
 	// widget: Widget -> resolves through the typed parameter.
 	if r, ok := inferred["labelFor->Widget.label"]; !ok || r.Confidence != 0.83 {

@@ -1257,8 +1257,9 @@ func isCapitalized(value string) bool {
 }
 
 var (
-	newAssignRe  = regexp.MustCompile(`([A-Za-z_$][\w$]*)\s*:?=\s*new\s+([A-Za-z_]\w*)`)
-	ctorAssignRe = regexp.MustCompile(`([A-Za-z_$][\w$]*)\s*:?=\s*&?([A-Z][A-Za-z0-9_]*)\s*[({]`)
+	newAssignRe           = regexp.MustCompile(`([A-Za-z_$][\w$]*)\s*:?=\s*new\s+([A-Za-z_]\w*)`)
+	ctorAssignRe          = regexp.MustCompile(`([A-Za-z_$][\w$]*)\s*:?=\s*&?([A-Z][A-Za-z0-9_]*)\s*[({]`)
+	factoryReturnAssignRe = regexp.MustCompile(`([A-Za-z_$][\w$]*)\s*(?::[^=\n]+)?\s*(?::=|=)\s*(?:await\s+)?([A-Za-z_$][\w$]*)\s*\(`)
 )
 
 // localVarTypes infers a best-effort variable -> type-name map from constructor
@@ -1276,6 +1277,27 @@ func localVarTypes(block string) map[string]string {
 		if _, exists := out[name]; !exists {
 			out[name] = m[2]
 		}
+	}
+	return out
+}
+
+func factoryReturnVarTypes(block, filePath string, returnTypesBySymbolNameAndFile map[string]map[string][]string) map[string]string {
+	stripped := stripCodeLiteralsAndComments(block)
+	out := map[string]string{}
+	for _, m := range factoryReturnAssignRe.FindAllStringSubmatch(stripped, -1) {
+		if len(m) != 3 {
+			continue
+		}
+		name := strings.TrimPrefix(m[1], "$")
+		factory := strings.TrimPrefix(m[2], "$")
+		if name == "" || factory == "" || factory == "new" || isCapitalized(factory) {
+			continue
+		}
+		types := returnTypesBySymbolNameAndFile[factory][filePath]
+		if len(types) == 0 {
+			continue
+		}
+		out[name] = types[0]
 	}
 	return out
 }

@@ -150,6 +150,10 @@ go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go
 - Same-file factory-returned receiver calls such as `makeWidget().label()` emit
   `CALLS` edges to local methods with `resolution: type_inferred` when the
   factory has an explicit local return type.
+- Same-file assigned factory receivers such as
+  `const widget = makeWidget(); widget.label()` emit `CALLS` edges to local
+  methods with `resolution: type_inferred` when the factory has an explicit
+  local return type.
 - Typed-parameter receiver calls and field accesses emit local method/field
   relations when the parameter type is a known local symbol.
 - Assigned return-flow emits `DATA_FLOWS` when a local variable assigned from a
@@ -244,6 +248,8 @@ go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go
     152,499 LOC/s, max RSS 26,771,456 bytes, output 1,938,906 bytes.
   - `bench/results/result-1781953552.json`: Go/gin, syntax-only, 28,618 LOC,
     152,866 LOC/s, max RSS 27,983,872 bytes, output 1,938,906 bytes.
+  - `bench/results/result-1781953980.json`: Go/gin, syntax-only, 28,618 LOC,
+    152,110 LOC/s, max RSS 29,310,976 bytes, output 1,938,906 bytes.
 
 ## Remaining Honesty Notes
 

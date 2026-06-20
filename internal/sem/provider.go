@@ -1938,10 +1938,10 @@ func buildTypeRelation(repoKey string, anchor SymbolRecord, super, relation stri
 }
 
 // receiverCallRelations resolves `receiver.method()` calls inside a caller's
-// body to the target method symbol by inferring the receiver's type. Two cases
-// are handled: a this/self receiver resolves to the caller's enclosing type,
-// and a local variable resolves through a constructor assignment in the same
-// body. These calls are otherwise dropped (a name preceded by '.'/'->' is not a
+// body to the target method symbol by inferring the receiver's type. Supported
+// cases are this/self receivers, typed parameters, constructor assignments, and
+// same-file variables assigned from a factory with an explicit local return
+// type. These calls are otherwise dropped (a name preceded by '.'/'->' is not a
 // plain call), so this is purely additive. Type containers are skipped as
 // callers — calls live in methods/functions, not in the class declaration.
 func receiverCallRelations(from SymbolRecord, block string, methodsByContainer map[string]map[string]SymbolRecord, symbolsByShortName map[string][]SymbolRecord, returnTypesBySymbolNameAndFile map[string]map[string][]string) []RelationRecord {
@@ -1958,6 +1958,12 @@ func receiverCallRelations(from SymbolRecord, block string, methodsByContainer m
 	localTypes := localVarTypes(block)
 	for name, typeName := range localTypes {
 		varTypes[name] = typeName
+	}
+	factoryTypes := factoryReturnVarTypes(block, from.FilePath, returnTypesBySymbolNameAndFile)
+	for name, typeName := range factoryTypes {
+		if _, exists := varTypes[name]; !exists {
+			varTypes[name] = typeName
+		}
 	}
 	paramTypes := parameterVarTypes(from.Signature)
 	for name := range localTypes {
@@ -1984,6 +1990,10 @@ func receiverCallRelations(from SymbolRecord, block string, methodsByContainer m
 			if _, ok := paramTypes[call.Receiver]; ok {
 				confidence = 0.83
 				reason = "method call resolved via typed parameter receiver"
+			}
+			if _, ok := factoryTypes[call.Receiver]; ok {
+				confidence = 0.77
+				reason = "method call resolved via assigned returned receiver type"
 			}
 			sym, ok := firstTypeLikeNamed(symbolsByShortName[typeName], typeName)
 			if !ok {
