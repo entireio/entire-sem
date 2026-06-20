@@ -10130,6 +10130,11 @@ func crossFileExpressRouterRelations(files []FileRecord, recordsByFile map[strin
 				if binding.Namespace {
 					pluginName = targetMember
 				}
+				if pluginName == "default" || pluginName == "" {
+					if exported := defaultExportsByFile[routeFile]; exported != "" {
+						pluginName = exported
+					}
+				}
 				if pluginName == "" {
 					pluginName = targetLocal
 				}

@@ -175,7 +175,7 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
   `app.route("/prefix", router)` mounts with static `router.get/post/...`
   registrations and bridge exact matching HTTP client calls to the handler
   symbol.
-- Imported Fastify plugin functions registered with
+- Imported and CommonJS-exported Fastify plugin functions registered with
   `app.register(plugin, { prefix })` compose static plugin route registrations
   with the register prefix and bridge exact matching HTTP client calls to the
   handler symbol, including unique same-file selector handler expressions.

@@ -155,7 +155,8 @@ False positives:
   Go chi/gin-style router method registration, C# ASP.NET route/HTTP-verb
   attributes, C# minimal API `MapGet`/`MapPost` registrations, PHP Laravel
   route declarations and prefix groups, Symfony/PHP route attributes, direct
-  Fastify/app/server JS route registrations, Ruby on Rails static route
+  Fastify/app/server JS route registrations and imported/CommonJS-exported
+  Fastify plugin routes, Ruby on Rails static route
   declarations and `resources` expansion for default REST actions, `only:`,
   and `except:`, NestJS
   controller/method decorators, Next.js/SvelteKit/Remix route-file boundaries,

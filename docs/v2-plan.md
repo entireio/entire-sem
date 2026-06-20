@@ -338,8 +338,10 @@ Tasks:
   `MapGet`/`MapPost` style registrations resolve static same-file handler
   method groups. PHP Laravel route
   declarations and prefix groups resolve local controller methods, and
-  Symfony/PHP route attributes compose class and method routes. Direct Fastify/app/server JS/TS
-  route registrations resolve local handler functions. Ruby on Rails static
+  Symfony/PHP route attributes compose class and method routes. Direct
+  Fastify/app/server JS/TS route registrations and imported or
+  CommonJS-exported Fastify plugin routes resolve local handler functions.
+  Ruby on Rails static
   route declarations and `resources` declarations with default REST actions,
   `only:`, and `except:` resolve local controller actions. Next.js, SvelteKit,
   and Remix route-file boundaries bridge matching JS/TS clients, including
