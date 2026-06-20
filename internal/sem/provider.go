@@ -2716,6 +2716,9 @@ func kubernetesResourceReferences(content string) []resourceReference {
 	for _, match := range regexp.MustCompile(`(?im)^\s*claimName:\s*([A-Za-z0-9_.-]+)\s*$`).FindAllStringSubmatch(content, -1) {
 		add("persistentvolumeclaim", match[1], "kubernetes_pvc_claim", 0.78)
 	}
+	for _, match := range regexp.MustCompile(`(?im)^\s*ingressClassName:\s*([A-Za-z0-9_.-]+)\s*$`).FindAllStringSubmatch(content, -1) {
+		add("ingressclass", match[1], "kubernetes_ingress_class", 0.8)
+	}
 	for _, ref := range kubernetesKindNameBlockReferences(content, "roleRef", "kubernetes_rbac_role_ref", 0.82) {
 		add(ref.Kind, ref.Name, ref.EvidenceKind, ref.Confidence)
 	}

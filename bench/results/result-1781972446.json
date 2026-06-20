@@ -1,0 +1,89 @@
+{
+  "generated_at": "2026-06-20T16:20:46Z",
+  "provider_version": "codex-ingress-class-refs",
+  "schema_version": "1.1",
+  "profile": "syntax-only",
+  "hardware": {
+    "os": "darwin",
+    "arch": "arm64",
+    "cpus": 10
+  },
+  "max_rss_bytes": 26804224,
+  "repos": [
+    {
+      "name": "gin-gonic/gin",
+      "language": "Go",
+      "profile": "syntax-only",
+      "commit": "d75fcd4c9ab260e5225de590f1f0f8c0e0e12d11",
+      "wall_ms": 175.59,
+      "files": 122,
+      "parsed_files": 122,
+      "loc": 28618,
+      "source_bytes": 850087,
+      "output_bytes": 1902630,
+      "output_bytes_estimated": true,
+      "symbols": 2331,
+      "relations": 3086,
+      "externals": 0,
+      "parse_failures": 1,
+      "completeness_level": "degraded",
+      "files_per_sec": 694.78,
+      "loc_per_sec": 162977.92,
+      "alloc_bytes": 56488736,
+      "languages": [
+        "Git Ignore",
+        "Go",
+        "Make",
+        "Markdown",
+        "Protocol Buffers",
+        "YAML"
+      ],
+      "relation_set": [
+        "CONTAINS",
+        "DEFINES"
+      ],
+      "relations_by_type": {
+        "CONTAINS": 755,
+        "DEFINES": 2331
+      },
+      "resolution_counts": {
+        "exact": 3086
+      },
+      "confidence_bands": {
+        "exact": 3086
+      },
+      "failure_codes": {
+        "E_PARSE_ERROR": 1
+      },
+      "unresolved_relative_imports": 0
+    }
+  ],
+  "by_language": {
+    "Go": {
+      "repos": 1,
+      "files": 122,
+      "loc": 28618,
+      "symbols": 2331,
+      "relations": 3086,
+      "parse_failures": 1,
+      "wall_ms": 175.59,
+      "output_bytes": 1902630,
+      "loc_per_sec": 162981.95,
+      "files_per_sec": 694.8,
+      "unresolved_relative_imports": 0
+    }
+  },
+  "totals": {
+    "repos": 1,
+    "files": 122,
+    "loc": 28618,
+    "symbols": 2331,
+    "relations": 3086,
+    "parse_failures": 1,
+    "wall_ms": 175.59,
+    "output_bytes": 1902630,
+    "loc_per_sec": 162981.95,
+    "files_per_sec": 694.8,
+    "unresolved_relative_imports": 0
+  }
+}

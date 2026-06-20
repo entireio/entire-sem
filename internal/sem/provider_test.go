@@ -1288,6 +1288,13 @@ kind: ServiceAccount
 metadata:
   name: api-runner
 `)
+	writeFile(t, repo, "k8s/ingress-class.yaml", `apiVersion: networking.k8s.io/v1
+kind: IngressClass
+metadata:
+  name: edge
+spec:
+  controller: example.com/edge
+`)
 	writeFile(t, repo, "k8s/role.yaml", `apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -1313,6 +1320,7 @@ kind: Ingress
 metadata:
   name: api
 spec:
+  ingressClassName: edge
   rules:
     - http:
         paths:
@@ -1414,6 +1422,7 @@ metadata:
 	for _, edge := range [][2]string{
 		{"HorizontalPodAutoscaler.api", "Deployment.api"},
 		{"Ingress.api", "Service.api"},
+		{"Ingress.api", "IngressClass.edge"},
 		{"HTTPRoute.api", "Service.api"},
 		{"HTTPRoute.api", "Gateway.public"},
 		{"GRPCRoute.grpc-api", "Service.grpc-api"},
