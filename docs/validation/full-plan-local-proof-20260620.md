@@ -320,6 +320,11 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
     152,621 LOC/s.
   - `bench/results/result-1781937166.json`: Go/gin, full profile, 28,618 LOC,
     44,070 LOC/s.
+  - `bench/results/result-1781978153.json`: Go/gin, full profile, cached
+    checkout, 28,618 LOC, 9,529 relations, 1,391 LOC/s, max RSS 34,635,776
+    bytes, allocated 600,541,224 bytes, estimated output 4,936,916 bytes,
+    `completeness_level: degraded`; retained as current full-profile smoke
+    proof, not as a public full-profile speed claim.
   - `bench/results/result-1781937376.json`: C/Linux, syntax-only, 39,798,167
     LOC, 205,436 LOC/s, max RSS 1,634,385,920 bytes.
   - `bench/results/result-1781938318.json`: Go/gin, syntax-only, 28,618 LOC,
@@ -575,6 +580,9 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
   not quality proof for full C semantics.
 - Public large-corpus speed claims still need broader retained runs across more
   cached or supplied repositories and profiles.
+- Current full-profile retained smoke proof is small-corpus only and much
+  slower than syntax-only/fast-profile proof; do not generalize the large-C
+  fast-profile speed result to full-profile indexing.
 - GraphQL support covers operation literals, JS/TS resolver-map fields, schema
   fields for root and non-root object types, exact schema-field-to-resolver-map
   links, and root GraphQL operation boundaries. It is not full GraphQL schema

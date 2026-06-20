@@ -1,0 +1,140 @@
+{
+  "generated_at": "2026-06-20T17:55:53Z",
+  "provider_version": "codex-full-profile-proof-20260620",
+  "schema_version": "1.1",
+  "profile": "full",
+  "hardware": {
+    "os": "darwin",
+    "arch": "arm64",
+    "cpus": 10
+  },
+  "max_rss_bytes": 34635776,
+  "repos": [
+    {
+      "name": "gin-gonic/gin",
+      "language": "Go",
+      "profile": "full",
+      "commit": "d75fcd4c9ab260e5225de590f1f0f8c0e0e12d11",
+      "wall_ms": 20573.52,
+      "files": 122,
+      "parsed_files": 122,
+      "loc": 28618,
+      "source_bytes": 850087,
+      "output_bytes": 4936916,
+      "output_bytes_estimated": true,
+      "symbols": 2331,
+      "relations": 9529,
+      "externals": 417,
+      "parse_failures": 1,
+      "completeness_level": "degraded",
+      "files_per_sec": 5.93,
+      "loc_per_sec": 1391.01,
+      "alloc_bytes": 600541224,
+      "languages": [
+        "Git Ignore",
+        "Go",
+        "Make",
+        "Markdown",
+        "Protocol Buffers",
+        "YAML"
+      ],
+      "relation_set": [
+        "ACCESSES",
+        "ASYNC_CALLS",
+        "CALLS",
+        "CONFIGURES",
+        "CONTAINS",
+        "DATA_FLOWS",
+        "DEFINES",
+        "EMITS",
+        "EXTENDS",
+        "FILE_CHANGES_WITH",
+        "HANDLES_GRAPHQL",
+        "HANDLES_GRPC",
+        "HANDLES_ROUTE",
+        "HANDLES_TOOL",
+        "HANDLES_TRPC",
+        "HTTP_CALLS",
+        "IMPLEMENTS",
+        "IMPORTS",
+        "INHERITS",
+        "LISTENS_ON",
+        "OVERRIDES",
+        "PARAM_TYPE",
+        "READS_FIELD",
+        "RESOURCE_DEPENDS_ON",
+        "RETURNS_TYPE",
+        "SIMILAR_TO",
+        "TESTS",
+        "USES_TYPE",
+        "WRITES_FIELD"
+      ],
+      "relations_by_type": {
+        "ACCESSES": 26,
+        "ASYNC_CALLS": 1,
+        "CALLS": 3370,
+        "CONFIGURES": 37,
+        "CONTAINS": 755,
+        "DATA_FLOWS": 232,
+        "DEFINES": 2331,
+        "HANDLES_GRAPHQL": 7,
+        "HANDLES_ROUTE": 178,
+        "HANDLES_TOOL": 1,
+        "HTTP_CALLS": 13,
+        "IMPORTS": 518,
+        "PARAM_TYPE": 363,
+        "READS_FIELD": 263,
+        "RETURNS_TYPE": 284,
+        "SIMILAR_TO": 241,
+        "TESTS": 48,
+        "USES_TYPE": 770,
+        "WRITES_FIELD": 91
+      },
+      "resolution_counts": {
+        "exact": 4590,
+        "import_external": 2048,
+        "import_resolved": 32,
+        "name_only": 1722,
+        "pattern": 534,
+        "type_inferred": 603
+      },
+      "confidence_bands": {
+        "exact": 3919,
+        "heuristic": 650,
+        "strong": 4960
+      },
+      "failure_codes": {
+        "E_PARSE_ERROR": 1
+      },
+      "unresolved_relative_imports": 0
+    }
+  ],
+  "by_language": {
+    "Go": {
+      "repos": 1,
+      "files": 122,
+      "loc": 28618,
+      "symbols": 2331,
+      "relations": 9529,
+      "parse_failures": 1,
+      "wall_ms": 20573.52,
+      "output_bytes": 4936916,
+      "loc_per_sec": 1391.01,
+      "files_per_sec": 5.93,
+      "unresolved_relative_imports": 0
+    }
+  },
+  "totals": {
+    "repos": 1,
+    "files": 122,
+    "loc": 28618,
+    "symbols": 2331,
+    "relations": 9529,
+    "parse_failures": 1,
+    "wall_ms": 20573.52,
+    "output_bytes": 4936916,
+    "loc_per_sec": 1391.01,
+    "files_per_sec": 5.93,
+    "unresolved_relative_imports": 0
+  }
+}
