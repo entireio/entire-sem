@@ -9686,22 +9686,42 @@ func pythonDirectRouteRegistrations(content string) []goHTTPRouteRegistration {
 	constants := staticStringConstants(content)
 	handlerExpr := `[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?`
 	addAPIRe := regexp.MustCompile(`\b[A-Za-z_][A-Za-z0-9_]*\.add_api_route\s*\(\s*([^,\n]+)\s*,\s*(` + handlerExpr + `)`)
+	addURLRuleKeywordRe := regexp.MustCompile(`\b[A-Za-z_][A-Za-z0-9_]*\.add_url_rule\s*\(\s*([^,\n]+)[^\n)]*\bview_func\s*=\s*(` + handlerExpr + `)`)
+	addURLRulePositionalRe := regexp.MustCompile(`\b[A-Za-z_][A-Za-z0-9_]*\.add_url_rule\s*\(\s*([^,\n]+)\s*,\s*[^,\n)]+\s*,\s*(` + handlerExpr + `)`)
 	var registrations []goHTTPRouteRegistration
+	add := func(routeExpr, handler, evidence string) {
+		route, ok := staticRouteExpressionValue(routeExpr, constants)
+		if !ok {
+			return
+		}
+		handler = strings.TrimSpace(handler)
+		if handler == "" {
+			return
+		}
+		registrations = append(registrations, goHTTPRouteRegistration{
+			Route:        route,
+			Handler:      handler,
+			EvidenceKind: evidence,
+			Detail:       route + " -> " + handler,
+		})
+	}
 	for _, match := range addAPIRe.FindAllStringSubmatch(content, -1) {
 		if len(match) != 3 {
 			continue
 		}
-		route, ok := staticRouteExpressionValue(match[1], constants)
-		if !ok {
+		add(match[1], match[2], "python_add_api_route")
+	}
+	for _, match := range addURLRuleKeywordRe.FindAllStringSubmatch(content, -1) {
+		if len(match) != 3 {
 			continue
 		}
-		handler := strings.TrimSpace(match[2])
-		registrations = append(registrations, goHTTPRouteRegistration{
-			Route:        route,
-			Handler:      handler,
-			EvidenceKind: "python_add_api_route",
-			Detail:       route + " -> " + handler,
-		})
+		add(match[1], match[2], "python_flask_add_url_rule")
+	}
+	for _, match := range addURLRulePositionalRe.FindAllStringSubmatch(content, -1) {
+		if len(match) != 3 {
+			continue
+		}
+		add(match[1], match[2], "python_flask_add_url_rule")
 	}
 	return registrations
 }

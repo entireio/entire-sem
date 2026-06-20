@@ -91,9 +91,9 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
   module files with `import_resolved` metadata for conventional source layouts,
   deterministic `#[path] mod` aliases, and straightforward `pub use`
   re-exports.
-- Python Flask/FastAPI-style route decorators emit `HANDLES_ROUTE`, and matching
-  Python `requests`/`httpx` calls bridge to decorated handlers as direct
-  `CALLS` through shared route endpoints.
+- Python Flask/FastAPI-style route decorators and Flask `add_url_rule`
+  registrations emit `HANDLES_ROUTE`, and matching Python `requests`/`httpx`
+  calls bridge to handlers as direct `CALLS` through shared route endpoints.
 - FastAPI/Starlette-style `include_router(prefix=...)` mounts compose with
   same-file or locally imported `APIRouter` decorators and bridge matching
   Python HTTP client calls to the handler symbol.
@@ -331,8 +331,9 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
   static router registrations and bridge exact matching HTTP clients to local
   handlers.
 - Flask Blueprint `register_blueprint(..., url_prefix=...)` mounts compose
-  with Blueprint route decorators and bridge exact matching Python HTTP clients
-  to local handlers.
+  with Blueprint route decorators, while Flask `add_url_rule` positional and
+  `view_func=` handlers resolve local functions; both bridge exact matching
+  Python HTTP clients to local handlers.
 - Retained benchmark reports:
   - `bench/results/result-1781937160.json`: Go/gin, syntax-only, 28,618 LOC,
     152,621 LOC/s.
@@ -450,6 +451,9 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
   - `bench/results/result-1781981275.json`: Go/gin, syntax-only, 28,618 LOC,
     164,885 LOC/s, max RSS 29,573,120 bytes, estimated output 1,902,634
     bytes; run after Koa router constructor-prefix extraction.
+  - `bench/results/result-1781981445.json`: Go/gin, syntax-only, 28,618 LOC,
+    164,840 LOC/s, max RSS 27,295,744 bytes, estimated output 1,902,630
+    bytes; run after Flask `add_url_rule` route extraction.
   - `bench/results/result-1781972446.json`: Go/gin, syntax-only, 28,618 LOC,
     162,982 LOC/s, max RSS 26,804,224 bytes, estimated output 1,902,630
     bytes; run after IngressClass reference extraction.

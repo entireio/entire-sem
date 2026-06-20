@@ -3868,6 +3868,57 @@ def ping():
 	}
 }
 
+func TestFlaskAddURLRuleResolvesHandlersAndBridge(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "app.py", `from flask import Flask
+import requests
+
+app = Flask(__name__)
+health_route = "/health"
+
+def health():
+    return "ok"
+
+def status():
+    return "up"
+
+def register():
+    app.add_url_rule(health_route, "health", health)
+    app.add_url_rule("/status", view_func=status)
+
+def ping_health():
+    return requests.get("/health")
+
+def ping_status():
+    return requests.get("/status")
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []struct {
+		handler string
+		route   string
+	}{
+		{"health", "/health"},
+		{"status", "/status"},
+	} {
+		if !hasRelationToExternalRoute(snapshot.Relations, "HANDLES_ROUTE", want.handler, want.route) {
+			t.Fatalf("missing Flask add_url_rule route %s -> %s in %#v", want.handler, want.route, snapshot.Relations)
+		}
+	}
+	if hasRelationToExternalRoute(snapshot.Relations, "HANDLES_ROUTE", "register", "/health") {
+		t.Fatalf("registration function was misclassified as Flask add_url_rule handler: %#v", snapshot.Relations)
+	}
+	if !hasRelationByLastSegment(snapshot.Relations, "CALLS", "ping_health", "health") {
+		t.Fatalf("missing route bridge CALLS ping_health->health: %#v", snapshot.Relations)
+	}
+	if !hasRelationByLastSegment(snapshot.Relations, "CALLS", "ping_status", "status") {
+		t.Fatalf("missing route bridge CALLS ping_status->status: %#v", snapshot.Relations)
+	}
+}
+
 func TestPythonAddAPIRouteSelectorHandlerResolvesUniqueMemberAndBridge(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "app.py", `from fastapi import FastAPI
