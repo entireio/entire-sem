@@ -408,19 +408,36 @@ func TestPythonRuntimeLiteralImportsResolveToLocalFiles(t *testing.T) {
 	writeFile(t, repo, "src/acme_runtime/legacy.py", `def run():
     return "legacy"
 `)
+	writeFile(t, repo, "src/acme_runtime/extra.py", `def run():
+    return "extra"
+`)
+	writeFile(t, repo, "src/acme_runtime/joined.py", `def run():
+    return "joined"
+`)
 	writeFile(t, repo, "src/acme_runtime/loader.py", `import importlib
+
+PLUGIN = "acme_runtime.extra"
+PREFIX = "acme_runtime"
+JOINED = PREFIX + ".joined"
 
 def load():
     plugin = importlib.import_module("acme_runtime.plugin")
     legacy = __import__("acme_runtime.legacy")
-    return plugin, legacy
+    extra = importlib.import_module(PLUGIN)
+    joined = __import__(JOINED)
+    return plugin, legacy, extra, joined
 `)
 
 	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, targetPath := range []string{"src/acme_runtime/plugin.py", "src/acme_runtime/legacy.py"} {
+	for _, targetPath := range []string{
+		"src/acme_runtime/plugin.py",
+		"src/acme_runtime/legacy.py",
+		"src/acme_runtime/extra.py",
+		"src/acme_runtime/joined.py",
+	} {
 		target := fileID(snapshot.Header.RepoKey, targetPath)
 		if !hasImportRelation(snapshot.Relations, "src/acme_runtime/loader.py", target) {
 			t.Fatalf("missing Python runtime literal import to %s in %#v", target, snapshot.Relations)

@@ -7333,6 +7333,15 @@ func scanPythonImports(content string) []string {
 			add(match[1])
 		}
 	}
+	constants := staticStringConstants(content)
+	for _, match := range regexp.MustCompile(`\b(?:importlib\s*\.\s*import_module|__import__)\s*\(\s*([^,\n)]+)`).FindAllStringSubmatch(content, -1) {
+		if len(match) != 2 {
+			continue
+		}
+		if module, ok := staticStringExpressionValue(match[1], constants); ok {
+			add(module)
+		}
+	}
 	return sortedKeys(seen)
 }
 
