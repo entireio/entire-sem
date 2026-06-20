@@ -6950,6 +6950,106 @@ def run(input):
 	}
 }
 
+func TestBuildProviderSnapshotEmitsDirectLiteralArgumentForwardDataFlow(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "flow.ts", `type Payload = { value?: string }
+
+function normalize(payload: Payload): string {
+  return payload.value ?? ""
+}
+
+function collect(values: string[]): string {
+  return values.join(",")
+}
+
+function ignore(payload: Payload): string {
+  return "ignored"
+}
+
+export function run(input: string): string {
+  normalize({ value: input })
+  collect([input])
+  ignore({ value: "input" })
+  return input
+}
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"normalize", "collect"} {
+		var found RelationRecord
+		for _, relation := range snapshot.Relations {
+			if relation.Type == "DATA_FLOWS" && lastSegment(relation.FromID) == "run" && lastSegment(relation.ToID) == want {
+				found = relation
+				break
+			}
+		}
+		if found.FromID == "" {
+			t.Fatalf("missing direct literal DATA_FLOWS run->%s: %#v", want, snapshot.Relations)
+		}
+		if found.Reason != "caller parameter forwarded through literal callee argument" || found.Confidence > 0.7 {
+			t.Fatalf("unexpected direct literal flow metadata for %s: %#v", want, found)
+		}
+		if len(found.Evidence) != 1 || found.Evidence[0].Kind != "literal_argument_forward_flow" || found.Evidence[0].Detail != "input -> literal -> "+want+"()" {
+			t.Fatalf("unexpected direct literal flow evidence for %s: %#v", want, found.Evidence)
+		}
+	}
+	for _, relation := range snapshot.Relations {
+		if relation.Type == "DATA_FLOWS" && lastSegment(relation.FromID) == "run" && lastSegment(relation.ToID) == "ignore" {
+			t.Fatalf("string literal direct object produced DATA_FLOWS: %#v", relation)
+		}
+	}
+}
+
+func TestBuildProviderSnapshotEmitsPythonDirectLiteralArgumentForwardDataFlow(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "flow.py", `def normalize(payload):
+    return payload.get("value", "")
+
+def collect(values):
+    return ",".join(values)
+
+def ignore(payload):
+    return "ignored"
+
+def run(input):
+    normalize({"value": input})
+    collect([input])
+    ignore({"value": "input"})
+    return input
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"normalize", "collect"} {
+		var found RelationRecord
+		for _, relation := range snapshot.Relations {
+			if relation.Type == "DATA_FLOWS" && lastSegment(relation.FromID) == "run" && lastSegment(relation.ToID) == want {
+				found = relation
+				break
+			}
+		}
+		if found.FromID == "" {
+			t.Fatalf("missing Python direct literal DATA_FLOWS run->%s: %#v", want, snapshot.Relations)
+		}
+		if found.Reason != "caller parameter forwarded through literal callee argument" || found.Confidence > 0.7 {
+			t.Fatalf("unexpected Python direct literal flow metadata for %s: %#v", want, found)
+		}
+		if len(found.Evidence) != 1 || found.Evidence[0].Kind != "literal_argument_forward_flow" || found.Evidence[0].Detail != "input -> literal -> "+want+"()" {
+			t.Fatalf("unexpected Python direct literal flow evidence for %s: %#v", want, found.Evidence)
+		}
+	}
+	for _, relation := range snapshot.Relations {
+		if relation.Type == "DATA_FLOWS" && lastSegment(relation.FromID) == "run" && lastSegment(relation.ToID) == "ignore" {
+			t.Fatalf("string literal Python direct object produced DATA_FLOWS: %#v", relation)
+		}
+	}
+}
+
 func TestBuildProviderSnapshotEmitsCollectionElementForwardDataFlow(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "flow.ts", `function normalize(values: string[]): string {

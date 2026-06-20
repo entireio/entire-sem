@@ -517,6 +517,9 @@ func returnFlowCalls(block, signature string) []returnFlowCall {
 	for _, flow := range collectionElementForwardingFlows(stripped, signature) {
 		flows[flow.Name+"\x00"+flow.EvidenceKind+"\x00"+flow.Detail] = flow
 	}
+	for _, flow := range directLiteralForwardingFlows(stripped, signature) {
+		flows[flow.Name+"\x00"+flow.EvidenceKind+"\x00"+flow.Detail] = flow
+	}
 	out := make([]returnFlowCall, 0, len(flows))
 	for _, flow := range flows {
 		out = append(out, flow)
@@ -1198,6 +1201,78 @@ func collectionLiteralElementParams(block string, params map[string]bool) map[st
 			out[collectionName][paramName] = true
 		}
 	}
+	return out
+}
+
+func directLiteralForwardingFlows(block, signature string) []returnFlowCall {
+	params := parameterNames(signature)
+	if len(params) == 0 {
+		return nil
+	}
+	callRe := regexp.MustCompile(`\b([A-Za-z_$][A-Za-z0-9_$]*)\s*\(([^()\n]*)\)`)
+	var flows []returnFlowCall
+	seen := map[string]bool{}
+	for _, match := range callRe.FindAllStringSubmatch(block, -1) {
+		if len(match) != 3 {
+			continue
+		}
+		name := strings.TrimPrefix(match[1], "$")
+		if dataFlowCallNameIgnored(name) {
+			continue
+		}
+		for _, arg := range splitSimpleArguments(match[2]) {
+			for _, paramName := range directLiteralParamNames(arg, params) {
+				key := name + "\x00" + paramName
+				if seen[key] {
+					continue
+				}
+				seen[key] = true
+				flows = append(flows, returnFlowCall{
+					Name:         name,
+					Reason:       "caller parameter forwarded through literal callee argument",
+					EvidenceKind: "literal_argument_forward_flow",
+					Detail:       paramName + " -> literal -> " + name + "()",
+					Direction:    "caller_to_callee",
+				})
+			}
+		}
+	}
+	sort.Slice(flows, func(i, j int) bool {
+		if flows[i].Name != flows[j].Name {
+			return flows[i].Name < flows[j].Name
+		}
+		return flows[i].Detail < flows[j].Detail
+	})
+	return flows
+}
+
+func directLiteralParamNames(arg string, params map[string]bool) []string {
+	arg = strings.TrimSpace(arg)
+	if len(arg) < 2 {
+		return nil
+	}
+	switch {
+	case strings.HasPrefix(arg, "{") && strings.HasSuffix(arg, "}"):
+		return objectLiteralParamNames(strings.TrimSpace(arg[1:len(arg)-1]), params)
+	case strings.HasPrefix(arg, "[") && strings.HasSuffix(arg, "]"):
+		return collectionLiteralParamNames(strings.TrimSpace(arg[1:len(arg)-1]), params)
+	default:
+		return nil
+	}
+}
+
+func collectionLiteralParamNames(items string, params map[string]bool) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, item := range splitSimpleArguments(items) {
+		paramName := strings.TrimPrefix(strings.TrimSpace(item), "$")
+		if !simpleIdentifierRe.MatchString(paramName) || !params[paramName] || seen[paramName] {
+			continue
+		}
+		seen[paramName] = true
+		out = append(out, paramName)
+	}
+	sort.Strings(out)
 	return out
 }
 
