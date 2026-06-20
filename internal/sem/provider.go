@@ -2803,8 +2803,8 @@ func kubernetesResourceReferences(content string) []resourceReference {
 	for _, match := range regexp.MustCompile(`(?im)^\s*serviceName:\s*([A-Za-z0-9_.-]+)\s*$`).FindAllStringSubmatch(content, -1) {
 		add("service", match[1], "kubernetes_ingress_service_name", 0.8)
 	}
-	for _, match := range regexp.MustCompile(`(?is)\bbackendRefs:\s*\n(?:\s+-\s*)?(?:(?:kind:\s*Service\s*\n)|(?:[A-Za-z0-9_-]+:\s*[^\n]*\n))*\s+name:\s*([A-Za-z0-9_.-]+)`).FindAllStringSubmatch(content, -1) {
-		add("service", match[1], "kubernetes_gateway_backend_ref", 0.82)
+	for _, ref := range kubernetesGatewayBackendReferences(content) {
+		add(ref.Kind, ref.Name, ref.EvidenceKind, ref.Confidence)
 	}
 	for _, ref := range kubernetesGatewayParentReferences(content) {
 		add(ref.Kind, ref.Name, ref.EvidenceKind, ref.Confidence)
@@ -3032,6 +3032,63 @@ func kubernetesScaledObjectScaleTargetReferences(content string) []resourceRefer
 			EvidenceKind: "kubernetes_keda_scale_target",
 			Confidence:   0.8,
 		})
+	}
+	return refs
+}
+
+func kubernetesGatewayBackendReferences(content string) []resourceReference {
+	lines := strings.Split(content, "\n")
+	var refs []resourceReference
+	for i := 0; i < len(lines); i++ {
+		key, ok := yamlLineKey(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(lines[i]), "- ")))
+		if !ok || key != "backendRefs" {
+			continue
+		}
+		parentIndent := yamlIndent(lines[i])
+		var name, kind string
+		flush := func() {
+			name = strings.Trim(strings.TrimSpace(name), `"'`)
+			kind = strings.Trim(strings.TrimSpace(kind), `"'`)
+			if name == "" {
+				name, kind = "", ""
+				return
+			}
+			if kind == "" || strings.EqualFold(kind, "Service") {
+				refs = append(refs, resourceReference{
+					Kind:         "service",
+					Name:         name,
+					EvidenceKind: "kubernetes_gateway_backend_ref",
+					Confidence:   0.82,
+				})
+			}
+			name, kind = "", ""
+		}
+		for j := i + 1; j < len(lines); j++ {
+			line := lines[j]
+			if yamlIgnoreLine(line) {
+				continue
+			}
+			indent := yamlIndent(line)
+			if indent <= parentIndent {
+				break
+			}
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "- ") {
+				flush()
+				trimmed = strings.TrimSpace(strings.TrimPrefix(trimmed, "- "))
+			}
+			childKey, ok := yamlLineKey(trimmed)
+			if !ok {
+				continue
+			}
+			switch childKey {
+			case "name":
+				name = yamlLineValue(trimmed)
+			case "kind":
+				kind = yamlLineValue(trimmed)
+			}
+		}
+		flush()
 	}
 	return refs
 }

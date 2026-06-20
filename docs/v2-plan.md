@@ -375,7 +375,7 @@ Delivered:
   present in the same provider snapshot, those named references also resolve to
   exact local `RESOURCE_DEPENDS_ON` symbol edges. The same exact local
   resolution covers RBAC role/subject references, owner references, Ingress
-  Service backends, Gateway API HTTPRoute backend refs and parent Gateway refs,
+  Service backends, Gateway API route backend refs and parent Gateway refs,
   HPA scale targets, projected ConfigMap/Secret volume refs, ConfigMap/Secret
   key refs, and image pull secrets.
 - Istio VirtualService route destinations and gateway refs, plus

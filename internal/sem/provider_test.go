@@ -1242,6 +1242,16 @@ metadata:
 kind: Service
 metadata:
   name: api
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grpc-api
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: secure-api
 `)
 	writeFile(t, repo, "k8s/gateway.yaml", `apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
@@ -1343,6 +1353,39 @@ spec:
           kind: Service
           port: 80
 `)
+	writeFile(t, repo, "k8s/grpc-route.yaml", `apiVersion: gateway.networking.k8s.io/v1
+kind: GRPCRoute
+metadata:
+  name: grpc-api
+spec:
+  parentRefs:
+    - name: public
+  rules:
+    - backendRefs:
+        - group: ""
+          kind: Service
+          name: grpc-api
+          port: 50051
+        - kind: BackendTLSPolicy
+          name: ignored-policy
+`)
+	writeFile(t, repo, "k8s/tls-route.yaml", `apiVersion: gateway.networking.k8s.io/v1alpha2
+kind: TLSRoute
+metadata:
+  name: secure-api
+spec:
+  parentRefs:
+    - name: public
+  rules:
+    - backendRefs:
+        - name: secure-api
+          port: 443
+`)
+	writeFile(t, repo, "k8s/backend-policy.yaml", `apiVersion: gateway.networking.k8s.io/v1alpha3
+kind: BackendTLSPolicy
+metadata:
+  name: ignored-policy
+`)
 
 	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
 	if err != nil {
@@ -1353,6 +1396,10 @@ spec:
 		{"Ingress.api", "Service.api"},
 		{"HTTPRoute.api", "Service.api"},
 		{"HTTPRoute.api", "Gateway.public"},
+		{"GRPCRoute.grpc-api", "Service.grpc-api"},
+		{"GRPCRoute.grpc-api", "Gateway.public"},
+		{"TLSRoute.secure-api", "Service.secure-api"},
+		{"TLSRoute.secure-api", "Gateway.public"},
 		{"RoleBinding.api-readers", "Role.api-reader"},
 		{"RoleBinding.api-readers", "ServiceAccount.api-runner"},
 		{"ClusterRoleBinding.api-admins", "ClusterRole.api-admin"},
@@ -1365,6 +1412,9 @@ spec:
 	}
 	if hasRelationByLastSegment(snapshot.Relations, "RESOURCE_DEPENDS_ON", "HTTPRoute.api", "ReferenceGrant.ignored-parent") {
 		t.Fatalf("HTTPRoute parentRefs should not treat explicit non-Gateway parent as Gateway dependency: %#v", snapshot.Relations)
+	}
+	if hasRelationByLastSegment(snapshot.Relations, "RESOURCE_DEPENDS_ON", "GRPCRoute.grpc-api", "BackendTLSPolicy.ignored-policy") {
+		t.Fatalf("Gateway API backendRefs should not treat explicit non-Service backend as Service dependency: %#v", snapshot.Relations)
 	}
 }
 

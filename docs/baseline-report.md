@@ -89,7 +89,7 @@ Confidence bands follow the v2-plan schema section (`0.90-1.00 exact`,
   `RESOURCE_DEPENDS_ON` (0.78-0.9 across HCL, Dockerfile, Docker Compose,
   Kubernetes, and Kustomize dependency patterns; Kubernetes named
   ConfigMap/Secret/service-account/PVC/RBAC/owner/Ingress/HPA references,
-  Gateway API HTTPRoute backend refs and parent Gateway refs, projected
+  Gateway API route backend refs and parent Gateway refs, projected
   ConfigMap/Secret volume refs, ConfigMap/Secret key refs, image pull secrets,
   Service selectors, PodDisruptionBudget selectors, NetworkPolicy pod
   selectors, ServiceMonitor selectors, and PodMonitor selectors, including
