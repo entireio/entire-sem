@@ -3389,6 +3389,7 @@ type manifestImportResolver struct {
 	jvmTypes          map[string]string
 	rustCrateName     string
 	rustModules       map[string]string
+	rustAliases       map[string]string
 }
 
 type manifestImportResolution struct {
@@ -3405,7 +3406,7 @@ type tsPathMapping struct {
 }
 
 func buildManifestImportResolver(files []FileRecord, readContent contentReader) manifestImportResolver {
-	resolver := manifestImportResolver{goPackages: map[string]string{}, jsPackageExports: map[string]string{}, jsPackageImports: map[string]string{}, jsImportMap: map[string]string{}, jsModuleFiles: map[string]string{}, pythonSourceRoots: []string{"src"}, pythonModules: map[string]string{}, pythonNamespaces: map[string]bool{}, jvmTypes: map[string]string{}, rustModules: map[string]string{}}
+	resolver := manifestImportResolver{goPackages: map[string]string{}, jsPackageExports: map[string]string{}, jsPackageImports: map[string]string{}, jsImportMap: map[string]string{}, jsModuleFiles: map[string]string{}, pythonSourceRoots: []string{"src"}, pythonModules: map[string]string{}, pythonNamespaces: map[string]bool{}, jvmTypes: map[string]string{}, rustModules: map[string]string{}, rustAliases: map[string]string{}}
 	if content, ok := readContent("go.mod"); ok {
 		resolver.goModule = parseGoModulePath(content)
 	}
@@ -3525,6 +3526,17 @@ func buildManifestImportResolver(files []FileRecord, readContent contentReader) 
 		for _, module := range rustModuleKeysForPath(path) {
 			if _, exists := resolver.rustModules[module]; !exists {
 				resolver.rustModules[module] = path
+			}
+		}
+	}
+	for _, path := range rustPaths {
+		content, ok := readContent(path)
+		if !ok {
+			continue
+		}
+		for _, alias := range rustAliasesForFile(path, content) {
+			if alias.From != "" && alias.To != "" {
+				resolver.rustAliases[alias.From] = alias.To
 			}
 		}
 	}
@@ -4332,15 +4344,43 @@ func (resolver manifestImportResolver) resolveRustImport(importingPath, spec str
 
 func (resolver manifestImportResolver) resolveRustModulePath(module string) (string, bool) {
 	module = strings.Trim(module, ":")
+	seen := map[string]bool{}
 	for module != "" {
 		if path, ok := resolver.rustModules[module]; ok {
 			return path, true
+		}
+		if seen[module] {
+			break
+		}
+		seen[module] = true
+		if expanded, ok := resolver.expandRustAlias(module); ok && expanded != module {
+			module = expanded
+			continue
 		}
 		idx := strings.LastIndex(module, "::")
 		if idx < 0 {
 			break
 		}
 		module = module[:idx]
+	}
+	return "", false
+}
+
+func (resolver manifestImportResolver) expandRustAlias(module string) (string, bool) {
+	probe := strings.Trim(module, ":")
+	for probe != "" {
+		if target, ok := resolver.rustAliases[probe]; ok {
+			suffix := strings.TrimPrefix(strings.TrimPrefix(module, probe), "::")
+			if suffix == "" {
+				return target, true
+			}
+			return strings.Trim(target+"::"+suffix, ":"), true
+		}
+		idx := strings.LastIndex(probe, "::")
+		if idx < 0 {
+			break
+		}
+		probe = probe[:idx]
 	}
 	return "", false
 }
@@ -4377,6 +4417,112 @@ func rustModuleKeysForPath(path string) []string {
 		return nil
 	}
 	return []string{module}
+}
+
+type rustAlias struct {
+	From string
+	To   string
+}
+
+func rustAliasesForFile(path, content string) []rustAlias {
+	current := rustCurrentModuleForPath(path)
+	var aliases []rustAlias
+	aliases = append(aliases, rustPathModuleAliases(path, content, current)...)
+	aliases = append(aliases, rustPubUseAliases(content, current)...)
+	return aliases
+}
+
+func rustPathModuleAliases(path, content, current string) []rustAlias {
+	re := regexp.MustCompile(`(?m)#\s*\[\s*path\s*=\s*"([^"]+)"\s*\]\s*(?:pub\s+)?mod\s+([A-Za-z_][A-Za-z0-9_]*)\s*;`)
+	var aliases []rustAlias
+	for _, match := range re.FindAllStringSubmatch(content, -1) {
+		targetPath := filepath.ToSlash(filepath.Join(filepath.Dir(path), match[1]))
+		keys := rustModuleKeysForPath(targetPath)
+		if len(keys) == 0 {
+			continue
+		}
+		from := rustJoinModule(current, match[2])
+		aliases = append(aliases, rustAlias{From: from, To: keys[0]})
+	}
+	return aliases
+}
+
+func rustPubUseAliases(content, current string) []rustAlias {
+	re := regexp.MustCompile(`(?m)^\s*pub\s+use\s+([^;]+);`)
+	var aliases []rustAlias
+	for _, match := range re.FindAllStringSubmatch(content, -1) {
+		source, exported, ok := parseRustPubUseAlias(match[1], current)
+		if ok {
+			aliases = append(aliases, rustAlias{From: exported, To: source})
+		}
+	}
+	return aliases
+}
+
+func parseRustPubUseAlias(expr, current string) (string, string, bool) {
+	expr = strings.TrimSpace(expr)
+	if expr == "" || strings.Contains(expr, "*") || strings.Contains(expr, "{") || strings.Contains(expr, "}") {
+		return "", "", false
+	}
+	alias := ""
+	if idx := strings.LastIndex(expr, " as "); idx >= 0 {
+		alias = strings.TrimSpace(expr[idx+4:])
+		expr = strings.TrimSpace(expr[:idx])
+	}
+	expr = normalizeRustImportSpec(expr)
+	target := rustNormalizeUsePath(expr, current)
+	if target == "" {
+		return "", "", false
+	}
+	if alias == "" {
+		parts := strings.Split(target, "::")
+		alias = parts[len(parts)-1]
+	}
+	exported := rustJoinModule(current, alias)
+	return target, exported, true
+}
+
+func rustNormalizeUsePath(path, current string) string {
+	path = strings.Trim(path, ": ")
+	switch {
+	case strings.HasPrefix(path, "crate::"):
+		return strings.TrimPrefix(path, "crate::")
+	case strings.HasPrefix(path, "self::"):
+		return rustJoinModule(current, strings.TrimPrefix(path, "self::"))
+	case strings.HasPrefix(path, "super::"):
+		parent := current
+		for strings.HasPrefix(path, "super::") {
+			path = strings.TrimPrefix(path, "super::")
+			if idx := strings.LastIndex(parent, "::"); idx >= 0 {
+				parent = parent[:idx]
+			} else {
+				parent = ""
+			}
+		}
+		return rustJoinModule(parent, path)
+	default:
+		return rustJoinModule(current, path)
+	}
+}
+
+func rustCurrentModuleForPath(path string) string {
+	keys := rustModuleKeysForPath(path)
+	if len(keys) == 0 {
+		return ""
+	}
+	return keys[0]
+}
+
+func rustJoinModule(prefix, suffix string) string {
+	prefix = strings.Trim(prefix, ":")
+	suffix = strings.Trim(suffix, ":")
+	if prefix == "" {
+		return suffix
+	}
+	if suffix == "" {
+		return prefix
+	}
+	return prefix + "::" + suffix
 }
 
 func normalizeRustCrateName(name string) string {

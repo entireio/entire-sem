@@ -70,7 +70,8 @@ Confidence bands follow the v2-plan schema section (`0.90-1.00 exact`,
   `tsconfig.json` path aliases resolve locally at 0.89-0.92; Python
   project/module imports, configured source roots, and inferred namespace roots
   resolve locally at 0.88-0.90; exact JVM package imports resolve locally at
-  0.90; Rust crate/Cargo module imports resolve locally at 0.88).
+  0.90; Rust crate/Cargo module imports, deterministic `#[path] mod` aliases,
+  and straightforward `pub use` re-exports resolve locally at 0.88).
 - Calls: `CALLS` — same-file 0.92, imported 0.86, type-inferred receiver
   0.85-0.9, globally-unique name 0.68.
 - OO/type: `EXTENDS`, `IMPLEMENTS` (0.9; C# 0.7 heuristic), `OVERRIDES` (0.85),
@@ -151,8 +152,9 @@ False negatives:
   records (`resolution: import_resolved`, `target_kind: file`). Remaining
   non-relative local imports that depend on deeper JS/TS conditional
   exports/import-map scopes, complex Python package-dir/editable-install/
-  importlib behavior, Maven/Gradle classpath behavior, deeper Rust
-  module/export forms, or other ecosystem manifests remain external.
+  importlib behavior, Maven/Gradle classpath behavior, macro-expanded or complex
+  Rust name resolution beyond deterministic local module/re-export aliases, or
+  other ecosystem manifests remain external.
 - **Field-access relations.** `READS_FIELD`/`WRITES_FIELD`/`ACCESSES` are now
   emitted for `receiver.field` accesses resolved through the receiver's type
   (this/self, Go method receiver, or constructor-assigned local) to a known

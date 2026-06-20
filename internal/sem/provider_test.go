@@ -476,13 +476,23 @@ version = "0.1.0"
 `)
 	writeFile(t, repo, "src/lib.rs", `pub mod config;
 pub mod engine;
+mod internal;
+pub use crate::internal::SettingsAlias;
+#[path = "generated/client.rs"]
+pub mod client;
 `)
 	writeFile(t, repo, "src/config.rs", `pub struct Settings;
 `)
 	writeFile(t, repo, "src/engine/mod.rs", `pub struct Runner;
 `)
+	writeFile(t, repo, "src/internal.rs", `pub struct SettingsAlias;
+`)
+	writeFile(t, repo, "src/generated/client.rs", `pub struct Client;
+`)
 	writeFile(t, repo, "src/main.rs", `use crate::config::Settings;
+use crate::SettingsAlias;
 use acme_tools::engine::Runner;
+use acme_tools::client::Client;
 
 fn main() {}
 `)
@@ -492,8 +502,10 @@ fn main() {}
 		t.Fatal(err)
 	}
 	targets := map[string]string{
-		"src/config.rs":     "rust_crate_import",
-		"src/engine/mod.rs": "cargo_package_import",
+		"src/config.rs":           "rust_crate_import",
+		"src/internal.rs":         "rust_crate_import",
+		"src/engine/mod.rs":       "cargo_package_import",
+		"src/generated/client.rs": "cargo_package_import",
 	}
 	for targetPath, evidenceKind := range targets {
 		target := fileID(snapshot.Header.RepoKey, targetPath)

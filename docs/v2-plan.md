@@ -188,9 +188,10 @@ Tasks:
   names, configured setuptools package-find roots, and inferred nested `*/src`
   namespace roots are implemented for local Python module resolution; exact
   Java/Kotlin/Scala package imports are implemented through package declarations
-  and source file names; Cargo package names are implemented for conventional
-  local Rust module files. Maven/Gradle
-  classpath modeling and deeper Rust module/export forms remain open.
+  and source file names; Cargo package names, deterministic `#[path] mod`
+  aliases, and straightforward `pub use` re-exports are implemented for local
+  Rust module files. Maven/Gradle classpath modeling and macro-expanded or
+  complex Rust name resolution remain open.
 - Normalize module/package roots and file-to-module ownership.
 - Resolve relative imports for Go, Python, JS/TS, Rust, Java, C#, PHP.
 - Emit `IMPORTS` edges to symbols/files when resolved, external endpoints when
