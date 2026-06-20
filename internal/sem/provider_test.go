@@ -471,6 +471,57 @@ def call():
 	}
 }
 
+func TestPythonImportsResolveThroughPyProjectPackageDir(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "pyproject.toml", `[tool.setuptools]
+package-dir = {"" = "lib"}
+`)
+	writeFile(t, repo, "lib/acme_pkg/__init__.py", "")
+	writeFile(t, repo, "lib/acme_pkg/service.py", `def run():
+    return "ok"
+`)
+	writeFile(t, repo, "lib/acme_pkg/consumer.py", `import acme_pkg.service
+
+def call():
+    return acme_pkg.service.run()
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := fileID(snapshot.Header.RepoKey, "lib/acme_pkg/service.py")
+	if !hasImportRelationWithEvidence(snapshot.Relations, "lib/acme_pkg/consumer.py", target, "acme_pkg.service", "python_module_import") {
+		t.Fatalf("missing pyproject package-dir Python import to %s in %#v", target, snapshot.Relations)
+	}
+}
+
+func TestPythonImportsResolveThroughSetupCFGPackageDir(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "setup.cfg", `[options]
+package_dir =
+    = python
+`)
+	writeFile(t, repo, "python/acme_cfg/__init__.py", "")
+	writeFile(t, repo, "python/acme_cfg/service.py", `def run():
+    return "ok"
+`)
+	writeFile(t, repo, "python/acme_cfg/consumer.py", `import acme_cfg.service
+
+def call():
+    return acme_cfg.service.run()
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := fileID(snapshot.Header.RepoKey, "python/acme_cfg/service.py")
+	if !hasImportRelationWithEvidence(snapshot.Relations, "python/acme_cfg/consumer.py", target, "acme_cfg.service", "python_module_import") {
+		t.Fatalf("missing setup.cfg package_dir Python import to %s in %#v", target, snapshot.Relations)
+	}
+}
+
 func TestSetupCFGNameParsingNormalizesPythonPackage(t *testing.T) {
 	name := parseSetupCFGName(`[metadata]
 Name = acme-tools

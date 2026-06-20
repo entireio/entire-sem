@@ -209,9 +209,9 @@ Tasks:
   snapshot; root `package.json` package self-imports, `exports`, `imports`, root
   and scoped import maps, and simple `tsconfig.json` `compilerOptions.paths`
   aliases are implemented for local JS/TS files; `pyproject.toml` and
-  `setup.cfg` package names, configured setuptools package-find roots, and
-  inferred nested `*/src` namespace roots are implemented for local Python
-  module resolution; exact
+  `setup.cfg` package names, configured setuptools package-find roots, root
+  `package-dir`/`package_dir` mappings, and inferred nested `*/src` namespace
+  roots are implemented for local Python module resolution; exact
   Java/Kotlin/Scala package imports are implemented through package declarations
   and source file names, with simple root Maven/Gradle package identity aliases;
   `.csproj` root namespace and assembly-name aliases resolve unique C#

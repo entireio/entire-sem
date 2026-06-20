@@ -5842,7 +5842,9 @@ func parsePyProjectName(content string) string {
 }
 
 func parsePyProjectPythonSourceRoots(content string) []string {
+	inSetuptools := false
 	inSetuptoolsFind := false
+	inSetuptoolsPackageDir := false
 	var roots []string
 	scanner := bufio.NewScanner(strings.NewReader(content))
 	for scanner.Scan() {
@@ -5851,11 +5853,19 @@ func parsePyProjectPythonSourceRoots(content string) []string {
 			continue
 		}
 		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+			inSetuptools = line == "[tool.setuptools]"
 			inSetuptoolsFind = line == "[tool.setuptools.packages.find]"
+			inSetuptoolsPackageDir = line == "[tool.setuptools.package-dir]" || line == "[tool.setuptools.package_dir]"
 			continue
 		}
 		if inSetuptoolsFind && strings.HasPrefix(line, "where") {
 			roots = append(roots, parsePythonSourceRootValues(line)...)
+		}
+		if inSetuptools && (strings.HasPrefix(line, "package-dir") || strings.HasPrefix(line, "package_dir")) {
+			roots = append(roots, parsePyProjectPackageDirRoots(line)...)
+		}
+		if inSetuptoolsPackageDir {
+			roots = append(roots, parsePythonPackageDirRootMapping(line)...)
 		}
 	}
 	return normalizePythonSourceRoots(roots)
@@ -5883,23 +5893,80 @@ func parseSetupCFGName(content string) string {
 }
 
 func parseSetupCFGPythonSourceRoots(content string) []string {
+	inOptions := false
 	inFind := false
+	inPackageDirSection := false
+	inPackageDirContinuation := false
 	var roots []string
 	scanner := bufio.NewScanner(strings.NewReader(content))
 	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
+		rawLine := scanner.Text()
+		line := strings.TrimSpace(rawLine)
 		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") {
 			continue
 		}
 		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+			inOptions = strings.EqualFold(line, "[options]")
 			inFind = strings.EqualFold(line, "[options.packages.find]")
+			inPackageDirSection = strings.EqualFold(line, "[options.package_dir]") || strings.EqualFold(line, "[options.package-dir]")
+			inPackageDirContinuation = false
 			continue
 		}
 		if inFind && strings.HasPrefix(strings.ToLower(line), "where") {
 			roots = append(roots, parsePythonSourceRootValues(line)...)
 		}
+		if inOptions && strings.HasPrefix(strings.ToLower(line), "package_dir") {
+			value := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line[len("package_dir"):]), "="))
+			if value != "" {
+				roots = append(roots, strings.Trim(value, `"'`))
+			}
+			inPackageDirContinuation = value == ""
+			continue
+		}
+		if inPackageDirSection || inPackageDirContinuation {
+			roots = append(roots, parsePythonPackageDirRootMapping(line)...)
+		}
 	}
 	return normalizePythonSourceRoots(roots)
+}
+
+func parsePyProjectPackageDirRoots(line string) []string {
+	parts := strings.SplitN(line, "=", 2)
+	if len(parts) != 2 {
+		return nil
+	}
+	value := strings.TrimSpace(parts[1])
+	if strings.HasPrefix(value, "{") {
+		return regexpPackageDirRootValues(value)
+	}
+	value = strings.Trim(value, `"'`)
+	if value == "" {
+		return nil
+	}
+	return []string{value}
+}
+
+func regexpPackageDirRootValues(value string) []string {
+	var roots []string
+	re := regexp.MustCompile(`(?m)(?:""|'')\s*=\s*["']([^"']+)["']`)
+	for _, match := range re.FindAllStringSubmatch(value, -1) {
+		if len(match) == 2 && strings.TrimSpace(match[1]) != "" {
+			roots = append(roots, match[1])
+		}
+	}
+	return roots
+}
+
+func parsePythonPackageDirRootMapping(line string) []string {
+	parts := strings.SplitN(line, "=", 2)
+	if len(parts) != 2 || strings.TrimSpace(parts[0]) != "" {
+		return nil
+	}
+	value := strings.Trim(strings.TrimSpace(parts[1]), `"'`)
+	if value == "" {
+		return nil
+	}
+	return []string{value}
 }
 
 func parseCargoPackageName(content string) string {
