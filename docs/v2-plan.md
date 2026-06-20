@@ -294,6 +294,9 @@ Delivered:
   matching workload resources by selector labels.
 - Kustomize manifests emit overlay/resource sections plus external
   dependencies for listed resources, patches, and components.
+- Docker Compose manifests emit service resources, exact `depends_on`
+  `RESOURCE_DEPENDS_ON` edges between services, and common image/env/port
+  `CONFIGURES` facts.
 - Terraform/HCL blocks emit resources, modules, variables, outputs, config
   targets, and exact intra-module `RESOURCE_DEPENDS_ON` edges for block
   references.

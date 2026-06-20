@@ -195,6 +195,27 @@ func TestTreeSitterParserDoesNotTreatEveryYAMLFileAsWorkflow(t *testing.T) {
 	}
 }
 
+func TestTreeSitterParserDockerComposeServiceEntities(t *testing.T) {
+	entities, language := TreeSitterParser{}.Parse("docker-compose.yml", `services:
+  api:
+    image: example/api:latest
+  db:
+    image: postgres:16
+`)
+	if language != "YAML" {
+		t.Fatalf("language = %q", language)
+	}
+	seen := map[string]string{}
+	for _, entity := range entities {
+		seen[entity.Name] = entity.Kind
+	}
+	for _, name := range []string{"compose.service.api", "compose.service.db"} {
+		if seen[name] != "resource" {
+			t.Fatalf("%s kind = %q, want resource in %#v", name, seen[name], entities)
+		}
+	}
+}
+
 func TestTreeSitterParserPostgresMigrationEntities(t *testing.T) {
 	input := `create extension if not exists vector;
 

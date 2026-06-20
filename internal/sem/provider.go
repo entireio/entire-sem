@@ -1960,6 +1960,7 @@ func resourceDependsOnRelations(recordsByFile map[string][]SymbolRecord, readCon
 	relations = append(relations, kubernetesResourceDependsOnRelations(recordsByFile, readContent)...)
 	relations = append(relations, kubernetesSelectorResourceRelations(recordsByFile, readContent)...)
 	relations = append(relations, kustomizeResourceDependsOnRelations(recordsByFile, readContent)...)
+	relations = append(relations, composeResourceDependsOnRelations(recordsByFile, readContent)...)
 	return relations
 }
 
@@ -2354,6 +2355,72 @@ func kustomizeFileReferences(content string) []string {
 	return dedupeStrings(refs)
 }
 
+func composeResourceDependsOnRelations(recordsByFile map[string][]SymbolRecord, readContent contentReader) []RelationRecord {
+	var relations []RelationRecord
+	for _, path := range sortedKeysOf(recordsByFile) {
+		if !yamlDockerComposePath(path) {
+			continue
+		}
+		content, ok := readContent(path)
+		if !ok {
+			continue
+		}
+		services := map[string]SymbolRecord{}
+		for _, symbol := range recordsByFile[path] {
+			if !composeServiceSymbol(symbol) {
+				continue
+			}
+			services[composeServiceName(symbol)] = symbol
+		}
+		if len(services) == 0 {
+			continue
+		}
+		lines := strings.Split(content, "\n")
+		for _, symbol := range recordsByFile[path] {
+			if !composeServiceSymbol(symbol) {
+				continue
+			}
+			body := symbolBlockFromLines(lines, symbol)
+			for _, dep := range composeServiceDependencyRefs(body) {
+				target, ok := services[dep]
+				if !ok || target.ID == symbol.ID {
+					continue
+				}
+				relations = append(relations, RelationRecord{
+					RecordType:    "relation",
+					FromID:        symbol.ID,
+					ToID:          target.ID,
+					Type:          "RESOURCE_DEPENDS_ON",
+					Confidence:    0.9,
+					Reason:        "Docker Compose service depends_on references another service",
+					RelationScope: "file",
+					Resolution:    "exact",
+					TargetKind:    "symbol",
+					Evidence: []Evidence{{
+						Kind:      "compose_depends_on",
+						FilePath:  symbol.FilePath,
+						StartLine: symbol.StartLine,
+						EndLine:   symbol.EndLine,
+						Detail:    composeServiceName(symbol) + " -> " + dep,
+					}},
+					WarningCodes: []string{},
+				})
+			}
+		}
+	}
+	return relations
+}
+
+func composeServiceDependencyRefs(block string) []string {
+	refs := composeBlockListValues(block, "depends_on")
+	refs = append(refs, composeBlockMapKeys(block, "depends_on")...)
+	for i := range refs {
+		refs[i] = strings.Trim(strings.TrimSpace(refs[i]), `"'`)
+	}
+	sort.Strings(refs)
+	return dedupeStrings(refs)
+}
+
 func firstSymbol(symbols []SymbolRecord, language string, preferredNames ...string) (SymbolRecord, bool) {
 	for _, name := range preferredNames {
 		for _, symbol := range symbols {
@@ -2401,6 +2468,167 @@ func dedupeStrings(values []string) []string {
 		out = append(out, value)
 	}
 	return out
+}
+
+func composeServiceSymbol(symbol SymbolRecord) bool {
+	return symbol.Language == "YAML" && symbol.Kind == "resource" && strings.HasPrefix(symbol.QualifiedName, "compose.service.")
+}
+
+func composeServiceName(symbol SymbolRecord) string {
+	return strings.TrimPrefix(symbol.QualifiedName, "compose.service.")
+}
+
+func composeServiceConfigTargets(symbol SymbolRecord, content string) []configTarget {
+	if !composeServiceSymbol(symbol) {
+		return nil
+	}
+	body := symbolBlockFromLines(strings.Split(content, "\n"), symbol)
+	serviceName := composeServiceName(symbol)
+	targets := []configTarget{{
+		Name:         "compose/service/" + serviceName,
+		Confidence:   0.9,
+		Reason:       "Docker Compose file declares a service",
+		EvidenceKind: "compose_service",
+	}}
+	for _, image := range composeServiceImages(body) {
+		targets = append(targets, configTarget{
+			Name:         "compose/image/" + image,
+			Confidence:   0.82,
+			Reason:       "Docker Compose service references a container image",
+			EvidenceKind: "compose_image",
+		})
+	}
+	for _, env := range composeServiceEnvVars(body) {
+		targets = append(targets, configTarget{
+			Name:         "compose/env/" + env,
+			Confidence:   0.78,
+			Reason:       "Docker Compose service declares an environment variable",
+			EvidenceKind: "compose_env",
+		})
+	}
+	for _, port := range composeServicePorts(body) {
+		targets = append(targets, configTarget{
+			Name:         "compose/port/" + port,
+			Confidence:   0.78,
+			Reason:       "Docker Compose service declares a port mapping",
+			EvidenceKind: "compose_port",
+		})
+	}
+	return targets
+}
+
+func composeServiceImages(block string) []string {
+	var images []string
+	for _, match := range regexp.MustCompile(`(?im)^\s*image:\s*["']?([^"'\s#]+)`).FindAllStringSubmatch(block, -1) {
+		if len(match) == 2 {
+			images = append(images, strings.TrimSpace(match[1]))
+		}
+	}
+	sort.Strings(images)
+	return dedupeStrings(images)
+}
+
+func composeServiceEnvVars(block string) []string {
+	var envs []string
+	for _, value := range composeBlockListValues(block, "environment") {
+		name := value
+		if before, _, ok := strings.Cut(value, "="); ok {
+			name = before
+		}
+		name = strings.Trim(strings.TrimSpace(name), `"'`)
+		if name != "" {
+			envs = append(envs, name)
+		}
+	}
+	envs = append(envs, composeBlockMapKeys(block, "environment")...)
+	sort.Strings(envs)
+	return dedupeStrings(envs)
+}
+
+func composeServicePorts(block string) []string {
+	var ports []string
+	for _, value := range composeBlockListValues(block, "ports") {
+		value = strings.Trim(strings.TrimSpace(value), `"'`)
+		if value != "" {
+			ports = append(ports, value)
+		}
+	}
+	sort.Strings(ports)
+	return dedupeStrings(ports)
+}
+
+func composeBlockListValues(block, key string) []string {
+	lines := strings.Split(block, "\n")
+	var values []string
+	inBlock := false
+	blockIndent := 0
+	for _, line := range lines {
+		if yamlIgnoreLine(line) {
+			continue
+		}
+		indent := yamlIndent(line)
+		lineKey, hasKey := yamlLineKey(line)
+		if inBlock && indent <= blockIndent {
+			inBlock = false
+		}
+		if hasKey && lineKey == key {
+			value := strings.Trim(strings.TrimSpace(yamlLineValue(line)), `"'`)
+			if value != "" && value != "[]" && value != "{}" {
+				values = append(values, value)
+			}
+			inBlock = true
+			blockIndent = indent
+			continue
+		}
+		if !inBlock || indent <= blockIndent {
+			continue
+		}
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "-") {
+			continue
+		}
+		value := strings.TrimSpace(strings.TrimPrefix(trimmed, "-"))
+		if value != "" {
+			values = append(values, strings.Trim(value, `"'`))
+		}
+	}
+	return values
+}
+
+func composeBlockMapKeys(block, key string) []string {
+	lines := strings.Split(block, "\n")
+	var keys []string
+	inBlock := false
+	blockIndent := 0
+	childIndent := -1
+	for _, line := range lines {
+		if yamlIgnoreLine(line) {
+			continue
+		}
+		indent := yamlIndent(line)
+		lineKey, hasKey := yamlLineKey(line)
+		if inBlock && indent <= blockIndent {
+			inBlock = false
+			childIndent = -1
+		}
+		if hasKey && lineKey == key {
+			inBlock = true
+			blockIndent = indent
+			childIndent = -1
+			continue
+		}
+		if !inBlock || !hasKey || indent <= blockIndent {
+			continue
+		}
+		if childIndent < 0 {
+			childIndent = indent
+		}
+		if indent == childIndent {
+			keys = append(keys, strings.Trim(lineKey, `"'`))
+		}
+	}
+	sort.Strings(keys)
+	return dedupeStrings(keys)
 }
 
 // hclReferenceableName maps a block symbol name to the form used to reference it

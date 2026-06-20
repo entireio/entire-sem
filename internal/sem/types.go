@@ -420,6 +420,9 @@ func configTargets(symbol SymbolRecord, content string) []configTarget {
 			}}
 		}
 	case "YAML":
+		if targets := composeServiceConfigTargets(symbol, content); len(targets) > 0 {
+			return targets
+		}
 		if symbol.Kind == "resource" && (isKubernetesPath(symbol.FilePath) || looksLikeKubernetesManifest(content)) {
 			targets := []configTarget{{
 				Name:         "kubernetes/" + strings.ToLower(symbol.QualifiedName),

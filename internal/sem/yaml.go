@@ -27,6 +27,9 @@ func yamlEntities(path, content string) []Entity {
 	if resource := yamlKubernetesResourceEntity(lines, topLevel); resource.Name != "" {
 		entities = append(entities, resource)
 	}
+	if yamlDockerComposePath(path) {
+		entities = append(entities, yamlComposeServiceEntities(topLevel, lines)...)
+	}
 	for _, block := range topLevel {
 		switch block.Key {
 		case "name":
@@ -60,6 +63,16 @@ func yamlKubernetesResourceEntity(lines []string, topLevel []yamlBlock) Entity {
 func yamlWorkflowPath(path string) bool {
 	slashPath := filepath.ToSlash(path)
 	return strings.HasPrefix(slashPath, ".github/workflows/") && (strings.HasSuffix(slashPath, ".yml") || strings.HasSuffix(slashPath, ".yaml"))
+}
+
+func yamlDockerComposePath(path string) bool {
+	base := strings.ToLower(filepath.Base(filepath.ToSlash(path)))
+	switch base {
+	case "compose.yml", "compose.yaml", "docker-compose.yml", "docker-compose.yaml":
+		return true
+	default:
+		return false
+	}
 }
 
 func yamlTopLevelBlocks(lines []string) []yamlBlock {
@@ -106,6 +119,44 @@ func yamlJobEntities(jobs yamlBlock, lines []string) []Entity {
 	for _, block := range blocks {
 		name := "jobs." + block.Key
 		entities = append(entities, yamlEntity("job", name, "job "+name, block.StartLine, block.EndLine, lines))
+	}
+	return entities
+}
+
+func yamlComposeServiceEntities(topLevel []yamlBlock, lines []string) []Entity {
+	var services yamlBlock
+	for _, block := range topLevel {
+		if block.Key == "services" {
+			services = block
+			break
+		}
+	}
+	if services.Key == "" {
+		return nil
+	}
+	serviceIndent := yamlDirectChildIndent(services, lines)
+	if serviceIndent < 0 {
+		return nil
+	}
+	var blocks []yamlBlock
+	for index := services.StartLine; index < services.EndLine && index < len(lines); index++ {
+		line := lines[index]
+		if yamlIndent(line) != serviceIndent || yamlIgnoreLine(line) {
+			continue
+		}
+		key, ok := yamlLineKey(line)
+		if !ok {
+			continue
+		}
+		if len(blocks) > 0 {
+			blocks[len(blocks)-1].EndLine = index
+		}
+		blocks = append(blocks, yamlBlock{Key: key, StartLine: index + 1, EndLine: services.EndLine})
+	}
+	entities := make([]Entity, 0, len(blocks))
+	for _, block := range blocks {
+		name := "compose.service." + block.Key
+		entities = append(entities, yamlEntity("resource", name, "docker compose service "+block.Key, block.StartLine, block.EndLine, lines))
 	}
 	return entities
 }

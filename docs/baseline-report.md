@@ -52,8 +52,8 @@ review.
 | `rust-oo`           | Rust       | `impl Trait for Type`, supertrait bounds                   |
 
 All seven Priority-1 languages (per WP9) have committed baselines. Boundary,
-service, and IaC fixtures now cover Terraform/HCL, Dockerfile, Kubernetes YAML,
-Kustomize, GitHub Actions, protobuf/gRPC, GraphQL, tRPC, and Python
+service, and IaC fixtures now cover Terraform/HCL, Dockerfile, Docker Compose,
+Kubernetes YAML, Kustomize, GitHub Actions, protobuf/gRPC, GraphQL, tRPC, and Python
 Flask/FastAPI-style decorator routes; remaining work is deeper framework
 coverage and larger-corpus proof.
 
@@ -77,8 +77,8 @@ Confidence bands follow the v2-plan schema section (`0.90-1.00 exact`,
 - Boundaries: `HANDLES_ROUTE` (0.7), `HTTP_CALLS` (0.6-0.7), `HANDLES_TOOL`
   (0.85), `EMITS`/`LISTENS_ON` (0.6, `WEAK_PATTERN`).
 - Other: `SIMILAR_TO` (MinHash estimate), `TESTS` (0.8),
-  `RESOURCE_DEPENDS_ON` (0.78-0.9 across HCL, Dockerfile, Kubernetes, and
-  Kustomize dependency patterns).
+  `RESOURCE_DEPENDS_ON` (0.78-0.9 across HCL, Dockerfile, Docker Compose,
+  Kubernetes, and Kustomize dependency patterns).
 
 `capabilities --json` reports per-language relation support
 (`relation_support_by_language`) and pattern-driven relations separately in

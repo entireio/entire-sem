@@ -510,6 +510,61 @@ patches:
 	}
 }
 
+func TestDockerComposeServiceDependenciesAndConfig(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "docker-compose.yml", `services:
+  api:
+    image: example/api:latest
+    depends_on:
+      - redis
+      - db
+    ports:
+      - "8080:80"
+    environment:
+      LOG_LEVEL: debug
+      FEATURE_FLAG: "true"
+  db:
+    image: postgres:16
+  redis:
+    image: redis:7
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, service := range []string{"compose.service.api", "compose.service.db", "compose.service.redis"} {
+		found := false
+		for _, symbol := range snapshot.Symbols {
+			if symbol.Kind == "resource" && symbol.QualifiedName == service {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("missing Compose service symbol %s in %#v", service, snapshot.Symbols)
+		}
+	}
+	if !hasRelationByLastSegment(snapshot.Relations, "RESOURCE_DEPENDS_ON", "compose.service.api", "compose.service.db") {
+		t.Fatalf("missing api->db Compose dependency in %#v", snapshot.Relations)
+	}
+	if !hasRelationByLastSegment(snapshot.Relations, "RESOURCE_DEPENDS_ON", "compose.service.api", "compose.service.redis") {
+		t.Fatalf("missing api->redis Compose dependency in %#v", snapshot.Relations)
+	}
+	for _, target := range []string{
+		"external:config:compose/service/api",
+		"external:config:compose/image/example/api:latest",
+		"external:config:compose/env/FEATURE_FLAG",
+		"external:config:compose/env/LOG_LEVEL",
+		"external:config:compose/port/8080:80",
+	} {
+		if !hasRelationTo(snapshot.Relations, "CONFIGURES", target) {
+			t.Fatalf("missing Compose config fact to %s in %#v", target, snapshot.Relations)
+		}
+	}
+}
+
 func TestChannelEventsShareNode(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "bus.js", `function publish(bus) {

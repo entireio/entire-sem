@@ -15,6 +15,7 @@ go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go
 go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go -limit 1 -profile syntax-only -provider-version codex-full-plan -out bench/results
 go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go -limit 1 -profile syntax-only -provider-version codex-full-plan -out bench/results
 go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go -limit 1 -profile syntax-only -provider-version codex-full-plan -out bench/results
+go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go -limit 1 -profile syntax-only -provider-version codex-full-plan -out bench/results
 ```
 
 ## Results
@@ -42,6 +43,9 @@ go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go
   (`Service` -> matching workload resource by selector labels).
 - Kubernetes resource config tests pass for common container image,
   environment-variable, and port declarations emitted as `CONFIGURES` facts.
+- Docker Compose service extraction emits service resource symbols, exact
+  service-to-service `depends_on` edges, and common image/env/port
+  `CONFIGURES` facts.
 - Static HTTP client calls bridge to exact local route handlers through shared
   route endpoints as direct `CALLS` edges.
 - Retained benchmark reports:
@@ -61,6 +65,8 @@ go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go
     148,851 LOC/s, max RSS 26,066,944 bytes, output 1,938,906 bytes.
   - `bench/results/result-1781941213.json`: Go/gin, syntax-only, 28,618 LOC,
     166,849 LOC/s, max RSS 27,459,584 bytes, output 1,938,906 bytes.
+  - `bench/results/result-1781941732.json`: Go/gin, syntax-only, 28,618 LOC,
+    163,578 LOC/s, max RSS 27,983,872 bytes, output 1,938,906 bytes.
 
 ## Remaining Honesty Notes
 
