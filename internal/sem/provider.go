@@ -3046,6 +3046,11 @@ func kubernetesResourceReferences(content string) []resourceReference {
 	for _, ref := range kubernetesKindNameBlockReferences(content, "scaleTargetRef", "kubernetes_hpa_scale_target", 0.84) {
 		add(ref.Kind, ref.Name, ref.EvidenceKind, ref.Confidence)
 	}
+	if kubernetesManifestHasAnyKind(content, "VerticalPodAutoscaler") {
+		for _, ref := range kubernetesNamedRefBlockReferences(content, "targetRef", "kubernetes_vpa_target_ref", 0.84, kubernetesDefaultReferenceKind("deployment")) {
+			add(ref.Kind, ref.Name, ref.EvidenceKind, ref.Confidence)
+		}
+	}
 	for _, ref := range kubernetesScaledObjectScaleTargetReferences(content) {
 		add(ref.Kind, ref.Name, ref.EvidenceKind, ref.Confidence)
 	}

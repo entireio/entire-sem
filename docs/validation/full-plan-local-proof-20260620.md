@@ -218,7 +218,8 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
   PVC `volumeName` refs, PVC `dataSource`/`dataSourceRef` refs,
   VolumeSnapshot PVC source refs, VolumeSnapshotContent snapshot refs,
   metadata Namespace refs, pod `runtimeClassName` refs, pod
-  `priorityClassName` refs, and HPA scale targets emit exact local
+  `priorityClassName` refs, HPA scale targets, and VerticalPodAutoscaler
+  targetRefs emit exact local
   `RESOURCE_DEPENDS_ON` edges when the referenced resource manifests are
   present in the snapshot.
 - KEDA ScaledObject name-only scale targets emit exact local

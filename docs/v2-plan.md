@@ -421,7 +421,8 @@ Delivered:
   matching target resources by labels with target-kind filters, including
   CronJob targets whose labels live under `spec.jobTemplate.spec.template` and
   Argo Rollout-style workload targets. KEDA ScaledObject name-only
-  `scaleTargetRef` entries resolve to Deployment targets by convention.
+  `scaleTargetRef` entries and VerticalPodAutoscaler `targetRef` entries
+  resolve to workload targets by convention or explicit kind.
 - Kustomize manifests emit overlay/resource sections plus external
   dependencies for listed resources, patches, and components.
 - Docker Compose manifests emit service resources, exact `depends_on`, `links`,
@@ -451,7 +452,8 @@ Open:
   references, IngressClass, StorageClass, and PersistentVolume references,
   PVC dataSource/dataSourceRef references, VolumeSnapshot PVC source
   references, VolumeSnapshotContent snapshot references, metadata Namespace
-  references, RuntimeClass references, PriorityClass references, Service selector matches,
+  references, RuntimeClass references, PriorityClass references,
+  VerticalPodAutoscaler targetRefs, Service selector matches,
   PodDisruptionBudget selector and matchExpression matches, NetworkPolicy podSelector and
   matchExpression matches, Prometheus Operator ServiceMonitor selector and
   matchExpression matches, and Prometheus Operator PodMonitor selector and

@@ -1068,6 +1068,16 @@ spec:
             - secretRef:
                 name: api-env
 `)
+	writeFile(t, repo, "k8s/vpa.yaml", `apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: api
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: api
+`)
 	writeFile(t, repo, "k8s/namespace.yaml", `apiVersion: v1
 kind: Namespace
 metadata:
@@ -1207,6 +1217,7 @@ metadata:
 		"external:config:kubernetes/runtimeclass/sandboxed",
 		"external:config:kubernetes/priorityclass/critical",
 		"external:config:kubernetes/namespace/web",
+		"external:config:kubernetes/deployment/api",
 	} {
 		if !hasRelationTo(snapshot.Relations, "RESOURCE_DEPENDS_ON", target) {
 			t.Fatalf("missing Kubernetes dependency to %s in %#v", target, snapshot.Relations)
@@ -1259,6 +1270,9 @@ metadata:
 	}
 	if !hasRelationByLastSegment(snapshot.Relations, "RESOURCE_DEPENDS_ON", "VolumeSnapshotContent.api-cache-snapshot-content", "VolumeSnapshot.api-cache-snapshot") {
 		t.Fatalf("missing exact Kubernetes VolumeSnapshotContent ref dependency in %#v", snapshot.Relations)
+	}
+	if !hasRelationByLastSegment(snapshot.Relations, "RESOURCE_DEPENDS_ON", "VerticalPodAutoscaler.api", "Deployment.api") {
+		t.Fatalf("missing exact Kubernetes VPA targetRef dependency in %#v", snapshot.Relations)
 	}
 }
 

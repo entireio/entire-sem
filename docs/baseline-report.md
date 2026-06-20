@@ -106,11 +106,11 @@ Confidence bands follow the v2-plan schema section (`0.90-1.00 exact`,
   RuntimeClass refs, PriorityClass refs, projected ConfigMap/Secret volume
   refs, ConfigMap/Secret key refs, image pull secrets,
   Service selectors, PodDisruptionBudget selectors, NetworkPolicy pod
-  selectors, ServiceMonitor selectors, and PodMonitor selectors, including
+  selectors, VerticalPodAutoscaler targetRefs, ServiceMonitor selectors, and PodMonitor selectors, including
   CronJob job-template label targets and Argo Rollout-style workload targets,
   resolve to local resource symbols when those manifests are present. KEDA
-  ScaledObject name-only scale targets resolve to local Deployment symbols by
-  convention, and KEDA authentication refs resolve to TriggerAuthentication or
+  ScaledObject name-only scale targets and VPA targetRefs resolve to local
+  workload symbols, and KEDA authentication refs resolve to TriggerAuthentication or
   ClusterTriggerAuthentication symbols. cert-manager issuer refs, External Secrets secret-store refs,
   Argo WorkflowTemplate refs, Argo Rollouts AnalysisTemplate refs, Argo Events Sensor EventSource/EventBus refs,
   Tekton Pipeline/Task refs, Flux CD source,
