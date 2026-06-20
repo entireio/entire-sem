@@ -7007,6 +7007,161 @@ export function run(input: string): string {
 	}
 }
 
+func TestBuildProviderSnapshotEmitsAliasContainerForwardDataFlow(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "flow.ts", `type Payload = { value?: string }
+
+function normalize(payload: Payload): string {
+  return payload.value ?? ""
+}
+
+function fieldNormalize(payload: Payload): string {
+  return payload.value ?? ""
+}
+
+function collect(values: string[]): string {
+  return values.join(",")
+}
+
+function directObject(payload: Payload): string {
+  return payload.value ?? ""
+}
+
+function directList(values: string[]): string {
+  return values.join(",")
+}
+
+function ignore(payload: Payload): string {
+  return "ignored"
+}
+
+export function run(input: string): string {
+  const alias = input
+  const payload = { value: alias }
+  const fieldPayload = {}
+  fieldPayload.value = alias
+  const values = [alias]
+  normalize(payload)
+  fieldNormalize(fieldPayload)
+  collect(values)
+  directObject({ value: alias })
+  directList([alias])
+  const otherAlias = "input"
+  const other = { value: otherAlias }
+  ignore(other)
+  return input
+}
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []struct {
+		callee string
+		kind   string
+		detail string
+	}{
+		{callee: "normalize", kind: "object_field_forward_flow", detail: "input -> payload -> normalize()"},
+		{callee: "fieldNormalize", kind: "object_field_forward_flow", detail: "input -> fieldPayload -> fieldNormalize()"},
+		{callee: "collect", kind: "collection_element_forward_flow", detail: "input -> values[] -> collect()"},
+		{callee: "directObject", kind: "literal_argument_forward_flow", detail: "input -> literal -> directObject()"},
+		{callee: "directList", kind: "literal_argument_forward_flow", detail: "input -> literal -> directList()"},
+	} {
+		var found RelationRecord
+		for _, relation := range snapshot.Relations {
+			if relation.Type == "DATA_FLOWS" && lastSegment(relation.FromID) == "run" && lastSegment(relation.ToID) == want.callee && len(relation.Evidence) == 1 && relation.Evidence[0].Kind == want.kind {
+				found = relation
+				break
+			}
+		}
+		if found.FromID == "" {
+			t.Fatalf("missing alias container DATA_FLOWS run->%s: %#v", want.callee, snapshot.Relations)
+		}
+		if len(found.Evidence) != 1 || found.Evidence[0].Detail != want.detail {
+			t.Fatalf("unexpected alias container flow evidence for %s: %#v", want.callee, found.Evidence)
+		}
+	}
+	for _, relation := range snapshot.Relations {
+		if relation.Type == "DATA_FLOWS" && lastSegment(relation.FromID) == "run" && lastSegment(relation.ToID) == "ignore" {
+			t.Fatalf("string alias container produced DATA_FLOWS: %#v", relation)
+		}
+	}
+}
+
+func TestBuildProviderSnapshotEmitsPythonAliasContainerForwardDataFlow(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "flow.py", `def normalize(payload):
+    return payload.get("value", "")
+
+def field_normalize(payload):
+    return payload.get("value", "")
+
+def collect(values):
+    return ",".join(values)
+
+def direct_object(payload):
+    return payload.get("value", "")
+
+def direct_list(values):
+    return ",".join(values)
+
+def ignore(payload):
+    return "ignored"
+
+def run(input):
+    alias = input
+    payload = {"value": alias}
+    field_payload = {}
+    field_payload.value = alias
+    values = [alias]
+    normalize(payload)
+    field_normalize(field_payload)
+    collect(values)
+    direct_object({"value": alias})
+    direct_list([alias])
+    other_alias = "input"
+    other = {"value": other_alias}
+    ignore(other)
+    return input
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []struct {
+		callee string
+		kind   string
+		detail string
+	}{
+		{callee: "normalize", kind: "object_field_forward_flow", detail: "input -> payload -> normalize()"},
+		{callee: "field_normalize", kind: "object_field_forward_flow", detail: "input -> field_payload -> field_normalize()"},
+		{callee: "collect", kind: "collection_element_forward_flow", detail: "input -> values[] -> collect()"},
+		{callee: "direct_object", kind: "literal_argument_forward_flow", detail: "input -> literal -> direct_object()"},
+		{callee: "direct_list", kind: "literal_argument_forward_flow", detail: "input -> literal -> direct_list()"},
+	} {
+		var found RelationRecord
+		for _, relation := range snapshot.Relations {
+			if relation.Type == "DATA_FLOWS" && lastSegment(relation.FromID) == "run" && lastSegment(relation.ToID) == want.callee && len(relation.Evidence) == 1 && relation.Evidence[0].Kind == want.kind {
+				found = relation
+				break
+			}
+		}
+		if found.FromID == "" {
+			t.Fatalf("missing Python alias container DATA_FLOWS run->%s: %#v", want.callee, snapshot.Relations)
+		}
+		if len(found.Evidence) != 1 || found.Evidence[0].Detail != want.detail {
+			t.Fatalf("unexpected Python alias container flow evidence for %s: %#v", want.callee, found.Evidence)
+		}
+	}
+	for _, relation := range snapshot.Relations {
+		if relation.Type == "DATA_FLOWS" && lastSegment(relation.FromID) == "run" && lastSegment(relation.ToID) == "ignore" {
+			t.Fatalf("Python string alias container produced DATA_FLOWS: %#v", relation)
+		}
+	}
+}
+
 func TestBuildProviderSnapshotEmitsDestructuredAliasForwardDataFlow(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "flow.ts", `type Input = { value: string }

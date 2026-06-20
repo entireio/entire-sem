@@ -48,11 +48,12 @@ versioned, confidence-scored facts that `entire-brain` can persist and query.
   conservative parameter-alias forwarding,
   conservative destructured parameter-alias forwarding, and
   conservative object-field forwarding when a caller parameter is assigned into
-  a local object field, simple object-literal forwarding including JS/TS
-  `key: param`, JS/TS shorthand fields, and Python dict literal fields, plus
-  conservative collection-element forwarding when a caller parameter is inserted
-  into a local collection or array/list literal, and direct object or
-  array/list literal argument forwarding to a resolved callee.
+  a local object field directly or through a direct alias, simple
+  object-literal forwarding including JS/TS `key: param`, JS/TS shorthand
+  fields, Python dict literal fields, and direct parameter aliases, plus
+  conservative collection-element forwarding when a caller parameter or direct
+  alias is inserted into a local collection or array/list literal, and direct
+  object or array/list literal argument forwarding to a resolved callee.
 - Service and async boundaries are emitted: route/client/channel edges plus
   `HANDLES_GRPC`, `HANDLES_GRAPHQL`, `HANDLES_TRPC`, and `ASYNC_CALLS`.
 - IaC/configuration extraction emits HCL dependencies and `CONFIGURES` edges for
@@ -147,9 +148,10 @@ Remain out of provider scope or later expansion:
   parameter-property alias forwarding flow, conservative parameter-alias and
   destructured parameter-alias forwarding flow, conservative local
   object-field forwarding flow, conservative local
-  object-literal forwarding flow including JS/TS shorthand and Python dict
-  literals, conservative local collection-element or collection-literal
-  forwarding flow, and direct object/array/list literal argument forwarding.
+  object-literal forwarding flow including JS/TS shorthand, Python dict
+  literals, and direct parameter aliases, conservative local
+  collection-element or collection-literal forwarding flow including direct
+  parameter aliases, and direct object/array/list literal argument forwarding.
 - deeper semantics for fallback formats where only lightweight structure is
   currently emitted.
 - more parser grammars when a real repo or benchmark fixture needs them.

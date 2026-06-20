@@ -81,6 +81,8 @@ go test ./internal/sem -run 'TestBuildProviderSnapshotEmits(ArgumentForward|Para
 go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out bench/results -lock bench/repos.lock.json -languages Go -limit 1 -skip-clone -profile syntax-only -provider-version codex-param-property-flow -min-loc-per-sec 1
 go test ./internal/sem -run 'TestBuildProviderSnapshotEmits(ParameterPropertyAliasForward|PythonParameterPropertyAliasForward|ParameterPropertyForward|PythonParameterPropertyForward|AliasForward)DataFlow' -count=1
 go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out bench/results -lock bench/repos.lock.json -languages Go -limit 1 -skip-clone -profile syntax-only -provider-version codex-param-property-alias-flow -min-loc-per-sec 1
+go test ./internal/sem -run 'TestBuildProviderSnapshotEmits(AliasContainerForward|PythonAliasContainerForward|AliasForward|ObjectFieldForward|ObjectLiteralForward|ObjectShorthandForward|PythonDictLiteralForward|CollectionElementForward|CollectionLiteralElementForward|PythonCollectionLiteralElementForward|DirectLiteralArgumentForward|PythonDirectLiteralArgumentForward)DataFlow' -count=1
+go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out bench/results -lock bench/repos.lock.json -languages Go -limit 1 -skip-clone -profile syntax-only -provider-version codex-alias-container-flow -min-loc-per-sec 1
 go test ./internal/sem -run 'TestKubernetes(MonitorSelectorsDependOnTargets|PrometheusMonitorSecretDependencies)' -count=1
 go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out bench/results -lock bench/repos.lock.json -languages Go -limit 1 -skip-clone -profile syntax-only -provider-version codex-prom-monitor-secrets -min-loc-per-sec 1
 ```
@@ -384,19 +386,23 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
   to a known callee.
 - Conservative object-field forwarding emits caller-to-callee `DATA_FLOWS` when
   a caller parameter is assigned into a local object field and that object is
-  passed to a known callee.
+  passed to a known callee; direct parameter aliases assigned into object
+  fields are resolved back to the source parameter.
 - Conservative object-literal forwarding emits caller-to-callee `DATA_FLOWS`
   when a caller parameter is assigned into a simple local object literal and
   that object is passed to a known callee, including JS/TS shorthand fields
-  such as `{ input }` and Python dict literal fields such as
-  `{"value": input}`.
+  such as `{ input }`, Python dict literal fields such as `{"value": input}`,
+  and direct parameter aliases such as `{ value: alias }`.
 - Conservative collection-element forwarding emits caller-to-callee
   `DATA_FLOWS` when a caller parameter is pushed/appended/added into a local
-  collection and that collection is passed to a known callee.
+  collection and that collection is passed to a known callee; direct parameter
+  aliases in local collection mutations and literals are resolved back to the
+  source parameter.
 - Conservative direct-literal argument forwarding emits caller-to-callee
   `DATA_FLOWS` when a caller parameter is placed in a simple object, dict,
-  array, or list literal passed directly to a known callee, while string
-  literals that happen to match a parameter name are ignored.
+  array, or list literal passed directly to a known callee, including direct
+  parameter aliases, while string literals that happen to match a parameter
+  name are ignored.
 - JS/TS GraphQL resolver maps now emit concrete `graphql_resolver` symbols and
   `HANDLES_GRAPHQL` edges for `Query`, `Mutation`, and `Subscription` fields,
   including inline handlers and named/member/wrapped resolver references;
@@ -811,6 +817,9 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
   - `bench/results/result-1781997681.json`: Go/gin, syntax-only, 28,618 LOC,
     168,578 LOC/s, max RSS 27,885,568 bytes, estimated output 1,902,637
     bytes.
+  - `bench/results/result-1781997931.json`: Go/gin, syntax-only, 28,618 LOC,
+    161,984 LOC/s, max RSS 28,540,928 bytes, estimated output 1,902,632
+    bytes.
   - `bench/results/result-1781997407.json`: Go/gin, syntax-only, 28,618 LOC,
     165,967 LOC/s, max RSS 30,015,488 bytes, estimated output 1,902,632
     bytes.
@@ -839,9 +848,11 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
   such as `const { value } = input; normalize(value)`, in addition to direct
   parameter, direct parameter-property, parameter-property alias, alias,
   object-field/object-literal, and collection-element forwarding, including
-  JS/TS shorthand object literals, Python dict literals, direct array/list
-  literals such as `const values = [input]; normalize(values)`, and direct
-  literal callee arguments such as
+  direct parameter aliases inside object fields, object/dict literals,
+  collection/array/list literals, and direct literal callee arguments, JS/TS
+  shorthand object literals, Python dict literals, direct array/list literals
+  such as `const values = [input]; normalize(values)`, and direct literal
+  callee arguments such as
   `normalize({ value: input })` or `collect([input])`. Broad program slicing
   remains intentionally out of scope.
 - GraphQL support covers operation literals, JS/TS resolver-map fields,

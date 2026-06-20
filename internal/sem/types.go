@@ -990,18 +990,7 @@ func aliasForwardingFlows(block, signature string) []returnFlowCall {
 	if len(params) == 0 {
 		return nil
 	}
-	aliasToParam := map[string]string{}
-	for _, match := range aliasAssignRe.FindAllStringSubmatch(block, -1) {
-		if len(match) != 3 {
-			continue
-		}
-		alias := strings.TrimPrefix(match[1], "$")
-		param := strings.TrimPrefix(match[2], "$")
-		if alias == "" || alias == param || !params[param] {
-			continue
-		}
-		aliasToParam[alias] = param
-	}
+	aliasToParam := parameterAliasMap(block, params)
 	if len(aliasToParam) == 0 {
 		return nil
 	}
@@ -1133,6 +1122,7 @@ func objectFieldForwardingFlows(block, signature string) []returnFlowCall {
 	if len(params) == 0 {
 		return nil
 	}
+	aliases := parameterAliasMap(block, params)
 	objectVars := localObjectVars(block)
 	fieldParamByObject := map[string]map[string]bool{}
 	for _, match := range objectFieldAssignRe.FindAllStringSubmatch(block, -1) {
@@ -1140,8 +1130,8 @@ func objectFieldForwardingFlows(block, signature string) []returnFlowCall {
 			continue
 		}
 		objectName := strings.TrimPrefix(match[1], "$")
-		paramName := strings.TrimPrefix(match[3], "$")
-		if !objectVars[objectName] || !params[paramName] {
+		paramName := resolveParameterOrAlias(match[3], params, aliases)
+		if !objectVars[objectName] || paramName == "" {
 			continue
 		}
 		if fieldParamByObject[objectName] == nil {
@@ -1149,7 +1139,7 @@ func objectFieldForwardingFlows(block, signature string) []returnFlowCall {
 		}
 		fieldParamByObject[objectName][paramName] = true
 	}
-	for objectName, paramNames := range objectLiteralFieldParams(block, params) {
+	for objectName, paramNames := range objectLiteralFieldParams(block, params, aliases) {
 		if fieldParamByObject[objectName] == nil {
 			fieldParamByObject[objectName] = map[string]bool{}
 		}
@@ -1198,7 +1188,7 @@ func objectFieldForwardingFlows(block, signature string) []returnFlowCall {
 	return flows
 }
 
-func objectLiteralFieldParams(block string, params map[string]bool) map[string]map[string]bool {
+func objectLiteralFieldParams(block string, params map[string]bool, aliases map[string]string) map[string]map[string]bool {
 	out := map[string]map[string]bool{}
 	for _, match := range objectLiteralVarRe.FindAllStringSubmatch(block, -1) {
 		if len(match) != 3 {
@@ -1208,7 +1198,7 @@ func objectLiteralFieldParams(block string, params map[string]bool) map[string]m
 		if objectName == "" {
 			continue
 		}
-		for _, paramName := range objectLiteralParamNames(match[2], params) {
+		for _, paramName := range objectLiteralParamNames(match[2], params, aliases) {
 			if out[objectName] == nil {
 				out[objectName] = map[string]bool{}
 			}
@@ -1218,7 +1208,7 @@ func objectLiteralFieldParams(block string, params map[string]bool) map[string]m
 	return out
 }
 
-func objectLiteralParamNames(fields string, params map[string]bool) []string {
+func objectLiteralParamNames(fields string, params map[string]bool, aliases map[string]string) []string {
 	seen := map[string]bool{}
 	var out []string
 	for _, field := range splitSimpleArguments(fields) {
@@ -1231,12 +1221,12 @@ func objectLiteralParamNames(fields string, params map[string]bool) []string {
 			value = strings.TrimSpace(field[colon+1:])
 		}
 		value = strings.TrimSpace(value)
-		value = strings.TrimPrefix(value, "$")
-		if !simpleIdentifierRe.MatchString(value) || !params[value] || seen[value] {
+		paramName := resolveParameterOrAlias(value, params, aliases)
+		if paramName == "" || seen[paramName] {
 			continue
 		}
-		seen[value] = true
-		out = append(out, value)
+		seen[paramName] = true
+		out = append(out, paramName)
 	}
 	sort.Strings(out)
 	return out
@@ -1247,6 +1237,7 @@ func collectionElementForwardingFlows(block, signature string) []returnFlowCall 
 	if len(params) == 0 {
 		return nil
 	}
+	aliases := parameterAliasMap(block, params)
 	collectionVars := localCollectionVars(block)
 	paramByCollection := map[string]map[string]bool{}
 	for _, match := range collectionAddRe.FindAllStringSubmatch(block, -1) {
@@ -1254,8 +1245,8 @@ func collectionElementForwardingFlows(block, signature string) []returnFlowCall 
 			continue
 		}
 		collectionName := strings.TrimPrefix(match[1], "$")
-		paramName := strings.TrimPrefix(match[2], "$")
-		if !collectionVars[collectionName] || !params[paramName] {
+		paramName := resolveParameterOrAlias(match[2], params, aliases)
+		if !collectionVars[collectionName] || paramName == "" {
 			continue
 		}
 		if paramByCollection[collectionName] == nil {
@@ -1263,7 +1254,7 @@ func collectionElementForwardingFlows(block, signature string) []returnFlowCall 
 		}
 		paramByCollection[collectionName][paramName] = true
 	}
-	for collectionName, paramNames := range collectionLiteralElementParams(block, params) {
+	for collectionName, paramNames := range collectionLiteralElementParams(block, params, aliases) {
 		if paramByCollection[collectionName] == nil {
 			paramByCollection[collectionName] = map[string]bool{}
 		}
@@ -1312,7 +1303,7 @@ func collectionElementForwardingFlows(block, signature string) []returnFlowCall 
 	return flows
 }
 
-func collectionLiteralElementParams(block string, params map[string]bool) map[string]map[string]bool {
+func collectionLiteralElementParams(block string, params map[string]bool, aliases map[string]string) map[string]map[string]bool {
 	out := map[string]map[string]bool{}
 	for _, match := range collectionLiteralVarRe.FindAllStringSubmatch(block, -1) {
 		if len(match) != 3 {
@@ -1323,8 +1314,8 @@ func collectionLiteralElementParams(block string, params map[string]bool) map[st
 			continue
 		}
 		for _, item := range splitSimpleArguments(match[2]) {
-			paramName := strings.TrimPrefix(strings.TrimSpace(item), "$")
-			if !params[paramName] {
+			paramName := resolveParameterOrAlias(item, params, aliases)
+			if paramName == "" {
 				continue
 			}
 			if out[collectionName] == nil {
@@ -1341,6 +1332,7 @@ func directLiteralForwardingFlows(block, signature string) []returnFlowCall {
 	if len(params) == 0 {
 		return nil
 	}
+	aliases := parameterAliasMap(block, params)
 	callRe := regexp.MustCompile(`\b([A-Za-z_$][A-Za-z0-9_$]*)\s*\(([^()\n]*)\)`)
 	var flows []returnFlowCall
 	seen := map[string]bool{}
@@ -1353,7 +1345,7 @@ func directLiteralForwardingFlows(block, signature string) []returnFlowCall {
 			continue
 		}
 		for _, arg := range splitSimpleArguments(match[2]) {
-			for _, paramName := range directLiteralParamNames(arg, params) {
+			for _, paramName := range directLiteralParamNames(arg, params, aliases) {
 				key := name + "\x00" + paramName
 				if seen[key] {
 					continue
@@ -1378,27 +1370,57 @@ func directLiteralForwardingFlows(block, signature string) []returnFlowCall {
 	return flows
 }
 
-func directLiteralParamNames(arg string, params map[string]bool) []string {
+func parameterAliasMap(block string, params map[string]bool) map[string]string {
+	aliases := map[string]string{}
+	for _, match := range aliasAssignRe.FindAllStringSubmatch(block, -1) {
+		if len(match) != 3 {
+			continue
+		}
+		alias := strings.TrimPrefix(match[1], "$")
+		param := strings.TrimPrefix(match[2], "$")
+		if alias == "" || alias == param || !params[param] {
+			continue
+		}
+		aliases[alias] = param
+	}
+	return aliases
+}
+
+func resolveParameterOrAlias(value string, params map[string]bool, aliases map[string]string) string {
+	name := strings.TrimPrefix(strings.TrimSpace(value), "$")
+	if !simpleIdentifierRe.MatchString(name) {
+		return ""
+	}
+	if params[name] {
+		return name
+	}
+	if param := aliases[name]; param != "" {
+		return param
+	}
+	return ""
+}
+
+func directLiteralParamNames(arg string, params map[string]bool, aliases map[string]string) []string {
 	arg = strings.TrimSpace(arg)
 	if len(arg) < 2 {
 		return nil
 	}
 	switch {
 	case strings.HasPrefix(arg, "{") && strings.HasSuffix(arg, "}"):
-		return objectLiteralParamNames(strings.TrimSpace(arg[1:len(arg)-1]), params)
+		return objectLiteralParamNames(strings.TrimSpace(arg[1:len(arg)-1]), params, aliases)
 	case strings.HasPrefix(arg, "[") && strings.HasSuffix(arg, "]"):
-		return collectionLiteralParamNames(strings.TrimSpace(arg[1:len(arg)-1]), params)
+		return collectionLiteralParamNames(strings.TrimSpace(arg[1:len(arg)-1]), params, aliases)
 	default:
 		return nil
 	}
 }
 
-func collectionLiteralParamNames(items string, params map[string]bool) []string {
+func collectionLiteralParamNames(items string, params map[string]bool, aliases map[string]string) []string {
 	seen := map[string]bool{}
 	var out []string
 	for _, item := range splitSimpleArguments(items) {
-		paramName := strings.TrimPrefix(strings.TrimSpace(item), "$")
-		if !simpleIdentifierRe.MatchString(paramName) || !params[paramName] || seen[paramName] {
+		paramName := resolveParameterOrAlias(item, params, aliases)
+		if paramName == "" || seen[paramName] {
 			continue
 		}
 		seen[paramName] = true
