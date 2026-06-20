@@ -216,6 +216,36 @@ func TestTreeSitterParserDockerComposeServiceEntities(t *testing.T) {
 	}
 }
 
+func TestTreeSitterParserKubernetesMultiDocumentResources(t *testing.T) {
+	entities, language := TreeSitterParser{}.Parse("k8s/resources.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: api-config
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: api-secret
+`)
+	if language != "YAML" {
+		t.Fatalf("language = %q", language)
+	}
+	seen := map[string]Entity{}
+	for _, entity := range entities {
+		if entity.Kind == "resource" {
+			seen[entity.Name] = entity
+		}
+	}
+	for _, name := range []string{"ConfigMap.api-config", "Secret.api-secret"} {
+		if seen[name].Name == "" {
+			t.Fatalf("missing %s resource in %#v", name, entities)
+		}
+	}
+	if seen["ConfigMap.api-config"].EndLine >= seen["Secret.api-secret"].StartLine {
+		t.Fatalf("resource source ranges overlap: %#v", seen)
+	}
+}
+
 func TestTreeSitterParserPostgresMigrationEntities(t *testing.T) {
 	input := `create extension if not exists vector;
 

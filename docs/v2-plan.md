@@ -298,8 +298,9 @@ Delivered:
   resolution covers RBAC role/subject references, owner references, Ingress
   Service backends, and HPA scale targets.
 - Kubernetes resource symbols emit common container image, environment-variable,
-  and port declarations as `CONFIGURES` facts, and Services can depend on
-  matching workload resources by selector labels.
+  and port declarations as `CONFIGURES` facts, multi-document Kubernetes YAML
+  emits one resource symbol per document, and Services can depend on matching
+  workload resources by selector labels.
 - Kustomize manifests emit overlay/resource sections plus external
   dependencies for listed resources, patches, and components.
 - Docker Compose manifests emit service resources, exact `depends_on`
@@ -314,9 +315,8 @@ Open:
 - Cross-file Kubernetes resource resolution is implemented for named
   ConfigMap/Secret/service-account/PVC/RBAC/owner/Ingress/HPA references and
   Service selector matches when the target resource symbol exists in the same
-  provider snapshot. Remaining Kubernetes resource gaps include multi-resource
-  YAML symbolization, less common Kubernetes controllers, and custom resource
-  conventions.
+  provider snapshot. Remaining Kubernetes resource gaps include less common
+  Kubernetes controllers and custom resource conventions.
 - Broad framework-specific IaC/service modeling remains partial.
 
 Acceptance:

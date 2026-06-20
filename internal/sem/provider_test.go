@@ -617,8 +617,8 @@ metadata:
 kind: Secret
 metadata:
   name: api-secret
-`)
-	writeFile(t, repo, "k8s/env-secret.yaml", `apiVersion: v1
+---
+apiVersion: v1
 kind: Secret
 metadata:
   name: api-env

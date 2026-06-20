@@ -49,8 +49,9 @@ go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go
   `app.use("/prefix", router)` prefixes with static `router.get/post/...`
   routes, emit `HANDLES_ROUTE`, and bridge exact matching `fetch`/Axios client
   calls as direct `CALLS`.
-- Kubernetes resource extraction and Service-selector dependency tests pass
-  (`Service` -> matching workload resource by selector labels).
+- Kubernetes resource extraction, including multi-document YAML manifests, and
+  Service-selector dependency tests pass (`Service` -> matching workload
+  resource by selector labels).
 - Kubernetes named resource references for ConfigMaps, Secrets, service
   accounts, and PVCs emit exact local `RESOURCE_DEPENDS_ON` edges when the
   referenced resource manifests are present in the snapshot.
