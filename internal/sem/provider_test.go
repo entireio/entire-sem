@@ -6859,6 +6859,97 @@ export function run(input: string): string {
 	}
 }
 
+func TestBuildProviderSnapshotEmitsObjectShorthandForwardDataFlow(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "flow.ts", `type Payload = { input?: string }
+
+function normalize(payload: Payload): string {
+  return payload.input ?? ""
+}
+
+function ignore(payload: Payload): string {
+  return "ignored"
+}
+
+export function run(input: string): string {
+  const payload = { input }
+  normalize(payload)
+  const other = { value: "input" }
+  ignore(other)
+  return input
+}
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found RelationRecord
+	for _, relation := range snapshot.Relations {
+		if relation.Type == "DATA_FLOWS" && lastSegment(relation.FromID) == "run" && lastSegment(relation.ToID) == "normalize" {
+			found = relation
+			break
+		}
+	}
+	if found.FromID == "" {
+		t.Fatalf("missing object shorthand DATA_FLOWS run->normalize: %#v", snapshot.Relations)
+	}
+	if found.Reason != "caller parameter assigned into object field forwarded to callee argument" || found.Confidence > 0.7 {
+		t.Fatalf("unexpected object shorthand flow metadata: %#v", found)
+	}
+	if len(found.Evidence) != 1 || found.Evidence[0].Kind != "object_field_forward_flow" || found.Evidence[0].Detail != "input -> payload -> normalize()" {
+		t.Fatalf("unexpected object shorthand flow evidence: %#v", found.Evidence)
+	}
+	for _, relation := range snapshot.Relations {
+		if relation.Type == "DATA_FLOWS" && lastSegment(relation.FromID) == "run" && lastSegment(relation.ToID) == "ignore" {
+			t.Fatalf("non-parameter object shorthand produced DATA_FLOWS: %#v", relation)
+		}
+	}
+}
+
+func TestBuildProviderSnapshotEmitsPythonDictLiteralForwardDataFlow(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "flow.py", `def normalize(payload):
+    return payload.get("value", "")
+
+def ignore(payload):
+    return "ignored"
+
+def run(input):
+    payload = {"value": input}
+    normalize(payload)
+    other = {"value": "input"}
+    ignore(other)
+    return input
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found RelationRecord
+	for _, relation := range snapshot.Relations {
+		if relation.Type == "DATA_FLOWS" && lastSegment(relation.FromID) == "run" && lastSegment(relation.ToID) == "normalize" {
+			found = relation
+			break
+		}
+	}
+	if found.FromID == "" {
+		t.Fatalf("missing Python dict literal DATA_FLOWS run->normalize: %#v", snapshot.Relations)
+	}
+	if found.Reason != "caller parameter assigned into object field forwarded to callee argument" || found.Confidence > 0.7 {
+		t.Fatalf("unexpected Python dict literal flow metadata: %#v", found)
+	}
+	if len(found.Evidence) != 1 || found.Evidence[0].Kind != "object_field_forward_flow" || found.Evidence[0].Detail != "input -> payload -> normalize()" {
+		t.Fatalf("unexpected Python dict literal flow evidence: %#v", found.Evidence)
+	}
+	for _, relation := range snapshot.Relations {
+		if relation.Type == "DATA_FLOWS" && lastSegment(relation.FromID) == "run" && lastSegment(relation.ToID) == "ignore" {
+			t.Fatalf("non-parameter Python dict literal produced DATA_FLOWS: %#v", relation)
+		}
+	}
+}
+
 func TestBuildProviderSnapshotEmitsCollectionElementForwardDataFlow(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "flow.ts", `function normalize(values: string[]): string {

@@ -44,12 +44,11 @@ versioned, confidence-scored facts that `entire-brain` can persist and query.
   by bare `return value`, exact argument forwarding, conservative parameter-alias
   forwarding, conservative destructured parameter-alias forwarding, and
   conservative object-field forwarding when a caller parameter is assigned into
-  an object or collection literal or local collection before being forwarded.
-  a local object field that is passed to a resolved callee, simple
-  object-literal forwarding when a caller parameter is assigned into a local
-  object literal that is passed to a resolved callee, plus conservative
-  collection-element forwarding when a caller parameter is inserted into a local
-  collection that is passed to a resolved callee.
+  a local object field, simple object-literal forwarding including JS/TS
+  `key: param`, JS/TS shorthand fields, and Python dict literal fields, plus
+  conservative collection-element forwarding when a caller parameter is inserted
+  into a local collection or direct array/list literal that is passed to a
+  resolved callee.
 - Service and async boundaries are emitted: route/client/channel edges plus
   `HANDLES_GRPC`, `HANDLES_GRAPHQL`, `HANDLES_TRPC`, and `ASYNC_CALLS`.
 - IaC/configuration extraction emits HCL dependencies and `CONFIGURES` edges for
@@ -142,8 +141,9 @@ Remain out of provider scope or later expansion:
   assignment-then-return flow, exact/import-resolved argument-forwarding flow,
   conservative parameter-alias and destructured parameter-alias forwarding
   flow, conservative local object-field forwarding flow, conservative local
-  object-literal forwarding flow, and conservative local collection-element or
-  collection-literal forwarding flow.
+  object-literal forwarding flow including JS/TS shorthand and Python dict
+  literals, and conservative local collection-element or collection-literal
+  forwarding flow.
 - deeper semantics for fallback formats where only lightweight structure is
   currently emitted.
 - more parser grammars when a real repo or benchmark fixture needs them.

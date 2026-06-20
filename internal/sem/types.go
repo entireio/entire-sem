@@ -341,11 +341,11 @@ var (
 	destructuredParamAliasRe = regexp.MustCompile(`(?m)\b(?:const|let|var)\s*\{([^{}\n]+)\}\s*(?:\:\s*[^=\n]+)?\s*=\s*\$?([A-Za-z_$][\w$]*)\b`)
 	localObjectVarRe         = regexp.MustCompile(`(?m)\b(?:const|let|var)?\s*\$?([A-Za-z_$][\w$]*)\s*(?:\:\s*[^=\n]+)?\s*(?::=|=)\s*(?:\{\s*\}|new\s+[A-Za-z_$][\w$]*\s*\(\s*\))`)
 	objectLiteralVarRe       = regexp.MustCompile(`(?s)\b(?:const|let|var)?\s*\$?([A-Za-z_$][\w$]*)\s*(?:\:\s*[^=\n]+)?\s*(?::=|=)\s*\{([^{}]*)\}`)
-	objectLiteralFieldRe     = regexp.MustCompile(`(?:^|,|\n)\s*([A-Za-z_$][\w$]*)\s*:\s*\$?([A-Za-z_$][\w$]*)\b`)
 	objectFieldAssignRe      = regexp.MustCompile(`(?m)\b\$?([A-Za-z_$][\w$]*)\s*\.\s*([A-Za-z_$][\w$]*)\s*=\s*\$?([A-Za-z_$][\w$]*)\b`)
 	localCollectionVarRe     = regexp.MustCompile(`(?m)\b(?:const|let|var)?\s*\$?([A-Za-z_$][\w$]*)\s*(?:\:\s*[^=\n]+)?\s*(?::=|=)\s*(?:\[\s*\]|new\s+(?:Array|Set|Map)\s*\(\s*\))`)
 	collectionLiteralVarRe   = regexp.MustCompile(`(?s)\b(?:const|let|var)?\s*\$?([A-Za-z_$][\w$]*)\s*(?:\:\s*[^=\n]+)?\s*(?::=|=)\s*\[([^\[\]]*)\]`)
 	collectionAddRe          = regexp.MustCompile(`(?m)\b\$?([A-Za-z_$][\w$]*)\s*\.\s*(?:push|append|add)\s*\(\s*\$?([A-Za-z_$][\w$]*)\s*\)`)
+	simpleIdentifierRe       = regexp.MustCompile(`^\$?[A-Za-z_$][\w$]*$`)
 )
 
 func asyncCallNames(block string) []string {
@@ -1073,20 +1073,37 @@ func objectLiteralFieldParams(block string, params map[string]bool) map[string]m
 		if objectName == "" {
 			continue
 		}
-		for _, fieldMatch := range objectLiteralFieldRe.FindAllStringSubmatch(match[2], -1) {
-			if len(fieldMatch) != 3 {
-				continue
-			}
-			paramName := strings.TrimPrefix(fieldMatch[2], "$")
-			if !params[paramName] {
-				continue
-			}
+		for _, paramName := range objectLiteralParamNames(match[2], params) {
 			if out[objectName] == nil {
 				out[objectName] = map[string]bool{}
 			}
 			out[objectName][paramName] = true
 		}
 	}
+	return out
+}
+
+func objectLiteralParamNames(fields string, params map[string]bool) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, field := range splitSimpleArguments(fields) {
+		field = strings.TrimSpace(strings.TrimPrefix(field, "..."))
+		if field == "" {
+			continue
+		}
+		value := field
+		if colon := strings.LastIndex(field, ":"); colon >= 0 {
+			value = strings.TrimSpace(field[colon+1:])
+		}
+		value = strings.TrimSpace(value)
+		value = strings.TrimPrefix(value, "$")
+		if !simpleIdentifierRe.MatchString(value) || !params[value] || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	sort.Strings(out)
 	return out
 }
 

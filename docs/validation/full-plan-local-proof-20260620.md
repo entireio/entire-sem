@@ -72,6 +72,9 @@ go test ./internal/sem -run 'TestDjangoIncludeURLPatternsComposeHandlersAndBridg
 go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out bench/results -lock bench/repos.lock.json -languages Go -limit 1 -skip-clone -profile syntax-only -provider-version codex-django-urlconf-alias -min-loc-per-sec 1
 go test ./internal/sem -run 'TestBuildProviderSnapshotEmits(CollectionElementForward|CollectionLiteralElementForward|PythonCollectionLiteralElementForward)DataFlow' -count=1
 go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out bench/results -lock bench/repos.lock.json -languages Go -limit 1 -skip-clone -profile syntax-only -provider-version codex-collection-literal-flow -min-loc-per-sec 1
+go test ./internal/sem -run 'TestBuildProviderSnapshotEmits(ObjectLiteralForward|ObjectShorthandForward|PythonDictLiteralForward|CollectionLiteralElementForward|PythonCollectionLiteralElementForward)DataFlow' -count=1
+go test ./...
+go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out bench/results -lock bench/repos.lock.json -languages Go -limit 1 -skip-clone -profile syntax-only -provider-version codex-dict-shorthand-flow -min-loc-per-sec 1
 ```
 
 ## Results
@@ -363,7 +366,9 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
   passed to a known callee.
 - Conservative object-literal forwarding emits caller-to-callee `DATA_FLOWS`
   when a caller parameter is assigned into a simple local object literal and
-  that object is passed to a known callee.
+  that object is passed to a known callee, including JS/TS shorthand fields
+  such as `{ input }` and Python dict literal fields such as
+  `{"value": input}`.
 - Conservative collection-element forwarding emits caller-to-callee
   `DATA_FLOWS` when a caller parameter is pushed/appended/added into a local
   collection and that collection is passed to a known callee.
@@ -769,6 +774,9 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
   - `bench/results/result-1781996247.json`: Go/gin, syntax-only, 28,618 LOC,
     161,601 LOC/s, max RSS 28,557,312 bytes, estimated output 1,902,635
     bytes.
+  - `bench/results/result-1781996567.json`: Go/gin, syntax-only, 28,618 LOC,
+    164,324 LOC/s, max RSS 28,033,024 bytes, estimated output 1,902,631
+    bytes.
 
 ## Remaining Honesty Notes
 
@@ -793,9 +801,10 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
 - Data-flow support covers conservative destructured parameter-alias forwarding
   such as `const { value } = input; normalize(value)`, in addition to direct
   parameter, alias, object-field/object-literal, and collection-element
-  forwarding, including direct array/list literals such as
-  `const values = [input]; normalize(values)`. Broad program slicing remains
-  intentionally out of scope.
+  forwarding, including JS/TS shorthand object literals, Python dict literals,
+  and direct array/list literals such as `const values = [input];
+  normalize(values)`. Broad program slicing remains intentionally out of
+  scope.
 - GraphQL support covers operation literals, JS/TS resolver-map fields,
   modular resolver root objects such as `export const Query = { ... }`, schema
   fields for root and non-root object types, exact schema-field-to-resolver
