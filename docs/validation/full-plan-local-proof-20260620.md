@@ -106,6 +106,10 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
 - C# ASP.NET controller route attributes compose class-level `[Route]`
   prefixes with method-level HTTP verb attributes, emit `HANDLES_ROUTE`, and
   bridge matching `HttpClient` calls to handlers as direct `CALLS`.
+- C# minimal API registrations such as `app.MapGet("/api/users/{id}",
+  ApiHandlers.GetUser)` resolve static route strings or local constants to
+  same-file handler functions/methods and bridge matching `HttpClient` calls as
+  direct `CALLS`.
 - PHP Laravel route declarations and `Route::prefix(...)->group(...)` route
   groups resolve local controller methods, Symfony/PHP route attributes compose
   class and method routes, and matching PHP `Http::` facade calls bridge to
@@ -366,6 +370,9 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
   - `bench/results/result-1781974683.json`: Go/gin, syntax-only, 28,618 LOC,
     150,155 LOC/s, max RSS 27,394,048 bytes, estimated output 1,902,631
     bytes; run after Python Tornado route tuple extraction.
+  - `bench/results/result-1781975104.json`: Go/gin, syntax-only, 28,618 LOC,
+    147,326 LOC/s, max RSS 26,705,920 bytes, estimated output 1,902,635
+    bytes; run after C# minimal API route extraction.
   - `bench/results/result-1781973208.json`: Go/gin, syntax-only, 28,618 LOC,
     151,226 LOC/s, max RSS 27,066,368 bytes, estimated output 1,902,628
     bytes; run after Go router group-prefix extraction.

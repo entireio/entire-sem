@@ -314,7 +314,9 @@ Tasks:
   resolve static same-file handler classes. Java Spring-style direct
   mapping annotations are implemented for class-level prefix plus method-level
   route composition. C# ASP.NET controller `[Route]` prefixes and HTTP-verb
-  attributes compose and bridge matching `HttpClient` calls. PHP Laravel route
+  attributes compose and bridge matching `HttpClient` calls; C# minimal API
+  `MapGet`/`MapPost` style registrations resolve static same-file handler
+  method groups. PHP Laravel route
   declarations and prefix groups resolve local controller methods, and
   Symfony/PHP route attributes compose class and method routes. Direct Fastify/app/server JS/TS
   route registrations resolve local handler functions. Ruby on Rails static

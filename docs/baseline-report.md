@@ -58,8 +58,9 @@ Python Flask/FastAPI-style decorator routes, FastAPI/Starlette-style
 `include_router(prefix=...)` composition, Tornado route tuples to handler
 classes, same-block Express router-prefix composition, same-name imported
 Express router mounts, and C# ASP.NET
-controller route attributes, plus PHP Laravel controller route declarations and
-prefix groups, Symfony/PHP route attributes, Ruby on Rails static route declarations and
+controller route attributes plus C# minimal API registrations, plus PHP Laravel
+controller route declarations and prefix groups, Symfony/PHP route attributes,
+Ruby on Rails static route declarations and
 `resources` expansion for default REST actions, `only:`, and `except:`, plus
 NestJS controller/method decorators;
 remaining work is deeper framework coverage and larger-corpus proof.
@@ -142,8 +143,8 @@ False positives:
   registration or URLConf `include(...)` mount, Go `net/http`
   `HandleFunc`/`HandlerFunc` registration, or
   Go chi/gin-style router method registration, C# ASP.NET route/HTTP-verb
-  attributes, PHP Laravel route declarations and prefix groups, Symfony/PHP
-  route attributes, direct
+  attributes, C# minimal API `MapGet`/`MapPost` registrations, PHP Laravel
+  route declarations and prefix groups, Symfony/PHP route attributes, direct
   Fastify/app/server JS route registrations, Ruby on Rails static route
   declarations and `resources` expansion for default REST actions, `only:`,
   and `except:`, NestJS

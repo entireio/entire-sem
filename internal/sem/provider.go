@@ -1600,6 +1600,14 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 			routeHandlers[r.Route] = append(routeHandlers[r.Route], r.Handler)
 			handledRoutes[r.Route] = struct{}{}
 		}
+		for _, r := range csharpMinimalAPIRouteRelations(files, recordsByFile, readContent) {
+			if shouldStop != nil && shouldStop() {
+				return
+			}
+			emit(r.Relation)
+			routeHandlers[r.Route] = append(routeHandlers[r.Route], r.Handler)
+			handledRoutes[r.Route] = struct{}{}
+		}
 		for _, r := range laravelRouteRelations(files, recordsByFile, readContent) {
 			if shouldStop != nil && shouldStop() {
 				return
@@ -8861,6 +8869,120 @@ func csharpAnnotationRouteLiterals(content string, symbol SymbolRecord, symbolsB
 		}
 	}
 	return sortedKeys(seen)
+}
+
+func csharpMinimalAPIRouteRelations(files []FileRecord, recordsByFile map[string][]SymbolRecord, readContent contentReader) []expressRouteRelation {
+	var relations []expressRouteRelation
+	seen := map[string]bool{}
+	for _, file := range files {
+		if !strings.EqualFold(filepath.Ext(file.Path), ".cs") {
+			continue
+		}
+		content, ok := readContent(file.Path)
+		if !ok {
+			continue
+		}
+		symbolsByName := map[string]SymbolRecord{}
+		for _, symbol := range recordsByFile[file.Path] {
+			if typeLikeKind(symbol.Kind) {
+				continue
+			}
+			for _, name := range []string{symbol.Name, symbol.QualifiedName} {
+				if name == "" {
+					continue
+				}
+				if _, exists := symbolsByName[name]; !exists {
+					symbolsByName[name] = symbol
+				}
+			}
+			if _, simple, ok := strings.Cut(symbol.QualifiedName, "."); ok && simple != "" {
+				if _, exists := symbolsByName[simple]; !exists {
+					symbolsByName[simple] = symbol
+				}
+			}
+		}
+		for _, registration := range csharpMinimalAPIRouteRegistrations(content) {
+			handler, ok := symbolsByName[registration.Handler]
+			if !ok {
+				continue
+			}
+			key := handler.ID + "\x00" + registration.Route
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			relations = append(relations, expressRouteRelation{
+				Route:   registration.Route,
+				Handler: handler,
+				Relation: RelationRecord{
+					RecordType:    "relation",
+					FromID:        handler.ID,
+					ToID:          externalID("route", registration.Route),
+					Type:          "HANDLES_ROUTE",
+					Confidence:    0.82,
+					Reason:        "C# minimal API route registration resolved to local handler",
+					RelationScope: "external",
+					Resolution:    "exact",
+					TargetKind:    "route",
+					Evidence: []Evidence{{
+						Kind:      "csharp_minimal_api_route",
+						FilePath:  file.Path,
+						StartLine: handler.StartLine,
+						EndLine:   handler.EndLine,
+						Detail:    registration.Detail,
+					}},
+					WarningCodes: []string{},
+				},
+			})
+		}
+	}
+	sort.Slice(relations, func(i, j int) bool {
+		if relations[i].Route != relations[j].Route {
+			return relations[i].Route < relations[j].Route
+		}
+		return relations[i].Handler.ID < relations[j].Handler.ID
+	})
+	return relations
+}
+
+type csharpMinimalAPIRouteRegistration struct {
+	Route   string
+	Handler string
+	Detail  string
+}
+
+func csharpMinimalAPIRouteRegistrations(content string) []csharpMinimalAPIRouteRegistration {
+	constants := staticStringConstants(content)
+	mapRouteRe := regexp.MustCompile(`\.\s*Map(?i:Get|Post|Put|Patch|Delete|Head|Options)\s*\(\s*([^,\n]+)\s*,\s*([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)\b`)
+	var registrations []csharpMinimalAPIRouteRegistration
+	seen := map[string]bool{}
+	for _, match := range mapRouteRe.FindAllStringSubmatch(content, -1) {
+		if len(match) != 3 {
+			continue
+		}
+		route, ok := staticRouteExpressionValue(match[1], constants)
+		if !ok {
+			continue
+		}
+		handler := strings.TrimSpace(match[2])
+		key := route + "\x00" + handler
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		registrations = append(registrations, csharpMinimalAPIRouteRegistration{
+			Route:   route,
+			Handler: handler,
+			Detail:  route + " -> " + handler,
+		})
+	}
+	sort.Slice(registrations, func(i, j int) bool {
+		if registrations[i].Route != registrations[j].Route {
+			return registrations[i].Route < registrations[j].Route
+		}
+		return registrations[i].Handler < registrations[j].Handler
+	})
+	return registrations
 }
 
 func jvmAnnotationRouteLiterals(content string, symbol SymbolRecord, symbolsByID map[string]SymbolRecord) []string {

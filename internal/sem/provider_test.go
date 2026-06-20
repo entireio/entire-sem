@@ -3640,6 +3640,57 @@ public class UsersController : ControllerBase
 	}
 }
 
+func TestCSharpMinimalAPIRouteRegistrationAndHttpClientBridge(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "Program.cs", `using System.Net.Http;
+using Microsoft.AspNetCore.Builder;
+
+const string UserRoute = "/api/users/{id}";
+
+var app = WebApplication.Create();
+app.MapGet(UserRoute, ApiHandlers.GetUser);
+app.MapPost("/api/users", ApiHandlers.CreateUser);
+
+public static class ApiHandlers
+{
+    public static string GetUser(string id)
+    {
+        return id;
+    }
+
+    public static string CreateUser()
+    {
+        return "ok";
+    }
+
+    public static async Task<object> Ping(HttpClient client, string id)
+    {
+        return await client.GetFromJsonAsync<object>($"/api/users/{id}");
+    }
+}
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasRelationByLastSegment(snapshot.Relations, "HANDLES_ROUTE", "ApiHandlers.GetUser", "/api/users/{id}") {
+		t.Fatalf("missing C# minimal API GET route handler: %#v", snapshot.Relations)
+	}
+	if !hasRelationByLastSegment(snapshot.Relations, "HANDLES_ROUTE", "ApiHandlers.CreateUser", "/api/users") {
+		t.Fatalf("missing C# minimal API POST route handler: %#v", snapshot.Relations)
+	}
+	if !hasRelationByLastSegment(snapshot.Relations, "HTTP_CALLS", "ApiHandlers.Ping", "/api/users/{id}") {
+		t.Fatalf("missing C# minimal API HttpClient HTTP_CALLS relation: %#v", snapshot.Relations)
+	}
+	if !hasRelationByLastSegment(snapshot.Relations, "CALLS", "ApiHandlers.Ping", "ApiHandlers.GetUser") {
+		t.Fatalf("missing route bridge CALLS Ping->GetUser: %#v", snapshot.Relations)
+	}
+	if hasRelationByLastSegment(snapshot.Relations, "HANDLES_ROUTE", "Program", "/api/users/{id}") {
+		t.Fatalf("program/setup symbol was misclassified as minimal API route handler: %#v", snapshot.Relations)
+	}
+}
+
 func TestLaravelRoutesResolveControllerMethodsAndBridgeHTTPClient(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "routes/web.php", `<?php
