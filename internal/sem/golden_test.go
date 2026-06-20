@@ -286,6 +286,8 @@ func buildFixtureNDJSON(t *testing.T, name string) string {
 }
 
 func normalizeSnapshotRoot(snapshot, dir string) string {
+	snapshot = strings.ReplaceAll(snapshot, "\r\n", "\n")
+	snapshot = strings.ReplaceAll(snapshot, "\r", "\n")
 	snapshot = strings.ReplaceAll(snapshot, dir, "<repo>")
 	encoded, err := json.Marshal(dir)
 	if err != nil {
