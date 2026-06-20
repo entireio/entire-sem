@@ -404,7 +404,8 @@ Delivered:
   to local handlers.
 - Go router group prefixes such as `api := e.Group("/api")` compose with
   static child route registrations and bridge exact matching Go HTTP clients to
-  local handlers.
+  local handlers, including chained group calls such as
+  `app.Group("/api").Get("/users/{id}", handler)`.
 - Terraform/HCL blocks emit resources, modules, variables, outputs, config
   targets, and exact intra-module `RESOURCE_DEPENDS_ON` edges for block
   references.

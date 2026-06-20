@@ -6940,6 +6940,7 @@ func goHTTPRouteRegistrations(content string) []goHTTPRouteRegistration {
 	handleFuncRe := regexp.MustCompile(`\b(?:[A-Za-z_][A-Za-z0-9_]*\.)?HandleFunc\s*\(\s*([^,\n]+)\s*,\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)`)
 	handleFuncWrapperRe := regexp.MustCompile(`\b(?:[A-Za-z_][A-Za-z0-9_]*\.)?Handle\s*\(\s*([^,\n]+)\s*,\s*(?:http\.)?HandlerFunc\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)\s*\)`)
 	routerMethodRe := regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]*)\.(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|Get|Post|Put|Patch|Delete|Head|Options)\s*\(\s*([^,\n]+)\s*,\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)`)
+	chainedGroupMethodRe := regexp.MustCompile(`\b[A-Za-z_][A-Za-z0-9_]*\.Group\s*\(\s*([^,\n)]+)\s*\)\.(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|Get|Post|Put|Patch|Delete|Head|Options)\s*\(\s*([^,\n]+)\s*,\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)`)
 	for _, match := range handleFuncRe.FindAllStringSubmatch(content, -1) {
 		if len(match) == 3 {
 			add(match[1], match[2], "go_http_handle_func")
@@ -6960,6 +6961,20 @@ func goHTTPRouteRegistrations(content string) []goHTTPRouteRegistration {
 			}
 			add(routeExpr, match[3], "go_router_method")
 		}
+	}
+	for _, match := range chainedGroupMethodRe.FindAllStringSubmatch(content, -1) {
+		if len(match) != 4 {
+			continue
+		}
+		prefix, ok := staticRouteExpressionValue(match[1], constants)
+		if !ok {
+			continue
+		}
+		route, ok := staticRouteExpressionValue(match[2], constants)
+		if !ok {
+			continue
+		}
+		add(strconv.Quote(joinRoutePaths(prefix, route)), match[3], "go_router_group_method")
 	}
 	return registrations
 }
