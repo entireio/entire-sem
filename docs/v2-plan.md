@@ -36,13 +36,14 @@ versioned, confidence-scored facts that `entire-brain` can persist and query.
   `READS_FIELD`, `WRITES_FIELD`, `ACCESSES`, and `DATA_FLOWS`, including direct
   `return helper()`, local assignment followed by bare `return value`, simple
   branch assignment to the same returned local, simple JS/TS and Python
-  conditional return expressions, exact argument forwarding, conservative
-  parameter-alias forwarding, and conservative object-field forwarding when a
-  caller parameter is assigned into a local object field that is passed to a
-  resolved callee, simple object-literal forwarding when a caller parameter is
-  assigned into a local object literal that is passed to a resolved callee, plus
-  conservative collection-element forwarding when a caller parameter is
-  inserted into a local collection that is passed to a resolved callee.
+  conditional return expressions, simple JS/TS and Python fallback return
+  expressions, exact argument forwarding, conservative parameter-alias
+  forwarding, and conservative object-field forwarding when a caller parameter
+  is assigned into a local object field that is passed to a resolved callee,
+  simple object-literal forwarding when a caller parameter is assigned into a
+  local object literal that is passed to a resolved callee, plus conservative
+  collection-element forwarding when a caller parameter is inserted into a
+  local collection that is passed to a resolved callee.
 - Service and async boundaries are emitted: route/client/channel edges plus
   `HANDLES_GRPC`, `HANDLES_GRAPHQL`, `HANDLES_TRPC`, and `ASYNC_CALLS`.
 - IaC/configuration extraction emits HCL dependencies and `CONFIGURES` edges for

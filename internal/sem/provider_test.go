@@ -4316,6 +4316,112 @@ def run(flag):
 	}
 }
 
+func TestBuildProviderSnapshotEmitsFallbackReturnDataFlow(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "flow.ts", `function primary(): string {
+  return "primary"
+}
+
+async function fallback(): Promise<string> {
+  return "fallback"
+}
+
+function side(): string {
+  return "side"
+}
+
+export async function run(): Promise<string> {
+  side()
+  return primary() || await fallback()
+}
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"primary", "fallback"} {
+		var found RelationRecord
+		for _, relation := range snapshot.Relations {
+			if relation.Type == "DATA_FLOWS" && lastSegment(relation.FromID) == want && lastSegment(relation.ToID) == "run" {
+				found = relation
+				break
+			}
+		}
+		if found.FromID == "" {
+			t.Fatalf("missing fallback return DATA_FLOWS %s->run: %#v", want, snapshot.Relations)
+		}
+		if found.Reason != "callee return value returned through fallback expression" || found.Confidence > 0.75 {
+			t.Fatalf("unexpected fallback return flow metadata: %#v", found)
+		}
+		if len(found.Evidence) != 1 || found.Evidence[0].Kind != "fallback_return_flow" || found.Evidence[0].Detail != want {
+			t.Fatalf("unexpected fallback return flow evidence: %#v", found.Evidence)
+		}
+	}
+	for _, relation := range snapshot.Relations {
+		if relation.Type != "DATA_FLOWS" || lastSegment(relation.ToID) != "run" {
+			continue
+		}
+		if lastSegment(relation.FromID) == "side" {
+			t.Fatalf("non-returned side call produced DATA_FLOWS: %#v", relation)
+		}
+		if lastSegment(relation.FromID) == "primary" && len(relation.Evidence) == 1 && relation.Evidence[0].Kind == "return_flow" {
+			t.Fatalf("fallback branch was mislabeled as unconditional return flow: %#v", relation)
+		}
+	}
+}
+
+func TestBuildProviderSnapshotEmitsPythonFallbackReturnDataFlow(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "flow.py", `def primary():
+    return "primary"
+
+def fallback():
+    return "fallback"
+
+def side():
+    return "side"
+
+def run():
+    side()
+    return primary() or fallback()
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"primary", "fallback"} {
+		var found RelationRecord
+		for _, relation := range snapshot.Relations {
+			if relation.Type == "DATA_FLOWS" && lastSegment(relation.FromID) == want && lastSegment(relation.ToID) == "run" && len(relation.Evidence) == 1 && relation.Evidence[0].Kind == "fallback_return_flow" {
+				found = relation
+				break
+			}
+		}
+		if found.FromID == "" {
+			t.Fatalf("missing Python fallback DATA_FLOWS %s->run: %#v", want, snapshot.Relations)
+		}
+		if found.Reason != "callee return value returned through fallback expression" || found.Confidence > 0.75 {
+			t.Fatalf("unexpected Python fallback return flow metadata: %#v", found)
+		}
+		if len(found.Evidence) != 1 || found.Evidence[0].Detail != want {
+			t.Fatalf("unexpected Python fallback return flow evidence: %#v", found.Evidence)
+		}
+	}
+	for _, relation := range snapshot.Relations {
+		if relation.Type != "DATA_FLOWS" || lastSegment(relation.ToID) != "run" {
+			continue
+		}
+		if lastSegment(relation.FromID) == "side" {
+			t.Fatalf("non-returned Python side call produced DATA_FLOWS: %#v", relation)
+		}
+		if lastSegment(relation.FromID) == "primary" && len(relation.Evidence) == 1 && relation.Evidence[0].Kind == "return_flow" {
+			t.Fatalf("Python fallback branch was mislabeled as unconditional return flow: %#v", relation)
+		}
+	}
+}
+
 func TestBuildProviderSnapshotSequentialAssignmentKeepsLastReturnDataFlow(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "flow.ts", `function first(): string {

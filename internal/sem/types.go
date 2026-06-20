@@ -312,6 +312,8 @@ var (
 	returnCallRe         = regexp.MustCompile(`(?m)\breturn\s+(?:await\s+)?([A-Za-z_$][\w$]*)\s*\(`)
 	ternaryReturnCallRe  = regexp.MustCompile(`(?m)\breturn\s+[^?\n]+?\?\s*(?:await\s+)?([A-Za-z_$][\w$]*)\s*\([^:\n]*\)\s*:\s*(?:await\s+)?([A-Za-z_$][\w$]*)\s*\(`)
 	pythonIfReturnRe     = regexp.MustCompile(`(?m)\breturn\s+(?:await\s+)?([A-Za-z_$][\w$]*)\s*\([^\n]*?\)\s+if\s+[^\n]+?\s+else\s+(?:await\s+)?([A-Za-z_$][\w$]*)\s*\(`)
+	jsFallbackReturnRe   = regexp.MustCompile(`(?m)\breturn\s+(?:await\s+)?([A-Za-z_$][\w$]*)\s*\([^\n]*?\)\s*(?:\|\||\?\?)\s*(?:await\s+)?([A-Za-z_$][\w$]*)\s*\(`)
+	pythonOrReturnRe     = regexp.MustCompile(`(?m)\breturn\s+(?:await\s+)?([A-Za-z_$][\w$]*)\s*\([^\n]*?\)\s+or\s+(?:await\s+)?([A-Za-z_$][\w$]*)\s*\(`)
 	assignCallRe         = regexp.MustCompile(`(?m)\b(?:const|let|var)?\s*\$?([A-Za-z_$][\w$]*)\s*(?:\:\s*[^=\n]+)?\s*(?::=|=)\s*(?:await\s+)?([A-Za-z_$][\w$]*)\s*\(`)
 	returnVarRe          = regexp.MustCompile(`(?m)\breturn\s+\$?([A-Za-z_$][\w$]*)\b`)
 	aliasAssignRe        = regexp.MustCompile(`(?m)\b(?:const|let|var)?\s*\$?([A-Za-z_$][\w$]*)\s*(?:\:\s*[^=\n]+)?\s*(?::=|=)\s*\$?([A-Za-z_$][\w$]*)\b`)
@@ -346,7 +348,7 @@ func returnFlowCallNames(block string) []string {
 		if len(match) < 4 || match[2] < 0 || match[3] < 0 {
 			continue
 		}
-		if isPythonConditionalReturnLine(stripped, match[0]) {
+		if isPythonConditionalReturnLine(stripped, match[0]) || isFallbackReturnLine(stripped, match[0]) {
 			continue
 		}
 		name := stripped[match[2]:match[3]]
@@ -358,8 +360,18 @@ func returnFlowCallNames(block string) []string {
 }
 
 func isPythonConditionalReturnLine(block string, pos int) bool {
+	line := returnLineAt(block, pos)
+	return strings.Contains(line, " if ") && strings.Contains(line, " else ")
+}
+
+func isFallbackReturnLine(block string, pos int) bool {
+	line := returnLineAt(block, pos)
+	return strings.Contains(line, " || ") || strings.Contains(line, " ?? ") || strings.Contains(line, " or ")
+}
+
+func returnLineAt(block string, pos int) string {
 	if pos < 0 || pos >= len(block) {
-		return false
+		return ""
 	}
 	start := strings.LastIndex(block[:pos], "\n") + 1
 	end := strings.Index(block[pos:], "\n")
@@ -368,8 +380,7 @@ func isPythonConditionalReturnLine(block string, pos int) bool {
 	} else {
 		end += pos
 	}
-	line := block[start:end]
-	return strings.Contains(line, " if ") && strings.Contains(line, " else ")
+	return block[start:end]
 }
 
 type returnFlowCall struct {
@@ -393,6 +404,9 @@ func returnFlowCalls(block, signature string) []returnFlowCall {
 		}
 	}
 	for _, flow := range ternaryReturnFlows(stripped) {
+		flows[flow.Name+"\x00"+flow.EvidenceKind] = flow
+	}
+	for _, flow := range fallbackReturnFlows(stripped) {
 		flows[flow.Name+"\x00"+flow.EvidenceKind] = flow
 	}
 	assigned := map[string]string{}
@@ -475,6 +489,41 @@ func ternaryReturnFlows(block string) []returnFlowCall {
 	}
 	addMatches(ternaryReturnCallRe)
 	addMatches(pythonIfReturnRe)
+	if len(flows) == 0 {
+		return nil
+	}
+	sort.Slice(flows, func(i, j int) bool {
+		return flows[i].Name < flows[j].Name
+	})
+	return flows
+}
+
+func fallbackReturnFlows(block string) []returnFlowCall {
+	seen := map[string]bool{}
+	var flows []returnFlowCall
+	addMatches := func(re *regexp.Regexp) {
+		for _, match := range re.FindAllStringSubmatch(block, -1) {
+			if len(match) != 3 {
+				continue
+			}
+			for _, name := range []string{match[1], match[2]} {
+				name = strings.TrimPrefix(name, "$")
+				if name == "" || seen[name] {
+					continue
+				}
+				seen[name] = true
+				flows = append(flows, returnFlowCall{
+					Name:         name,
+					Reason:       "callee return value returned through fallback expression",
+					EvidenceKind: "fallback_return_flow",
+					Detail:       name,
+					Direction:    "callee_to_caller",
+				})
+			}
+		}
+	}
+	addMatches(jsFallbackReturnRe)
+	addMatches(pythonOrReturnRe)
 	if len(flows) == 0 {
 		return nil
 	}

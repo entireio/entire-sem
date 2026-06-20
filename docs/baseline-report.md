@@ -229,7 +229,9 @@ False negatives:
   `if/else` branches where each branch assigns a known callee result to the
   same returned local, and simple conditional return expressions such as
   JS/TS `return flag ? primary() : fallback()` and Python
-  `return primary() if flag else fallback()`. Caller parameters passed into
+  `return primary() if flag else fallback()`, plus simple fallback return
+  expressions such as JS/TS `return primary() || fallback()` and Python
+  `return primary() or fallback()`. Caller parameters passed into
   exact/import-resolved callees, including conservative local alias
   (`alias = input; callee(alias)`), object-field forwarding
   (`payload.field = input; callee(payload)`), simple object-literal forwarding
