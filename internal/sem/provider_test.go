@@ -3356,6 +3356,79 @@ export async function ping(): Promise<unknown> {
 	}
 }
 
+func TestJavaScriptDirectRouteSelectorHandlerResolvesUniqueMemberAndBridge(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "api.ts", `const handlers = {}
+
+export function register(app: any): void {
+  app.get("/api/users/:id", handlers.showUser)
+}
+
+export function showUser(): string {
+  return "ok"
+}
+
+export async function ping(): Promise<unknown> {
+  return fetch("/api/users/:id")
+}
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasRelationToExternalRoute(snapshot.Relations, "HANDLES_ROUTE", "showUser", "/api/users/:id") {
+		t.Fatalf("missing JS selector route handler: %#v", snapshot.Relations)
+	}
+	if !hasRelationByLastSegment(snapshot.Relations, "CALLS", "ping", "showUser") {
+		t.Fatalf("missing route bridge CALLS ping->showUser: %#v", snapshot.Relations)
+	}
+}
+
+func TestJavaScriptImportedRouteSelectorHandlerResolvesUniqueMemberAndBridge(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "routes.ts", `export const handlers = {}
+export const usersRouter = Router()
+
+usersRouter.get("/:id", handlers.showUser)
+
+export function showUser(): string {
+  return "ok"
+}
+`)
+	writeFile(t, repo, "app.ts", `import { usersRouter } from "./routes"
+
+export function register(app: any): void {
+  app.use("/api/users", usersRouter)
+}
+
+export async function ping(): Promise<unknown> {
+  return fetch("/api/users/:id")
+}
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasRelationToExternalRoute(snapshot.Relations, "HANDLES_ROUTE", "showUser", "/api/users/:id") {
+		t.Fatalf("missing imported JS selector route handler: %#v", snapshot.Relations)
+	}
+	if !hasRelationByLastSegment(snapshot.Relations, "CALLS", "ping", "showUser") {
+		t.Fatalf("missing route bridge CALLS ping->showUser: %#v", snapshot.Relations)
+	}
+}
+
+func TestRouteHandlerResolverSkipsAmbiguousSelectorMember(t *testing.T) {
+	handlers := map[string]SymbolRecord{
+		"apiHandlers.showUser":   {ID: "handler:api", Name: "showUser", QualifiedName: "apiHandlers.showUser"},
+		"adminHandlers.showUser": {ID: "handler:admin", Name: "showUser", QualifiedName: "adminHandlers.showUser"},
+	}
+	if handler, ok := resolveRouteHandlerSymbol(handlers, "handlers.showUser"); ok {
+		t.Fatalf("ambiguous selector should not resolve, got %#v", handler)
+	}
+}
+
 func TestFastifyImportedPluginPrefixComposesAndBridgesHTTPClient(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "users.ts", `const detailRoute = "/:id"

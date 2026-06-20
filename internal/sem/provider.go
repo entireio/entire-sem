@@ -7565,7 +7565,7 @@ func goHTTPRouteRelations(files []FileRecord, recordsByFile map[string][]SymbolR
 			}
 		}
 		for _, registration := range goHTTPRouteRegistrations(content) {
-			handler, ok := resolveGoRouteHandler(handlers, registration.Handler)
+			handler, ok := resolveRouteHandlerSymbol(handlers, registration.Handler)
 			if !ok {
 				continue
 			}
@@ -7704,7 +7704,7 @@ func goHTTPRouteRegistrations(content string) []goHTTPRouteRegistration {
 	return registrations
 }
 
-func resolveGoRouteHandler(handlers map[string]SymbolRecord, expr string) (SymbolRecord, bool) {
+func resolveRouteHandlerSymbol(handlers map[string]SymbolRecord, expr string) (SymbolRecord, bool) {
 	expr = strings.TrimSpace(expr)
 	if handler, ok := handlers[expr]; ok {
 		return handler, true
@@ -8717,7 +8717,8 @@ func jsFastifyPluginRoutes(content string, constants map[string]string, symbols 
 }
 
 func jsRouterRoutes(block string, constants map[string]string) []jsRouterRoute {
-	re := regexp.MustCompile(`(?i)\b([A-Za-z_$][\w$]*)\.(get|post|put|patch|delete|head|options)\s*\(\s*([^,\n)]+)(?:\s*,\s*([A-Za-z_$][\w$]*))?`)
+	jsHandlerExpr := `[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)?`
+	re := regexp.MustCompile(`(?i)\b([A-Za-z_$][\w$]*)\.(get|post|put|patch|delete|head|options)\s*\(\s*([^,\n)]+)(?:\s*,\s*(` + jsHandlerExpr + `))?`)
 	var routes []jsRouterRoute
 	for _, match := range re.FindAllStringSubmatch(block, -1) {
 		if len(match) != 5 {
@@ -8750,12 +8751,17 @@ func jsDirectRouteRelations(files []FileRecord, recordsByFile map[string][]Symbo
 			if _, exists := handlers[symbol.Name]; !exists {
 				handlers[symbol.Name] = symbol
 			}
+			if symbol.QualifiedName != "" {
+				if _, exists := handlers[symbol.QualifiedName]; !exists {
+					handlers[symbol.QualifiedName] = symbol
+				}
+			}
 		}
 		for _, route := range jsRouterRoutes(content, staticStringConstants(content)) {
 			if !jsDirectRouteReceiver(route.Receiver) || route.Handler == "" {
 				continue
 			}
-			handler, ok := handlers[route.Handler]
+			handler, ok := resolveRouteHandlerSymbol(handlers, route.Handler)
 			if !ok {
 				continue
 			}
@@ -9167,6 +9173,11 @@ func crossFileExpressRouterRelations(files []FileRecord, recordsByFile map[strin
 			if _, exists := symbolsByFileAndName[file.Path][symbol.Name]; !exists {
 				symbolsByFileAndName[file.Path][symbol.Name] = symbol
 			}
+			if symbol.QualifiedName != "" {
+				if _, exists := symbolsByFileAndName[file.Path][symbol.QualifiedName]; !exists {
+					symbolsByFileAndName[file.Path][symbol.QualifiedName] = symbol
+				}
+			}
 		}
 		content, ok := readContent(file.Path)
 		if !ok {
@@ -9192,7 +9203,7 @@ func crossFileExpressRouterRelations(files []FileRecord, recordsByFile map[strin
 				if route.Receiver != localReceiver || route.Handler == "" {
 					continue
 				}
-				handler, ok := symbolsByFileAndName[file.Path][route.Handler]
+				handler, ok := resolveRouteHandlerSymbol(symbolsByFileAndName[file.Path], route.Handler)
 				if !ok {
 					continue
 				}
@@ -9242,7 +9253,7 @@ func crossFileExpressRouterRelations(files []FileRecord, recordsByFile map[strin
 					if route.Receiver != routeReceiver || route.Handler == "" {
 						continue
 					}
-					handler, ok := symbolsByFileAndName[routeFile][route.Handler]
+					handler, ok := resolveRouteHandlerSymbol(symbolsByFileAndName[routeFile], route.Handler)
 					if !ok {
 						continue
 					}
@@ -9296,7 +9307,7 @@ func crossFileExpressRouterRelations(files []FileRecord, recordsByFile map[strin
 					if route.Handler == "" {
 						continue
 					}
-					handler, ok := symbolsByFileAndName[routeFile][route.Handler]
+					handler, ok := resolveRouteHandlerSymbol(symbolsByFileAndName[routeFile], route.Handler)
 					if !ok {
 						continue
 					}

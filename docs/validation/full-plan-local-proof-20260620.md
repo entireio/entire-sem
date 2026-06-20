@@ -142,7 +142,9 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
 - Express-style JS/TS router mounts compose same-block
   `app.use("/prefix", router)` prefixes with static `router.get/post/...`
   routes, emit `HANDLES_ROUTE`, and bridge exact matching `fetch`/Axios client
-  calls as direct `CALLS`.
+  calls as direct `CALLS`; unique same-file selector handler expressions are
+  covered for local and imported router files, and ambiguous selector members
+  are skipped.
 - NestJS controller/method decorators compose class prefixes with method-level
   routes, emit `HANDLES_ROUTE`, and bridge exact matching JS/TS HTTP client
   calls as direct `CALLS`.
@@ -157,7 +159,7 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
 - Imported Fastify plugin functions registered with
   `app.register(plugin, { prefix })` compose static plugin route registrations
   with the register prefix and bridge exact matching HTTP client calls to the
-  handler symbol.
+  handler symbol, including unique same-file selector handler expressions.
 - Aliased named-import and namespace-member imported Express routers compose
   cross-file `app.use("/prefix", router)` mounts with static
   `router.get/post/...` registrations and bridge exact matching HTTP client
@@ -413,6 +415,9 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
   - `bench/results/result-1781979074.json`: Go/gin, syntax-only, 28,618 LOC,
     162,516 LOC/s, max RSS 29,835,264 bytes, estimated output 1,902,638
     bytes; run after unique same-file Go route selector handler extraction.
+  - `bench/results/result-1781979249.json`: Go/gin, syntax-only, 28,618 LOC,
+    171,318 LOC/s, max RSS 28,999,680 bytes, estimated output 1,902,638
+    bytes; run after unique same-file JS/TS route selector handler extraction.
   - `bench/results/result-1781972446.json`: Go/gin, syntax-only, 28,618 LOC,
     162,982 LOC/s, max RSS 26,804,224 bytes, estimated output 1,902,630
     bytes; run after IngressClass reference extraction.
@@ -583,6 +588,9 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
     79,237 LOC/s, max RSS 26,804,224 bytes, estimated output 1,902,626 bytes.
   - `bench/results/result-1781979074.json`: Go/gin, syntax-only, 28,618 LOC,
     162,516 LOC/s, max RSS 29,835,264 bytes, estimated output 1,902,638
+    bytes.
+  - `bench/results/result-1781979249.json`: Go/gin, syntax-only, 28,618 LOC,
+    171,318 LOC/s, max RSS 28,999,680 bytes, estimated output 1,902,638
     bytes.
 
 ## Remaining Honesty Notes
