@@ -341,10 +341,12 @@ Delivered:
 Open:
 
 - Cross-file Kubernetes resource resolution is implemented for named
-  ConfigMap/Secret/service-account/PVC/RBAC/owner/Ingress/HPA references and
-  Service selector matches when the target resource symbol exists in the same
-  provider snapshot. Remaining Kubernetes resource gaps include less common
-  Kubernetes controllers and custom resource conventions.
+  ConfigMap/Secret/service-account/PVC/RBAC/owner/Ingress/HPA references,
+  Service selector matches, PodDisruptionBudget selector matches, and
+  NetworkPolicy podSelector matches when the target resource symbol exists in
+  the same provider snapshot. Remaining Kubernetes resource gaps include less
+  common Kubernetes controllers beyond these selectors and custom resource
+  conventions.
 - Broad framework-specific IaC/service modeling remains partial.
 
 Acceptance:

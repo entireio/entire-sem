@@ -730,6 +730,24 @@ spec:
   ports:
     - port: 80
 `)
+	writeFile(t, repo, "k8s/pdb.yaml", `apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: api
+spec:
+  selector:
+    matchLabels:
+      app: api
+`)
+	writeFile(t, repo, "k8s/network-policy.yaml", `apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: api-policy
+spec:
+  podSelector:
+    matchLabels:
+      tier: backend
+`)
 
 	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
 	if err != nil {
@@ -738,6 +756,12 @@ spec:
 
 	if !hasRelationByLastSegment(snapshot.Relations, "RESOURCE_DEPENDS_ON", "Service.api", "Deployment.api") {
 		t.Fatalf("missing Service.api -> Deployment.api selector dependency in %#v", snapshot.Relations)
+	}
+	if !hasRelationByLastSegment(snapshot.Relations, "RESOURCE_DEPENDS_ON", "PodDisruptionBudget.api", "Deployment.api") {
+		t.Fatalf("missing PodDisruptionBudget.api -> Deployment.api selector dependency in %#v", snapshot.Relations)
+	}
+	if !hasRelationByLastSegment(snapshot.Relations, "RESOURCE_DEPENDS_ON", "NetworkPolicy.api-policy", "Deployment.api") {
+		t.Fatalf("missing NetworkPolicy.api-policy -> Deployment.api selector dependency in %#v", snapshot.Relations)
 	}
 }
 

@@ -84,8 +84,9 @@ Confidence bands follow the v2-plan schema section (`0.90-1.00 exact`,
   `RESOURCE_DEPENDS_ON` (0.78-0.9 across HCL, Dockerfile, Docker Compose,
   Kubernetes, and Kustomize dependency patterns; Kubernetes named
   ConfigMap/Secret/service-account/PVC/RBAC/owner/Ingress/HPA references,
-  projected ConfigMap/Secret volume refs, and image pull secrets resolve to
-  local resource symbols when those manifests are present).
+  projected ConfigMap/Secret volume refs, image pull secrets, Service
+  selectors, PodDisruptionBudget selectors, and NetworkPolicy pod selectors
+  resolve to local resource symbols when those manifests are present).
 
 `capabilities --json` reports per-language relation support
 (`relation_support_by_language`) and pattern-driven relations separately in

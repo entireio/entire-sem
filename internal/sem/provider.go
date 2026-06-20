@@ -2465,11 +2465,14 @@ func kubernetesResourceKey(kind, name string) string {
 }
 
 type kubernetesResourceInfo struct {
-	Symbol   SymbolRecord
-	Kind     string
-	Name     string
-	Labels   map[string]string
-	Selector map[string]string
+	Symbol             SymbolRecord
+	Kind               string
+	Name               string
+	Labels             map[string]string
+	Selector           map[string]string
+	SelectorEvidence   string
+	SelectorReason     string
+	SelectorConfidence float64
 }
 
 type yamlPathFrame struct {
@@ -2496,18 +2499,22 @@ func kubernetesSelectorResourceRelations(recordsByFile map[string][]SymbolRecord
 			if len(labels) == 0 {
 				labels = yamlMapAtPath(content, "metadata", "labels")
 			}
+			selector, evidence, reason, confidence := kubernetesSelectorForResource(strings.ToLower(kind), content)
 			resources = append(resources, kubernetesResourceInfo{
-				Symbol:   symbol,
-				Kind:     strings.ToLower(kind),
-				Name:     name,
-				Labels:   labels,
-				Selector: yamlMapAtPath(content, "spec", "selector"),
+				Symbol:             symbol,
+				Kind:               strings.ToLower(kind),
+				Name:               name,
+				Labels:             labels,
+				Selector:           selector,
+				SelectorEvidence:   evidence,
+				SelectorReason:     reason,
+				SelectorConfidence: confidence,
 			})
 		}
 	}
 	var relations []RelationRecord
 	for _, source := range resources {
-		if source.Kind != "service" || len(source.Selector) == 0 {
+		if len(source.Selector) == 0 {
 			continue
 		}
 		for _, target := range resources {
@@ -2522,13 +2529,13 @@ func kubernetesSelectorResourceRelations(recordsByFile map[string][]SymbolRecord
 				FromID:        source.Symbol.ID,
 				ToID:          target.Symbol.ID,
 				Type:          "RESOURCE_DEPENDS_ON",
-				Confidence:    0.88,
-				Reason:        "Kubernetes Service selector matches workload labels",
+				Confidence:    source.SelectorConfidence,
+				Reason:        source.SelectorReason,
 				RelationScope: "file",
 				Resolution:    "exact",
 				TargetKind:    "symbol",
 				Evidence: []Evidence{{
-					Kind:      "kubernetes_service_selector",
+					Kind:      source.SelectorEvidence,
 					FilePath:  source.Symbol.FilePath,
 					StartLine: source.Symbol.StartLine,
 					EndLine:   source.Symbol.EndLine,
@@ -2539,6 +2546,28 @@ func kubernetesSelectorResourceRelations(recordsByFile map[string][]SymbolRecord
 		}
 	}
 	return relations
+}
+
+func kubernetesSelectorForResource(kind, content string) (map[string]string, string, string, float64) {
+	switch kind {
+	case "service":
+		return yamlMapAtPath(content, "spec", "selector"),
+			"kubernetes_service_selector",
+			"Kubernetes Service selector matches workload labels",
+			0.88
+	case "poddisruptionbudget":
+		return yamlMapAtPath(content, "spec", "selector", "matchLabels"),
+			"kubernetes_pdb_selector",
+			"Kubernetes PodDisruptionBudget selector matches workload labels",
+			0.84
+	case "networkpolicy":
+		return yamlMapAtPath(content, "spec", "podSelector", "matchLabels"),
+			"kubernetes_network_policy_selector",
+			"Kubernetes NetworkPolicy podSelector matches workload labels",
+			0.82
+	default:
+		return nil, "", "", 0
+	}
 }
 
 func yamlMapAtPath(content string, path ...string) map[string]string {
