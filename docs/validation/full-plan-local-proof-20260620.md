@@ -13,6 +13,7 @@ go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go
 go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go -limit 1 -profile syntax-only -provider-version codex-full-plan -out bench/results
 go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go -limit 1 -profile syntax-only -provider-version codex-full-plan -out bench/results
 go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go -limit 1 -profile syntax-only -provider-version codex-full-plan -out bench/results
+go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go -limit 1 -profile syntax-only -provider-version codex-full-plan -out bench/results
 go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go -limit 1 -profile full -provider-version codex-full-plan -out bench/results
 go run ./cmd/sem-bench -skip-clone -manifest bench/repos.json -languages C -limit 1 -profile syntax-only -provider-version codex-full-plan -out bench/results -max-rss-bytes 5000000000
 go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go -limit 1 -profile syntax-only -provider-version codex-full-plan -out bench/results
@@ -67,6 +68,9 @@ go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go
 - Kubernetes RBAC role/subject references, owner references, Ingress Service
   backends, and HPA scale targets emit exact local `RESOURCE_DEPENDS_ON` edges
   when the referenced resource manifests are present in the snapshot.
+- Kubernetes projected ConfigMap/Secret volume refs and image pull secrets emit
+  external and exact local `RESOURCE_DEPENDS_ON` edges when the referenced
+  resource manifests are present in the snapshot.
 - Kubernetes resource config tests pass for common container image,
   environment-variable, and port declarations emitted as `CONFIGURES` facts.
 - Docker Compose service extraction emits service resource symbols, exact
@@ -112,6 +116,8 @@ go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go
     149,982 LOC/s, max RSS 28,770,304 bytes, output 1,938,906 bytes.
   - `bench/results/result-1781945145.json`: Go/gin, syntax-only, 28,618 LOC,
     146,917 LOC/s, max RSS 26,116,096 bytes, output 1,938,906 bytes.
+  - `bench/results/result-1781945315.json`: Go/gin, syntax-only, 28,618 LOC,
+    153,111 LOC/s, max RSS 27,869,184 bytes, output 1,938,906 bytes.
 
 ## Remaining Honesty Notes
 

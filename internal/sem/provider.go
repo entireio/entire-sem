@@ -2284,11 +2284,20 @@ func kubernetesResourceReferences(content string) []resourceReference {
 	for _, match := range regexp.MustCompile(`(?is)\bconfigMapRef:\s*\n(?:\s+[A-Za-z0-9_-]+:\s*[^\n]*\n)*\s+name:\s*([A-Za-z0-9_.-]+)`).FindAllStringSubmatch(content, -1) {
 		add("configmap", match[1], "kubernetes_configmap_ref", 0.8)
 	}
+	for _, match := range regexp.MustCompile(`(?im)^\s*(?:-\s*)?configMap:\s*\n\s+name:\s*([A-Za-z0-9_.-]+)\s*$`).FindAllStringSubmatch(content, -1) {
+		add("configmap", match[1], "kubernetes_configmap_volume", 0.8)
+	}
 	for _, match := range regexp.MustCompile(`(?is)\bsecretRef:\s*\n(?:\s+[A-Za-z0-9_-]+:\s*[^\n]*\n)*\s+name:\s*([A-Za-z0-9_.-]+)`).FindAllStringSubmatch(content, -1) {
 		add("secret", match[1], "kubernetes_secret_ref", 0.8)
 	}
+	for _, match := range regexp.MustCompile(`(?im)^\s*(?:-\s*)?secret:\s*\n\s+name:\s*([A-Za-z0-9_.-]+)\s*$`).FindAllStringSubmatch(content, -1) {
+		add("secret", match[1], "kubernetes_secret_volume", 0.8)
+	}
 	for _, match := range regexp.MustCompile(`(?im)^\s*secretName:\s*([A-Za-z0-9_.-]+)\s*$`).FindAllStringSubmatch(content, -1) {
 		add("secret", match[1], "kubernetes_secret_name", 0.8)
+	}
+	for _, match := range regexp.MustCompile(`(?is)\bimagePullSecrets:\s*\n(?:\s+-\s*)?name:\s*([A-Za-z0-9_.-]+)`).FindAllStringSubmatch(content, -1) {
+		add("secret", match[1], "kubernetes_image_pull_secret", 0.8)
 	}
 	for _, match := range regexp.MustCompile(`(?im)^\s*serviceAccountName:\s*([A-Za-z0-9_.-]+)\s*$`).FindAllStringSubmatch(content, -1) {
 		add("serviceaccount", match[1], "kubernetes_service_account", 0.8)

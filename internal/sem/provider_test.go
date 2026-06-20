@@ -587,6 +587,8 @@ spec:
   template:
     spec:
       serviceAccountName: api-runner
+      imagePullSecrets:
+        - name: registry-creds
       volumes:
         - name: credentials
           secret:
@@ -594,6 +596,13 @@ spec:
         - name: cache
           persistentVolumeClaim:
             claimName: api-cache
+        - name: projected-config
+          projected:
+            sources:
+              - configMap:
+                  name: api-projected-config
+              - secret:
+                  name: api-projected-secret
       containers:
         - name: api
           image: example/api:latest
@@ -612,6 +621,11 @@ spec:
 kind: ConfigMap
 metadata:
   name: api-config
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: api-projected-config
 `)
 	writeFile(t, repo, "k8s/secret.yaml", `apiVersion: v1
 kind: Secret
@@ -622,6 +636,16 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: api-env
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: api-projected-secret
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: registry-creds
 `)
 	writeFile(t, repo, "k8s/service-account.yaml", `apiVersion: v1
 kind: ServiceAccount
@@ -643,7 +667,10 @@ metadata:
 		"external:config:kubernetes/configmap/api-config",
 		"external:config:kubernetes/secret/api-secret",
 		"external:config:kubernetes/secret/api-env",
+		"external:config:kubernetes/secret/api-projected-secret",
+		"external:config:kubernetes/secret/registry-creds",
 		"external:config:kubernetes/serviceaccount/api-runner",
+		"external:config:kubernetes/configmap/api-projected-config",
 		"external:config:kubernetes/persistentvolumeclaim/api-cache",
 	} {
 		if !hasRelationTo(snapshot.Relations, "RESOURCE_DEPENDS_ON", target) {
@@ -661,8 +688,11 @@ metadata:
 	}
 	for _, target := range []string{
 		"ConfigMap.api-config",
+		"ConfigMap.api-projected-config",
 		"Secret.api-secret",
 		"Secret.api-env",
+		"Secret.api-projected-secret",
+		"Secret.registry-creds",
 		"ServiceAccount.api-runner",
 		"PersistentVolumeClaim.api-cache",
 	} {
