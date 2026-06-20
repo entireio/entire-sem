@@ -148,8 +148,8 @@ False positives:
   Fastify/app/server JS route registrations, Ruby on Rails static route
   declarations and `resources` expansion for default REST actions, `only:`,
   and `except:`, NestJS
-  controller/method decorators, Next.js route-file boundaries, or same-block
-  Express router mount plus route registration).
+  controller/method decorators, Next.js/SvelteKit route-file boundaries, or
+  same-block Express router mount plus route registration).
   Deterministic static computed route expressions such as
   `apiPrefix + "/health"`, template literals with known local route constants,
   and static array joins such as `[apiPrefix, version, "users"].join("/")`

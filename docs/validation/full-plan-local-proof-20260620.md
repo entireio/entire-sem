@@ -159,9 +159,9 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
 - Local literal-constant Express router mount prefixes and child router paths
   compose across files and bridge exact matching HTTP client calls to the
   handler symbol.
-- Next.js route-file boundaries bridge matching JS/TS HTTP clients, including
-  bracket-parameter client paths normalized to the provider's canonical route
-  endpoint form.
+- Next.js and SvelteKit route-file boundaries bridge matching JS/TS HTTP
+  clients, including bracket-parameter client paths normalized to the
+  provider's canonical route endpoint form.
 - Kubernetes resource extraction, including multi-document YAML manifests, and
   Service-selector dependency tests pass (`Service` -> matching workload
   resource by selector labels).
@@ -373,6 +373,9 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
   - `bench/results/result-1781975104.json`: Go/gin, syntax-only, 28,618 LOC,
     147,326 LOC/s, max RSS 26,705,920 bytes, estimated output 1,902,635
     bytes; run after C# minimal API route extraction.
+  - `bench/results/result-1781975273.json`: Go/gin, syntax-only, 28,618 LOC,
+    149,410 LOC/s, max RSS 29,556,736 bytes, estimated output 1,902,635
+    bytes; run after SvelteKit route-boundary extraction.
   - `bench/results/result-1781973208.json`: Go/gin, syntax-only, 28,618 LOC,
     151,226 LOC/s, max RSS 27,066,368 bytes, estimated output 1,902,628
     bytes; run after Go router group-prefix extraction.

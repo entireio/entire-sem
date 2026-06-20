@@ -1185,7 +1185,7 @@ func entitySymbols(repoKey, path, language string, entities []Entity) []SymbolRe
 func syntheticBoundarySymbols(repoKey, path, language, content string, fileSymbols []SymbolRecord) []SymbolRecord {
 	var symbols []SymbolRecord
 	lines := strings.Split(content, "\n")
-	if route := nextRouteBoundary(path); route != "" {
+	if route := webRouteBoundary(path); route != "" {
 		source := routeBoundarySource(path, language, fileSymbols)
 		symbols = append(symbols, SymbolRecord{
 			RecordType:      "symbol",
@@ -1571,7 +1571,7 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 			return
 		}
 		knownFiles[file.Path] = true
-		if route := nextRouteBoundary(file.Path); route != "" {
+		if route := webRouteBoundary(file.Path); route != "" {
 			handledRoutes[route] = struct{}{}
 		}
 	}
@@ -9404,6 +9404,16 @@ func joinRoutePaths(prefix, route string) string {
 	return left + "/" + right
 }
 
+func webRouteBoundary(path string) string {
+	if route := nextRouteBoundary(path); route != "" {
+		return route
+	}
+	if route := svelteKitRouteBoundary(path); route != "" {
+		return route
+	}
+	return ""
+}
+
 func nextRouteBoundary(path string) string {
 	slashPath := filepath.ToSlash(path)
 	const rootMarker = "src/app/"
@@ -9440,6 +9450,67 @@ func nextRouteBoundary(path string) string {
 			continue
 		}
 		segments = append(segments, nextRouteSegment(segment))
+	}
+	if len(segments) == 0 {
+		return "/"
+	}
+	return "/" + strings.Join(segments, "/")
+}
+
+func svelteKitRouteBoundary(path string) string {
+	slashPath := filepath.ToSlash(path)
+	const rootMarker = "src/routes/"
+	const nestedMarker = "/src/routes/"
+	var relative string
+	switch {
+	case strings.HasPrefix(slashPath, rootMarker):
+		relative = strings.TrimPrefix(slashPath, rootMarker)
+	case strings.Contains(slashPath, nestedMarker):
+		index := strings.Index(slashPath, nestedMarker)
+		relative = slashPath[index+len(nestedMarker):]
+	default:
+		return ""
+	}
+	for _, suffix := range []string{
+		"/+server.ts",
+		"/+server.js",
+		"/+server.tsx",
+		"/+server.jsx",
+		"/+page.svelte",
+		"/+page.ts",
+		"/+page.js",
+		"/+page.tsx",
+		"/+page.jsx",
+	} {
+		if strings.HasSuffix(relative, suffix) {
+			relative = strings.TrimSuffix(relative, suffix)
+			return svelteKitRouteFromRelative(relative)
+		}
+	}
+	return ""
+}
+
+func svelteKitRouteFromRelative(relative string) string {
+	var segments []string
+	for _, segment := range strings.Split(relative, "/") {
+		segment = strings.TrimSpace(segment)
+		if segment == "" || strings.HasPrefix(segment, "(") && strings.HasSuffix(segment, ")") {
+			continue
+		}
+		if strings.HasPrefix(segment, "@") {
+			continue
+		}
+		if strings.HasPrefix(segment, "[[") && strings.HasSuffix(segment, "]]") {
+			segment = strings.TrimSuffix(strings.TrimPrefix(segment, "[["), "]]")
+			if strings.HasPrefix(segment, "...") {
+				segment = "{..." + strings.TrimPrefix(segment, "...") + "}"
+			} else {
+				segment = "{" + segment + "}"
+			}
+		} else {
+			segment = nextRouteSegment(segment)
+		}
+		segments = append(segments, segment)
 	}
 	if len(segments) == 0 {
 		return "/"
