@@ -239,6 +239,57 @@ Name = acme-tools
 	}
 }
 
+func TestJavaPackageImportsResolveToLocalTypeFile(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "src/main/java/com/acme/api/Handler.java", `package com.acme.api;
+
+import com.acme.lib.Service;
+import static com.acme.lib.Util.check;
+
+class Handler {
+  Service service;
+}
+`)
+	writeFile(t, repo, "src/main/java/com/acme/lib/Service.java", `package com.acme.lib;
+
+class Service {}
+`)
+	writeFile(t, repo, "src/main/java/com/acme/lib/Util.java", `package com.acme.lib;
+
+class Util {
+  static boolean check() { return true; }
+}
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	targets := map[string]string{
+		"src/main/java/com/acme/lib/Service.java": "com.acme.lib.Service",
+		"src/main/java/com/acme/lib/Util.java":    "com.acme.lib.Util.check",
+	}
+	for targetPath, imported := range targets {
+		target := fileID(snapshot.Header.RepoKey, targetPath)
+		var found RelationRecord
+		for _, relation := range snapshot.Relations {
+			if relation.Type == "IMPORTS" && strings.HasSuffix(relation.FromID, "file:src/main/java/com/acme/api/Handler.java") && relation.ToID == target && relation.Evidence[0].Detail == imported {
+				found = relation
+				break
+			}
+		}
+		if found.FromID == "" {
+			t.Fatalf("missing Java resolved import %s to %s in %#v", imported, target, snapshot.Relations)
+		}
+		if found.Resolution != "import_resolved" || found.RelationScope != "module" || found.TargetKind != "file" || found.Confidence < 0.89 {
+			t.Fatalf("unexpected Java import metadata: %#v", found)
+		}
+		if len(found.Evidence) != 1 || found.Evidence[0].Kind != "jvm_package_import" {
+			t.Fatalf("unexpected Java import evidence: %#v", found.Evidence)
+		}
+	}
+}
+
 func TestResourceDependsOnGraph(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "main.tf", `resource "aws_vpc" "main" {

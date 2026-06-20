@@ -3149,6 +3149,7 @@ type manifestImportResolver struct {
 	tsPathMappings []tsPathMapping
 	pythonPackages []string
 	pythonModules  map[string]string
+	jvmTypes       map[string]string
 }
 
 type manifestImportResolution struct {
@@ -3165,7 +3166,7 @@ type tsPathMapping struct {
 }
 
 func buildManifestImportResolver(files []FileRecord, readContent contentReader) manifestImportResolver {
-	resolver := manifestImportResolver{goPackages: map[string]string{}, jsModuleFiles: map[string]string{}, pythonModules: map[string]string{}}
+	resolver := manifestImportResolver{goPackages: map[string]string{}, jsModuleFiles: map[string]string{}, pythonModules: map[string]string{}, jvmTypes: map[string]string{}}
 	if content, ok := readContent("go.mod"); ok {
 		resolver.goModule = parseGoModulePath(content)
 	}
@@ -3185,6 +3186,7 @@ func buildManifestImportResolver(files []FileRecord, readContent contentReader) 
 	var goPaths []string
 	var jsPaths []string
 	var pyPaths []string
+	var jvmPaths []string
 	for _, file := range files {
 		if strings.EqualFold(filepath.Ext(file.Path), ".go") {
 			goPaths = append(goPaths, filepath.ToSlash(file.Path))
@@ -3194,6 +3196,9 @@ func buildManifestImportResolver(files []FileRecord, readContent contentReader) 
 		}
 		if strings.EqualFold(filepath.Ext(file.Path), ".py") {
 			pyPaths = append(pyPaths, filepath.ToSlash(file.Path))
+		}
+		if jvmLikeExtension(filepath.Ext(file.Path)) {
+			jvmPaths = append(jvmPaths, filepath.ToSlash(file.Path))
 		}
 	}
 	sort.Slice(goPaths, func(i, j int) bool {
@@ -3236,6 +3241,18 @@ func buildManifestImportResolver(files []FileRecord, readContent contentReader) 
 		for _, module := range pythonModuleKeysForPath(path) {
 			if _, exists := resolver.pythonModules[module]; !exists {
 				resolver.pythonModules[module] = path
+			}
+		}
+	}
+	sort.Strings(jvmPaths)
+	for _, path := range jvmPaths {
+		content, ok := readContent(path)
+		if !ok {
+			continue
+		}
+		if qualifiedName := jvmQualifiedTypeName(path, content); qualifiedName != "" {
+			if _, exists := resolver.jvmTypes[qualifiedName]; !exists {
+				resolver.jvmTypes[qualifiedName] = path
 			}
 		}
 	}
@@ -3416,6 +3433,9 @@ func (resolver manifestImportResolver) resolve(importingPath, spec string) (mani
 	}
 	if ext == ".py" {
 		return resolver.resolvePythonImport(importingPath, spec)
+	}
+	if jvmLikeExtension(ext) {
+		return resolver.resolveJVMImport(importingPath, spec)
 	}
 	return manifestImportResolution{}, false
 }
@@ -3605,6 +3625,58 @@ func normalizePythonPackageNames(names []string) []string {
 	return normalized
 }
 
+func (resolver manifestImportResolver) resolveJVMImport(importingPath, spec string) (manifestImportResolution, bool) {
+	spec = strings.TrimSpace(spec)
+	if spec == "" || strings.HasSuffix(spec, ".*") {
+		return manifestImportResolution{}, false
+	}
+	path, ok := resolver.jvmTypes[spec]
+	if !ok {
+		probe := spec
+		for strings.Contains(probe, ".") {
+			probe = probe[:strings.LastIndex(probe, ".")]
+			if path, ok = resolver.jvmTypes[probe]; ok {
+				break
+			}
+		}
+	}
+	if !ok || path == filepath.ToSlash(importingPath) {
+		return manifestImportResolution{}, false
+	}
+	return manifestImportResolution{
+		Path:         path,
+		Confidence:   0.9,
+		Scope:        "module",
+		Reason:       "JVM package import resolved through package declaration",
+		EvidenceKind: "jvm_package_import",
+	}, true
+}
+
+func jvmQualifiedTypeName(path, content string) string {
+	base := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	if base == "" {
+		return ""
+	}
+	pkg := ""
+	re := regexp.MustCompile(`(?m)^\s*package\s+([A-Za-z_][A-Za-z0-9_\.]*)\s*;?`)
+	if match := re.FindStringSubmatch(content); len(match) == 2 {
+		pkg = strings.TrimSpace(match[1])
+	}
+	if pkg == "" {
+		return base
+	}
+	return pkg + "." + base
+}
+
+func jvmLikeExtension(ext string) bool {
+	switch strings.ToLower(ext) {
+	case ".java", ".kt", ".kts", ".scala", ".sc":
+		return true
+	default:
+		return false
+	}
+}
+
 func importsFor(path, content string) []string {
 	switch strings.ToLower(filepath.Ext(path)) {
 	case ".bash", ".sh", ".zsh":
@@ -3626,7 +3698,7 @@ func importsFor(path, content string) []string {
 	case ".hcl", ".tf", ".tfvars":
 		return nil
 	case ".java", ".kt", ".kts", ".scala", ".sc", ".sbt":
-		return scanImports(content, regexp.MustCompile(`(?m)^\s*import\s+([A-Za-z0-9_\.\*]+)`))
+		return scanImports(content, regexp.MustCompile(`(?m)^\s*import\s+(?:static\s+)?([A-Za-z0-9_\.\*]+)`))
 	case ".py":
 		return scanImports(content, regexp.MustCompile(`(?m)^\s*(?:from\s+([A-Za-z0-9_\.]+)\s+import|import\s+([A-Za-z0-9_\.]+))`))
 	case ".js", ".jsx", ".ts", ".tsx":
