@@ -3057,6 +3057,9 @@ func kubernetesResourceReferences(content string) []resourceReference {
 	for _, ref := range kubernetesRolloutsAnalysisTemplateReferences(content) {
 		add(ref.Kind, ref.Name, ref.EvidenceKind, ref.Confidence)
 	}
+	for _, ref := range kubernetesArgoEventsReferences(content) {
+		add(ref.Kind, ref.Name, ref.EvidenceKind, ref.Confidence)
+	}
 	for _, ref := range kubernetesArgoCDApplicationProjectReferences(content) {
 		add(ref.Kind, ref.Name, ref.EvidenceKind, ref.Confidence)
 	}
@@ -3429,6 +3432,36 @@ func kubernetesRolloutsAnalysisTemplateReferences(content string) []resourceRefe
 			fields[childKey] = yamlLineValue(trimmed)
 		}
 		flush()
+	}
+	return refs
+}
+
+func kubernetesArgoEventsReferences(content string) []resourceReference {
+	if !kubernetesManifestAPIMatches(content, `argoproj\.io/`) || !kubernetesManifestHasAnyKind(content, "Sensor", "EventSource") {
+		return nil
+	}
+	var refs []resourceReference
+	if kubernetesManifestHasAnyKind(content, "Sensor") {
+		for _, match := range regexp.MustCompile(`(?im)^\s*eventSourceName:\s*([A-Za-z0-9_.-]+)\s*$`).FindAllStringSubmatch(content, -1) {
+			if len(match) == 2 && match[1] != "" {
+				refs = append(refs, resourceReference{
+					Kind:         "eventsource",
+					Name:         match[1],
+					EvidenceKind: "kubernetes_argo_events_event_source_ref",
+					Confidence:   0.84,
+				})
+			}
+		}
+	}
+	for _, match := range regexp.MustCompile(`(?im)^\s*eventBusName:\s*([A-Za-z0-9_.-]+)\s*$`).FindAllStringSubmatch(content, -1) {
+		if len(match) == 2 && match[1] != "" {
+			refs = append(refs, resourceReference{
+				Kind:         "eventbus",
+				Name:         match[1],
+				EvidenceKind: "kubernetes_argo_events_event_bus_ref",
+				Confidence:   0.82,
+			})
+		}
 	}
 	return refs
 }

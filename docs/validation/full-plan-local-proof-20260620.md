@@ -226,7 +226,8 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
   `target.name` Secret refs, Argo
   `workflowTemplateRef`/`templateRef`, Argo Rollouts `templateName`
   AnalysisTemplate refs, Argo CD `Application`/`ApplicationSet` project refs,
-  Tekton `pipelineRef`/`taskRef`, and ServiceBinding
+  Argo Events Sensor `eventSourceName` and Sensor/EventSource `eventBusName`
+  refs, Tekton `pipelineRef`/`taskRef`, and ServiceBinding
   `service`/`workload`, Knative Trigger `broker`/`subscriber.ref`, and
   Knative Subscription `channel`/`subscriber.ref`/`reply.ref`
   and Knative Serving `Route`/`Service` traffic `revisionName`/

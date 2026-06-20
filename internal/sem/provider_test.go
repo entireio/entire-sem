@@ -1999,6 +1999,33 @@ kind: ClusterAnalysisTemplate
 metadata:
   name: global-slo
 `)
+	writeFile(t, repo, "k8s/argo-events-sensor.yaml", `apiVersion: argoproj.io/v1alpha1
+kind: Sensor
+metadata:
+  name: order-created
+spec:
+  eventBusName: platform-bus
+  dependencies:
+    - name: webhook-order
+      eventSourceName: webhook
+      eventName: order
+`)
+	writeFile(t, repo, "k8s/argo-events-eventsource.yaml", `apiVersion: argoproj.io/v1alpha1
+kind: EventSource
+metadata:
+  name: webhook
+spec:
+  eventBusName: platform-bus
+  webhook:
+    order:
+      endpoint: /orders
+      method: POST
+`)
+	writeFile(t, repo, "k8s/argo-events-eventbus.yaml", `apiVersion: argoproj.io/v1alpha1
+kind: EventBus
+metadata:
+  name: platform-bus
+`)
 	writeFile(t, repo, "k8s/argocd-application.yaml", `apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -2139,6 +2166,9 @@ metadata:
 		{"Rollout.api", "AnalysisTemplate.success-rate"},
 		{"Rollout.api", "ClusterAnalysisTemplate.global-slo"},
 		{"AnalysisRun.manual-analysis", "AnalysisTemplate.success-rate"},
+		{"Sensor.order-created", "EventSource.webhook"},
+		{"Sensor.order-created", "EventBus.platform-bus"},
+		{"EventSource.webhook", "EventBus.platform-bus"},
 		{"Application.web", "AppProject.platform"},
 		{"ApplicationSet.workers", "AppProject.workloads"},
 		{"ServiceBinding.api-database", "PostgreSQL.user-db"},
