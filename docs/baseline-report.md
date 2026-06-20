@@ -123,8 +123,9 @@ False positives:
   direct mapping annotation, Django `path(...)`/simple `re_path(...)`
   registration, Go `net/http` `HandleFunc`/`HandlerFunc` registration, or
   Go chi/gin-style router method registration, C# ASP.NET route/HTTP-verb
-  attributes, PHP Laravel/Symfony route attributes and declarations, or
-  same-block Express router mount plus route registration).
+  attributes, PHP Laravel/Symfony route attributes and declarations, direct
+  Fastify/app/server JS route registrations, or same-block Express router mount
+  plus route registration).
   Static constant-prefix expressions such as
   `apiPrefix + "/health"` compose to one route and do not emit the suffix as a
   separate route. Matching Python `requests`/`httpx`, Java `RestTemplate`/HTTP

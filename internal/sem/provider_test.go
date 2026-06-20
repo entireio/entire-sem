@@ -1656,18 +1656,18 @@ export async function ping(): Promise<unknown> {
 	if !hasRelationByLastSegment(snapshot.Relations, "HTTP_CALLS", "ping", "/health") {
 		t.Fatalf("missing HTTP_CALLS endpoint relation: %#v", snapshot.Relations)
 	}
-	if !hasRelationByLastSegment(snapshot.Relations, "HANDLES_ROUTE", "register", "/health") {
+	if !hasRelationByLastSegment(snapshot.Relations, "HANDLES_ROUTE", "health", "/health") {
 		t.Fatalf("missing HANDLES_ROUTE endpoint relation: %#v", snapshot.Relations)
 	}
 	var bridge RelationRecord
 	for _, relation := range snapshot.Relations {
-		if relation.Type == "CALLS" && lastSegment(relation.FromID) == "ping" && lastSegment(relation.ToID) == "register" {
+		if relation.Type == "CALLS" && lastSegment(relation.FromID) == "ping" && lastSegment(relation.ToID) == "health" {
 			bridge = relation
 			break
 		}
 	}
 	if bridge.FromID == "" {
-		t.Fatalf("missing route bridge CALLS ping->register: %#v", snapshot.Relations)
+		t.Fatalf("missing route bridge CALLS ping->health: %#v", snapshot.Relations)
 	}
 	if bridge.Resolution != "pattern" || bridge.TargetKind != "symbol" || bridge.Confidence > 0.72 {
 		t.Fatalf("unexpected bridge metadata: %#v", bridge)
@@ -1780,14 +1780,46 @@ export async function ping(): Promise<unknown> {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !hasRelationToExternalRoute(snapshot.Relations, "HANDLES_ROUTE", "register", "/api/health") {
+	if !hasRelationToExternalRoute(snapshot.Relations, "HANDLES_ROUTE", "health", "/api/health") {
 		t.Fatalf("missing static-composed route: %#v", snapshot.Relations)
 	}
-	if hasRelationToExternalRoute(snapshot.Relations, "HANDLES_ROUTE", "register", "/health") {
+	if hasRelationToExternalRoute(snapshot.Relations, "HANDLES_ROUTE", "health", "/health") {
 		t.Fatalf("suffix literal was misreported as standalone route: %#v", snapshot.Relations)
 	}
-	if !hasRelationByLastSegment(snapshot.Relations, "CALLS", "ping", "register") {
-		t.Fatalf("missing route bridge CALLS ping->register: %#v", snapshot.Relations)
+	if !hasRelationByLastSegment(snapshot.Relations, "CALLS", "ping", "health") {
+		t.Fatalf("missing route bridge CALLS ping->health: %#v", snapshot.Relations)
+	}
+}
+
+func TestFastifyDirectRouteResolvesHandlerAndBridge(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "api.ts", `const userRoute = "/api/users/:id"
+
+export function register(fastify: any): void {
+  fastify.get(userRoute, showUser)
+}
+
+export function showUser(): string {
+  return "ok"
+}
+
+export async function ping(): Promise<unknown> {
+  return fetch("/api/users/:id")
+}
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasRelationToExternalRoute(snapshot.Relations, "HANDLES_ROUTE", "showUser", "/api/users/:id") {
+		t.Fatalf("missing Fastify direct route handler: %#v", snapshot.Relations)
+	}
+	if hasRelationToExternalRoute(snapshot.Relations, "HANDLES_ROUTE", "register", "/api/users/:id") {
+		t.Fatalf("registration function was misclassified as Fastify handler: %#v", snapshot.Relations)
+	}
+	if !hasRelationByLastSegment(snapshot.Relations, "CALLS", "ping", "showUser") {
+		t.Fatalf("missing route bridge CALLS ping->showUser: %#v", snapshot.Relations)
 	}
 }
 

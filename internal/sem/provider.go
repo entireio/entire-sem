@@ -1449,6 +1449,11 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 			routeHandlers[r.Route] = append(routeHandlers[r.Route], r.Handler)
 			handledRoutes[r.Route] = struct{}{}
 		}
+		for _, r := range jsDirectRouteRelations(files, recordsByFile, readContent) {
+			emit(r.Relation)
+			routeHandlers[r.Route] = append(routeHandlers[r.Route], r.Handler)
+			handledRoutes[r.Route] = struct{}{}
+		}
 	}
 	manifestImports := buildManifestImportResolver(files, readContent)
 
@@ -5936,6 +5941,82 @@ func jsRouterRoutes(block string, constants map[string]string) []jsRouterRoute {
 		}
 	}
 	return routes
+}
+
+func jsDirectRouteRelations(files []FileRecord, recordsByFile map[string][]SymbolRecord, readContent contentReader) []expressRouteRelation {
+	var relations []expressRouteRelation
+	seen := map[string]bool{}
+	for _, file := range files {
+		if !jsLikeExtension(filepath.Ext(file.Path)) {
+			continue
+		}
+		content, ok := readContent(file.Path)
+		if !ok {
+			continue
+		}
+		handlers := map[string]SymbolRecord{}
+		for _, symbol := range recordsByFile[file.Path] {
+			if typeLikeKind(symbol.Kind) {
+				continue
+			}
+			if _, exists := handlers[symbol.Name]; !exists {
+				handlers[symbol.Name] = symbol
+			}
+		}
+		for _, route := range jsRouterRoutes(content, staticStringConstants(content)) {
+			if !jsDirectRouteReceiver(route.Receiver) || route.Handler == "" {
+				continue
+			}
+			handler, ok := handlers[route.Handler]
+			if !ok {
+				continue
+			}
+			key := handler.ID + "\x00" + route.Route
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			relations = append(relations, expressRouteRelation{
+				Route:   route.Route,
+				Handler: handler,
+				Relation: RelationRecord{
+					RecordType:    "relation",
+					FromID:        handler.ID,
+					ToID:          externalID("route", route.Route),
+					Type:          "HANDLES_ROUTE",
+					Confidence:    0.82,
+					Reason:        "JavaScript route registration resolved to local handler",
+					RelationScope: "external",
+					Resolution:    "exact",
+					TargetKind:    "route",
+					Evidence: []Evidence{{
+						Kind:      "js_direct_route",
+						FilePath:  handler.FilePath,
+						StartLine: handler.StartLine,
+						EndLine:   handler.EndLine,
+						Detail:    route.Receiver + "." + route.Route + " -> " + route.Handler,
+					}},
+					WarningCodes: []string{},
+				},
+			})
+		}
+	}
+	sort.Slice(relations, func(i, j int) bool {
+		if relations[i].Route != relations[j].Route {
+			return relations[i].Route < relations[j].Route
+		}
+		return relations[i].Handler.ID < relations[j].Handler.ID
+	})
+	return relations
+}
+
+func jsDirectRouteReceiver(receiver string) bool {
+	switch strings.ToLower(receiver) {
+	case "app", "server", "fastify":
+		return true
+	default:
+		return false
+	}
 }
 
 func staticRouteExpressionValue(expr string, constants map[string]string) (string, bool) {

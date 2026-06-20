@@ -213,6 +213,8 @@ go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go
     131,704 LOC/s, max RSS 28,082,176 bytes, output 1,938,906 bytes.
   - `bench/results/result-1781951876.json`: Go/gin, syntax-only, 28,618 LOC,
     131,577 LOC/s, max RSS 28,835,840 bytes, output 1,938,906 bytes.
+  - `bench/results/result-1781951990.json`: Go/gin, syntax-only, 28,618 LOC,
+    135,361 LOC/s, max RSS 26,066,944 bytes, output 1,938,906 bytes.
 
 ## Remaining Honesty Notes
 
