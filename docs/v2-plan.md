@@ -306,7 +306,8 @@ Tasks:
   declarations resolve local controller methods, and Symfony/PHP route
   attributes compose class and method routes. Direct Fastify/app/server JS/TS
   route registrations resolve local handler functions. Ruby on Rails static
-  route declarations resolve local controller actions. Next.js route-file
+  route declarations and explicit `resources ... only:` declarations resolve
+  local controller actions. Next.js route-file
   boundaries bridge matching JS/TS clients, including bracket-parameter paths.
   NestJS controller/method decorators compose class prefixes with method routes
   and bridge matching JS/TS HTTP clients.

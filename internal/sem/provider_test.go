@@ -2509,6 +2509,45 @@ end
 	}
 }
 
+func TestRailsResourcesResolveControllerActionsAndBridgeHTTPClient(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "config/routes.rb", `Rails.application.routes.draw do
+  resources :users, only: [:show, :create]
+end
+`)
+	writeFile(t, repo, "app/controllers/users_controller.rb", `class UsersController
+  def show
+    "ok"
+  end
+
+  def create
+    "created"
+  end
+
+  def ping
+    HTTP.get("/users/:id")
+  end
+end
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasRelationToExternalRoute(snapshot.Relations, "HANDLES_ROUTE", "UsersController.show", "/users/:id") {
+		t.Fatalf("missing Rails resources show route handler: %#v", snapshot.Relations)
+	}
+	if !hasRelationToExternalRoute(snapshot.Relations, "HANDLES_ROUTE", "UsersController.create", "/users") {
+		t.Fatalf("missing Rails resources create route handler: %#v", snapshot.Relations)
+	}
+	if !hasRelationToExternalRoute(snapshot.Relations, "HTTP_CALLS", "UsersController.ping", "/users/:id") {
+		t.Fatalf("missing Rails resources HTTP_CALLS relation: %#v", snapshot.Relations)
+	}
+	if !hasRelationByLastSegment(snapshot.Relations, "CALLS", "UsersController.ping", "UsersController.show") {
+		t.Fatalf("missing route bridge CALLS ping->UsersController.show: %#v", snapshot.Relations)
+	}
+}
+
 func TestSymfonyRouteAttributesResolveHandler(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "src/Controller/HealthController.php", `<?php

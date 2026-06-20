@@ -6361,6 +6361,7 @@ func railsRouteRegistrations(content string) []railsRouteRegistration {
 	}
 	toRe := regexp.MustCompile(`(?is)\b(?:get|post|put|patch|delete|match)\s+["']([^"']+)["']\s*,\s*to:\s*["']([A-Za-z0-9_/]+)#([A-Za-z_][A-Za-z0-9_]*)["']`)
 	hashRocketRe := regexp.MustCompile(`(?is)\b(?:get|post|put|patch|delete|match)\s+["']([^"']+)["']\s*=>\s*["']([A-Za-z0-9_/]+)#([A-Za-z_][A-Za-z0-9_]*)["']`)
+	resourcesOnlyRe := regexp.MustCompile(`(?is)\bresources\s+:([A-Za-z_][A-Za-z0-9_]*)\s*,\s*only:\s*\[([^\]]+)\]`)
 	for _, match := range toRe.FindAllStringSubmatch(content, -1) {
 		if len(match) == 4 {
 			add(match[1], match[2], match[3], "rails_route_to")
@@ -6371,7 +6372,60 @@ func railsRouteRegistrations(content string) []railsRouteRegistration {
 			add(match[1], match[2], match[3], "rails_route_hash_rocket")
 		}
 	}
+	for _, match := range resourcesOnlyRe.FindAllStringSubmatch(content, -1) {
+		if len(match) == 3 {
+			for _, route := range railsResourceRoutes(match[1], railsResourceActions(match[2])) {
+				add(route.Path, match[1], route.Action, "rails_resources_only")
+			}
+		}
+	}
 	return registrations
+}
+
+type railsResourceRoute struct {
+	Path   string
+	Action string
+}
+
+func railsResourceRoutes(resource string, actions []string) []railsResourceRoute {
+	resource = strings.Trim(strings.TrimSpace(resource), "/")
+	if resource == "" {
+		return nil
+	}
+	base := "/" + resource
+	byAction := map[string][]string{
+		"index":   {base},
+		"create":  {base},
+		"new":     {base + "/new"},
+		"show":    {base + "/:id"},
+		"edit":    {base + "/:id/edit"},
+		"update":  {base + "/:id"},
+		"destroy": {base + "/:id"},
+	}
+	var routes []railsResourceRoute
+	for _, action := range actions {
+		for _, path := range byAction[action] {
+			routes = append(routes, railsResourceRoute{Path: path, Action: action})
+		}
+	}
+	return routes
+}
+
+func railsResourceActions(value string) []string {
+	seen := map[string]bool{}
+	var actions []string
+	for _, match := range regexp.MustCompile(`:([A-Za-z_][A-Za-z0-9_]*)`).FindAllStringSubmatch(value, -1) {
+		if len(match) != 2 {
+			continue
+		}
+		action := match[1]
+		if seen[action] {
+			continue
+		}
+		seen[action] = true
+		actions = append(actions, action)
+	}
+	return actions
 }
 
 func railsControllerClassCandidates(controller string) []string {
