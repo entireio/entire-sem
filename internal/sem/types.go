@@ -364,6 +364,9 @@ func returnFlowCalls(block, signature string) []returnFlowCall {
 			Direction:    "callee_to_caller",
 		}
 	}
+	for _, flow := range branchAssignedReturnFlows(stripped) {
+		flows[flow.Name+"\x00assigned_return_flow"] = flow
+	}
 	for _, flow := range argumentForwardingFlows(stripped, signature) {
 		flows[flow.Name+"\x00"+flow.EvidenceKind+"\x00"+flow.Detail] = flow
 	}
@@ -384,6 +387,59 @@ func returnFlowCalls(block, signature string) []returnFlowCall {
 		return out[i].EvidenceKind < out[j].EvidenceKind
 	})
 	return out
+}
+
+func branchAssignedReturnFlows(block string) []returnFlowCall {
+	branchRe := regexp.MustCompile(`(?s)\bif\s*\([^)]*\)\s*\{(.*?)\}\s*else\s*\{(.*?)\}.*?\breturn\s+\$?([A-Za-z_$][\w$]*)\b`)
+	matches := branchRe.FindAllStringSubmatch(block, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+	var flows []returnFlowCall
+	seen := map[string]bool{}
+	for _, match := range matches {
+		if len(match) != 4 {
+			continue
+		}
+		returned := strings.TrimPrefix(match[3], "$")
+		for _, branch := range []string{match[1], match[2]} {
+			for _, name := range branchCallAssignments(branch, returned) {
+				key := name + "\x00" + returned
+				if seen[key] {
+					continue
+				}
+				seen[key] = true
+				flows = append(flows, returnFlowCall{
+					Name:         name,
+					Reason:       "callee return value assigned in branch and returned by caller",
+					EvidenceKind: "branch_assigned_return_flow",
+					Detail:       name + " -> " + returned,
+					Direction:    "callee_to_caller",
+				})
+			}
+		}
+	}
+	sort.Slice(flows, func(i, j int) bool {
+		if flows[i].Name != flows[j].Name {
+			return flows[i].Name < flows[j].Name
+		}
+		return flows[i].Detail < flows[j].Detail
+	})
+	return flows
+}
+
+func branchCallAssignments(block, variable string) []string {
+	if variable == "" {
+		return nil
+	}
+	re := regexp.MustCompile(`(?m)\b(?:const|let|var)?\s*\$?` + regexp.QuoteMeta(variable) + `\s*(?:\:\s*[^=\n]+)?\s*(?::=|=)\s*(?:await\s+)?([A-Za-z_$][\w$]*)\s*\(`)
+	seen := map[string]struct{}{}
+	for _, match := range re.FindAllStringSubmatch(block, -1) {
+		if len(match) == 2 && match[1] != "" {
+			seen[strings.TrimPrefix(match[1], "$")] = struct{}{}
+		}
+	}
+	return sortedStringSet(seen)
 }
 
 func argumentForwardingFlows(block, signature string) []returnFlowCall {

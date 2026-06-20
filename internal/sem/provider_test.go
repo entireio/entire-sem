@@ -2497,6 +2497,89 @@ export function run(): string {
 	}
 }
 
+func TestBuildProviderSnapshotEmitsBranchAssignedReturnDataFlow(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "flow.ts", `function primary(): string {
+  return "primary"
+}
+
+function fallback(): string {
+  return "fallback"
+}
+
+function ignored(): string {
+  return "ignored"
+}
+
+export function run(flag: boolean): string {
+  let value = ignored()
+  if (flag) {
+    value = primary()
+  } else {
+    value = fallback()
+  }
+  return value
+}
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"primary", "fallback"} {
+		var found RelationRecord
+		for _, relation := range snapshot.Relations {
+			if relation.Type == "DATA_FLOWS" && lastSegment(relation.FromID) == want && lastSegment(relation.ToID) == "run" {
+				found = relation
+				break
+			}
+		}
+		if found.FromID == "" {
+			t.Fatalf("missing branch DATA_FLOWS %s->run: %#v", want, snapshot.Relations)
+		}
+		if found.Reason != "callee return value assigned in branch and returned by caller" || found.Confidence > 0.75 {
+			t.Fatalf("unexpected branch flow metadata: %#v", found)
+		}
+		if len(found.Evidence) != 1 || found.Evidence[0].Kind != "branch_assigned_return_flow" || found.Evidence[0].Detail != want+" -> value" {
+			t.Fatalf("unexpected branch flow evidence: %#v", found.Evidence)
+		}
+	}
+	for _, relation := range snapshot.Relations {
+		if relation.Type == "DATA_FLOWS" && lastSegment(relation.FromID) == "ignored" && lastSegment(relation.ToID) == "run" {
+			t.Fatalf("pre-branch overwritten assignment produced DATA_FLOWS: %#v", relation)
+		}
+	}
+}
+
+func TestBuildProviderSnapshotSequentialAssignmentKeepsLastReturnDataFlow(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "flow.ts", `function first(): string {
+  return "first"
+}
+
+function second(): string {
+  return "second"
+}
+
+export function run(): string {
+  let value = first()
+  value = second()
+  return value
+}
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasRelationByLastSegment(snapshot.Relations, "DATA_FLOWS", "second", "run") {
+		t.Fatalf("missing last assignment DATA_FLOWS second->run: %#v", snapshot.Relations)
+	}
+	if hasRelationByLastSegment(snapshot.Relations, "DATA_FLOWS", "first", "run") {
+		t.Fatalf("overwritten sequential assignment produced DATA_FLOWS first->run: %#v", snapshot.Relations)
+	}
+}
+
 func TestBuildProviderSnapshotEmitsArgumentForwardDataFlow(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "flow.ts", `function normalize(value: string): string {

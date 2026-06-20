@@ -143,6 +143,9 @@ go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go
   relations when the parameter type is a known local symbol.
 - Assigned return-flow emits `DATA_FLOWS` when a local variable assigned from a
   known callee is returned as a bare variable.
+- Simple branch-assigned return-flow emits `DATA_FLOWS` for known callees
+  assigned to the same returned local in `if/else` branches, while preserving
+  the sequential reassignment guard.
 - Exact/import-resolved argument forwarding emits caller-to-callee
   `DATA_FLOWS` when a caller parameter is passed into a known callee.
 - Conservative parameter-alias forwarding emits caller-to-callee `DATA_FLOWS`
@@ -220,6 +223,8 @@ go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go
     135,361 LOC/s, max RSS 26,066,944 bytes, output 1,938,906 bytes.
   - `bench/results/result-1781952178.json`: Go/gin, syntax-only, 28,618 LOC,
     163,186 LOC/s, max RSS 28,573,696 bytes, output 1,938,906 bytes.
+  - `bench/results/result-1781952750.json`: Go/gin, syntax-only, 28,618 LOC,
+    143,831 LOC/s, max RSS 27,181,056 bytes, output 1,938,906 bytes.
 
 ## Remaining Honesty Notes
 

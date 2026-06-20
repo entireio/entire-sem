@@ -195,15 +195,17 @@ False negatives:
   scope and broader data-flow.
 - **Data-flow relations.** `DATA_FLOWS` is emitted when a callee result is
   returned directly (`return helper()`) or assigned to a local and then returned
-  as a bare variable (`value = helper(); return value`). Caller parameters
-  passed into exact/import-resolved callees, including conservative local alias
-  (`alias = input; callee(alias)`) and object-field forwarding
+  as a bare variable (`value = helper(); return value`), including simple
+  `if/else` branches where each branch assigns a known callee result to the
+  same returned local. Caller parameters passed into exact/import-resolved
+  callees, including conservative local alias (`alias = input; callee(alias)`)
+  and object-field forwarding
   (`payload.field = input; callee(payload)`) cases, also emit
   lower-confidence caller-to-callee `DATA_FLOWS` edges. Non-returned
   assignments, weak name-only argument calls, returned receiver expressions,
   and arbitrary object/field mutation flow are intentionally skipped.
-  Remaining: broader object flow, branching, complex aliases, and
-  cross-function data-flow beyond these high-confidence paths.
+  Remaining: broader object flow, branch/control-flow analysis, complex
+  aliases, and cross-function data-flow beyond these high-confidence paths.
 - **Partial OO/type relations.** `EXTENDS`, `INHERITS`, `IMPLEMENTS`,
   `OVERRIDES`, `USES_TYPE`, `PARAM_TYPE`, and `RETURNS_TYPE` are now emitted.
   `OVERRIDES` only fires when the supertype resolves locally and its methods are

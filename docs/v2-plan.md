@@ -34,10 +34,11 @@ versioned, confidence-scored facts that `entire-brain` can persist and query.
   `OVERRIDES`, `USES_TYPE`, `PARAM_TYPE`, and `RETURNS_TYPE`.
 - Field access and high-confidence data-flow relations are emitted:
   `READS_FIELD`, `WRITES_FIELD`, `ACCESSES`, and `DATA_FLOWS`, including direct
-  `return helper()`, local assignment followed by bare `return value`, exact
-  argument forwarding, conservative parameter-alias forwarding, and
-  conservative object-field forwarding when a caller parameter is assigned into
-  a local object field that is passed to a resolved callee.
+  `return helper()`, local assignment followed by bare `return value`, simple
+  branch assignment to the same returned local, exact argument forwarding,
+  conservative parameter-alias forwarding, and conservative object-field
+  forwarding when a caller parameter is assigned into a local object field that
+  is passed to a resolved callee.
 - Service and async boundaries are emitted: route/client/channel edges plus
   `HANDLES_GRPC`, `HANDLES_GRAPHQL`, `HANDLES_TRPC`, and `ASYNC_CALLS`.
 - IaC/configuration extraction emits HCL dependencies and `CONFIGURES` edges for
@@ -124,8 +125,9 @@ Remain out of provider scope or later expansion:
 
 - cross-repo `CROSS_*` edges, unless Brain asks for provider-level support.
 - deeper data-flow beyond high-confidence local direct/assigned return-flow,
-  exact/import-resolved argument-forwarding flow, conservative parameter-alias
-  forwarding flow, and conservative local object-field forwarding flow.
+  simple branch-assigned return-flow, exact/import-resolved
+  argument-forwarding flow, conservative parameter-alias forwarding flow, and
+  conservative local object-field forwarding flow.
 - deeper semantics for fallback formats where only lightweight structure is
   currently emitted.
 - more parser grammars when a real repo or benchmark fixture needs them.
