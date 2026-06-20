@@ -9501,6 +9501,16 @@ type pythonRouterMount struct {
 	Target string
 }
 
+type pythonRouterTarget struct {
+	File     string
+	Receiver string
+}
+
+type pythonImportBinding struct {
+	Module   string
+	Imported string
+}
+
 type pythonRouterRoute struct {
 	Receiver string
 	Route    string
@@ -10363,7 +10373,7 @@ func javascriptDefaultExportName(content string) string {
 func pythonIncludeRouterRelations(files []FileRecord, recordsByFile map[string][]SymbolRecord, readContent contentReader, knownFiles map[string]bool) []expressRouteRelation {
 	routesByFile := map[string][]pythonRouterRoute{}
 	mountsByFile := map[string][]pythonRouterMount{}
-	importsByFile := map[string]map[string][]string{}
+	importsByFile := map[string]map[string][]pythonImportBinding{}
 	for _, file := range files {
 		if !strings.EqualFold(filepath.Ext(file.Path), ".py") {
 			continue
@@ -10374,7 +10384,7 @@ func pythonIncludeRouterRelations(files []FileRecord, recordsByFile map[string][
 		}
 		routesByFile[file.Path] = pythonRouterRoutes(content, recordsByFile[file.Path])
 		mountsByFile[file.Path] = pythonRouterMounts(content)
-		importsByFile[file.Path] = importedNamesFor(file.Path, content)
+		importsByFile[file.Path] = importedPythonBindings(content)
 	}
 	var relations []expressRouteRelation
 	seen := map[string]bool{}
@@ -10383,9 +10393,9 @@ func pythonIncludeRouterRelations(files []FileRecord, recordsByFile map[string][
 			continue
 		}
 		for _, mount := range mountsByFile[file.Path] {
-			for _, routeFile := range pythonRouterTargetFiles(file.Path, mount.Target, importsByFile[file.Path], knownFiles) {
-				for _, route := range routesByFile[routeFile] {
-					if route.Receiver != mount.Target {
+			for _, target := range pythonRouterTargetFiles(file.Path, mount.Target, importsByFile[file.Path], knownFiles) {
+				for _, route := range routesByFile[target.File] {
+					if route.Receiver != target.Receiver {
 						continue
 					}
 					fullRoute := joinRoutePaths(mount.Prefix, route.Route)
@@ -10570,18 +10580,75 @@ func pythonAsViewClassName(handler string) (string, bool) {
 	return strings.TrimSpace(match[1]), true
 }
 
-func pythonRouterTargetFiles(importingPath, target string, importsByName map[string][]string, knownFiles map[string]bool) []string {
+func pythonRouterTargetFiles(importingPath, target string, importsByName map[string][]pythonImportBinding, knownFiles map[string]bool) []pythonRouterTarget {
 	seen := map[string]bool{importingPath: true}
-	files := []string{importingPath}
-	for _, imported := range importsByName[target] {
-		resolved, ok := resolveLocalImport(importingPath, imported, knownFiles)
+	files := []pythonRouterTarget{{File: importingPath, Receiver: target}}
+	for _, binding := range importsByName[target] {
+		resolved, ok := resolveLocalImport(importingPath, binding.Module, knownFiles)
 		if !ok || seen[resolved] {
 			continue
 		}
 		seen[resolved] = true
-		files = append(files, resolved)
+		receiver := strings.TrimSpace(binding.Imported)
+		if receiver == "" {
+			receiver = target
+		}
+		files = append(files, pythonRouterTarget{File: resolved, Receiver: receiver})
 	}
 	return files
+}
+
+func importedPythonBindings(content string) map[string][]pythonImportBinding {
+	imports := map[string][]pythonImportBinding{}
+	add := func(local, module, imported string) {
+		local = strings.TrimSpace(local)
+		module = strings.TrimSpace(module)
+		if local == "" || module == "" {
+			return
+		}
+		imports[local] = append(imports[local], pythonImportBinding{
+			Module:   module,
+			Imported: strings.TrimSpace(imported),
+		})
+	}
+	importRe := regexp.MustCompile(`^\s*import\s+(.+)$`)
+	fromRe := regexp.MustCompile(`^\s*from\s+(\.*(?:[A-Za-z_][A-Za-z0-9_\.]*)?)\s+import\s+(.+)$`)
+	scanner := bufio.NewScanner(strings.NewReader(content))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if strings.HasPrefix(line, "#") {
+			continue
+		}
+		if matches := importRe.FindStringSubmatch(line); len(matches) == 2 {
+			for _, item := range strings.Split(matches[1], ",") {
+				module, alias := parsePythonImportItem(item)
+				if module == "" {
+					continue
+				}
+				local := alias
+				if local == "" {
+					local = strings.Split(module, ".")[0]
+				}
+				add(local, module, "")
+			}
+			continue
+		}
+		if matches := fromRe.FindStringSubmatch(line); len(matches) == 3 {
+			module := matches[1]
+			for _, item := range strings.Split(matches[2], ",") {
+				name, alias := parsePythonImportItem(item)
+				if name == "" || name == "*" {
+					continue
+				}
+				local := alias
+				if local == "" {
+					local = name
+				}
+				add(local, module, name)
+			}
+		}
+	}
+	return imports
 }
 
 func pythonRouterMounts(content string) []pythonRouterMount {

@@ -4762,6 +4762,46 @@ def ping():
 	}
 }
 
+func TestFlaskImportedBlueprintAliasComposesAndBridgesHTTPClient(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "routes/users.py", `from flask import Blueprint
+
+users_bp = Blueprint("users", __name__)
+
+@users_bp.route("/<id>")
+def show_user(id: str):
+    return {"id": id}
+`)
+	writeFile(t, repo, "app.py", `from flask import Flask
+import requests
+
+from .routes.users import users_bp as mounted_users
+
+app = Flask(__name__)
+app.register_blueprint(mounted_users, url_prefix="/api/users")
+
+def ping():
+    return requests.get("/api/users/{id}")
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasImportRelationToPath(snapshot.Relations, "app.py", "routes/users.py") {
+		t.Fatalf("missing local relative import app.py -> routes/users.py: %#v", snapshot.Relations)
+	}
+	if !hasRelationToExternalRoute(snapshot.Relations, "HANDLES_ROUTE", "show_user", "/api/users/{id}") {
+		t.Fatalf("missing aliased imported Flask blueprint route: %#v", snapshot.Relations)
+	}
+	if !hasRelationToExternalRoute(snapshot.Relations, "HTTP_CALLS", "ping", "/api/users/{id}") {
+		t.Fatalf("missing matching Python HTTP_CALLS relation: %#v", snapshot.Relations)
+	}
+	if !hasRelationByLastSegment(snapshot.Relations, "CALLS", "ping", "show_user") {
+		t.Fatalf("missing route bridge CALLS ping->show_user: %#v", snapshot.Relations)
+	}
+}
+
 func TestSpringRouteAnnotationsComposeClassPrefixAndBridgeHTTPClient(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "src/main/java/com/acme/UserController.java", `package com.acme;
@@ -6924,6 +6964,18 @@ func hasRelationTo(relations []RelationRecord, relationType, to string) bool {
 func hasImportRelation(relations []RelationRecord, fromPath, toID string) bool {
 	for _, relation := range relations {
 		if relation.Type == "IMPORTS" && strings.HasSuffix(relation.FromID, "file:"+fromPath) && relation.ToID == toID {
+			return true
+		}
+	}
+	return false
+}
+
+func hasImportRelationToPath(relations []RelationRecord, fromPath, toPath string) bool {
+	for _, relation := range relations {
+		if relation.Type != "IMPORTS" || relation.TargetKind != "file" {
+			continue
+		}
+		if strings.HasSuffix(relation.FromID, "file:"+fromPath) && strings.HasSuffix(relation.ToID, "file:"+toPath) {
 			return true
 		}
 	}

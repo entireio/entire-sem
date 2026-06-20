@@ -441,8 +441,9 @@ Delivered:
   prefixes, compose with static router registrations and bridge exact matching
   HTTP clients to local handlers.
 - Flask Blueprint `register_blueprint(..., url_prefix=...)` mounts compose
-  with Blueprint route decorators and bridge exact matching Python HTTP clients
-  to local handlers.
+  with Blueprint route decorators, including locally imported and aliased
+  Blueprint variables, and bridge exact matching Python HTTP clients to local
+  handlers.
 - Go router group prefixes such as `api := e.Group("/api")` compose with
   static child route registrations and bridge exact matching Go HTTP clients to
   local handlers, including chained group calls such as
