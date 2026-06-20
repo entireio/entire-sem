@@ -279,7 +279,10 @@ Tasks:
   mapping annotations are implemented for class-level prefix plus method-level
   route composition. Express-style JS/TS same-block router mounts and
   same-name imported router mounts compose `app.use("/prefix", router)` with
-  static `router.get/post/...` registrations.
+  static `router.get/post/...` registrations. FastAPI/Starlette-style local
+  `include_router(router, prefix="/prefix")` mounts compose with static
+  `@router.get/post/...` decorators, including locally resolved relative
+  imports.
 - Add route client detection:
   `fetch`, Axios, Python requests/httpx, Go `http.Client`, Java HTTP clients,
   C# HttpClient.

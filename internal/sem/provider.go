@@ -1750,6 +1750,10 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 			emit(r.Relation)
 			routeHandlers[r.Route] = append(routeHandlers[r.Route], r.Handler)
 		}
+		for _, r := range pythonIncludeRouterRelations(files, recordsByFile, readContent, knownFiles) {
+			emit(r.Relation)
+			routeHandlers[r.Route] = append(routeHandlers[r.Route], r.Handler)
+		}
 	}
 	if spec.emits("CALLS") {
 		for _, r := range routeBridgeRelations(routeHandlers, httpCallsByRoute) {
@@ -4846,7 +4850,7 @@ func importsFor(path, content string) []string {
 	case ".java", ".kt", ".kts", ".scala", ".sc", ".sbt":
 		return scanImports(content, regexp.MustCompile(`(?m)^\s*import\s+(?:static\s+)?([A-Za-z0-9_\.\*]+)`))
 	case ".py":
-		return scanImports(content, regexp.MustCompile(`(?m)^\s*(?:from\s+([A-Za-z0-9_\.]+)\s+import|import\s+([A-Za-z0-9_\.]+))`))
+		return scanImports(content, regexp.MustCompile(`(?m)^\s*(?:from\s+(\.*[A-Za-z0-9_\.]+)\s+import|import\s+([A-Za-z0-9_\.]+))`))
 	case ".js", ".jsx", ".ts", ".tsx":
 		return scanImports(content, regexp.MustCompile(`(?m)^\s*import\s+.*?\s+from\s+['"]([^'"]+)['"]|^\s*import\s+['"]([^'"]+)['"]`))
 	case ".lua":
@@ -5014,7 +5018,7 @@ func importedJavaScriptNames(content string) map[string][]string {
 func importedPythonNames(content string) map[string][]string {
 	imports := map[string][]string{}
 	importRe := regexp.MustCompile(`^\s*import\s+(.+)$`)
-	fromRe := regexp.MustCompile(`^\s*from\s+([A-Za-z_][A-Za-z0-9_\.]*)\s+import\s+(.+)$`)
+	fromRe := regexp.MustCompile(`^\s*from\s+(\.*[A-Za-z_][A-Za-z0-9_\.]*)\s+import\s+(.+)$`)
 	scanner := bufio.NewScanner(strings.NewReader(content))
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -5275,6 +5279,17 @@ type expressRouteRelation struct {
 	Relation RelationRecord
 }
 
+type pythonRouterMount struct {
+	Prefix string
+	Target string
+}
+
+type pythonRouterRoute struct {
+	Receiver string
+	Route    string
+	Handler  SymbolRecord
+}
+
 func jsRouterComposedRouteLiterals(block string) []string {
 	mounts := jsRouterMounts(block)
 	routes := jsRouterRoutes(block)
@@ -5418,6 +5433,179 @@ func crossFileExpressRouterRelations(files []FileRecord, recordsByFile map[strin
 		return relations[i].Handler.ID < relations[j].Handler.ID
 	})
 	return relations
+}
+
+func pythonIncludeRouterRelations(files []FileRecord, recordsByFile map[string][]SymbolRecord, readContent contentReader, knownFiles map[string]bool) []expressRouteRelation {
+	routesByFile := map[string][]pythonRouterRoute{}
+	mountsByFile := map[string][]pythonRouterMount{}
+	importsByFile := map[string]map[string][]string{}
+	for _, file := range files {
+		if !strings.EqualFold(filepath.Ext(file.Path), ".py") {
+			continue
+		}
+		content, ok := readContent(file.Path)
+		if !ok {
+			continue
+		}
+		routesByFile[file.Path] = pythonRouterRoutes(content, recordsByFile[file.Path])
+		mountsByFile[file.Path] = pythonRouterMounts(content)
+		importsByFile[file.Path] = importedNamesFor(file.Path, content)
+	}
+	var relations []expressRouteRelation
+	seen := map[string]bool{}
+	for _, file := range files {
+		if len(mountsByFile[file.Path]) == 0 {
+			continue
+		}
+		for _, mount := range mountsByFile[file.Path] {
+			for _, routeFile := range pythonRouterTargetFiles(file.Path, mount.Target, importsByFile[file.Path], knownFiles) {
+				for _, route := range routesByFile[routeFile] {
+					if route.Receiver != mount.Target {
+						continue
+					}
+					fullRoute := joinRoutePaths(mount.Prefix, route.Route)
+					key := route.Handler.ID + "\x00" + fullRoute
+					if seen[key] {
+						continue
+					}
+					seen[key] = true
+					relations = append(relations, expressRouteRelation{
+						Route:   fullRoute,
+						Handler: route.Handler,
+						Relation: RelationRecord{
+							RecordType:    "relation",
+							FromID:        route.Handler.ID,
+							ToID:          externalID("route", fullRoute),
+							Type:          "HANDLES_ROUTE",
+							Confidence:    0.82,
+							Reason:        "Python router route resolved through local include_router mount",
+							RelationScope: "external",
+							Resolution:    "import_resolved",
+							TargetKind:    "route",
+							Evidence: []Evidence{{
+								Kind:      "python_router_mount",
+								FilePath:  route.Handler.FilePath,
+								StartLine: route.Handler.StartLine,
+								EndLine:   route.Handler.EndLine,
+								Detail:    mount.Prefix + " + " + route.Receiver + "." + route.Route,
+							}},
+							WarningCodes: []string{},
+						},
+					})
+				}
+			}
+		}
+	}
+	sort.Slice(relations, func(i, j int) bool {
+		if relations[i].Route != relations[j].Route {
+			return relations[i].Route < relations[j].Route
+		}
+		return relations[i].Handler.ID < relations[j].Handler.ID
+	})
+	return relations
+}
+
+func pythonRouterTargetFiles(importingPath, target string, importsByName map[string][]string, knownFiles map[string]bool) []string {
+	seen := map[string]bool{importingPath: true}
+	files := []string{importingPath}
+	for _, imported := range importsByName[target] {
+		resolved, ok := resolveLocalImport(importingPath, imported, knownFiles)
+		if !ok || seen[resolved] {
+			continue
+		}
+		seen[resolved] = true
+		files = append(files, resolved)
+	}
+	return files
+}
+
+func pythonRouterMounts(content string) []pythonRouterMount {
+	includeRouterRe := regexp.MustCompile(`\.include_router\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)`)
+	prefixRe := regexp.MustCompile(`\bprefix\s*=\s*["']([^"']+)["']`)
+	var mounts []pythonRouterMount
+	for _, line := range strings.Split(content, "\n") {
+		targetMatch := includeRouterRe.FindStringSubmatch(line)
+		if len(targetMatch) != 2 {
+			continue
+		}
+		prefixMatch := prefixRe.FindStringSubmatch(line)
+		if len(prefixMatch) != 2 || !strings.HasPrefix(prefixMatch[1], "/") {
+			continue
+		}
+		mounts = append(mounts, pythonRouterMount{Prefix: prefixMatch[1], Target: targetMatch[1]})
+	}
+	return mounts
+}
+
+func pythonRouterRoutes(content string, symbols []SymbolRecord) []pythonRouterRoute {
+	var routes []pythonRouterRoute
+	for _, symbol := range symbols {
+		if typeLikeKind(symbol.Kind) {
+			continue
+		}
+		for _, decorator := range pythonRouteDecoratorsNearSymbol(content, symbol) {
+			routes = append(routes, pythonRouterRoute{
+				Receiver: decorator.Receiver,
+				Route:    decorator.Route,
+				Handler:  symbol,
+			})
+		}
+	}
+	sort.Slice(routes, func(i, j int) bool {
+		if routes[i].Route != routes[j].Route {
+			return routes[i].Route < routes[j].Route
+		}
+		return routes[i].Handler.ID < routes[j].Handler.ID
+	})
+	return routes
+}
+
+type pythonRouteDecorator struct {
+	Receiver string
+	Route    string
+}
+
+func pythonRouteDecoratorsNearSymbol(content string, symbol SymbolRecord) []pythonRouteDecorator {
+	if symbol.StartLine <= 0 {
+		return nil
+	}
+	lines := strings.Split(content, "\n")
+	index := symbol.StartLine - 1
+	if index >= len(lines) {
+		index = len(lines) - 1
+	}
+	routeDecoratorRe := regexp.MustCompile(`^@([A-Za-z_][A-Za-z0-9_]*)\.(?:get|post|put|patch|delete|head|options|route)\s*\(\s*["']([^"']+)["']`)
+	seen := map[string]bool{}
+	var routes []pythonRouteDecorator
+	for i := index; i >= 0 && index-i <= 8; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "def ") || strings.HasPrefix(line, "async def ") {
+			continue
+		}
+		if !strings.HasPrefix(line, "@") {
+			break
+		}
+		match := routeDecoratorRe.FindStringSubmatch(line)
+		if len(match) != 3 || !strings.HasPrefix(match[2], "/") {
+			continue
+		}
+		key := match[1] + "\x00" + match[2]
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		routes = append(routes, pythonRouteDecorator{Receiver: match[1], Route: match[2]})
+	}
+	sort.Slice(routes, func(i, j int) bool {
+		if routes[i].Route != routes[j].Route {
+			return routes[i].Route < routes[j].Route
+		}
+		return routes[i].Receiver < routes[j].Receiver
+	})
+	return routes
 }
 
 func pythonDecoratorRouteLiterals(content string, symbol SymbolRecord) []string {
