@@ -115,6 +115,9 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
 - Go chi/gin-style router method registrations resolve static or
   local-literal-constant paths to same-file local handler symbols and bridge
   matching Go HTTP client calls as direct `CALLS`.
+- Go router group prefixes such as `api := e.Group("/api")` compose with
+  static child route registrations and bridge matching Go HTTP clients as
+  direct `CALLS`.
 - Django `path(...)` registrations, simple `re_path(...)` registrations, and
   `path(..., include("module.urls"))` URLConf mounts resolve static patterns
   to local handler symbols, including `views.handler` imports, and bridge
@@ -342,6 +345,9 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
   - `bench/results/result-1781972991.json`: Go/gin, syntax-only, 28,618 LOC,
     162,362 LOC/s, max RSS 27,344,896 bytes, estimated output 1,902,628
     bytes; run after Flask Blueprint route extraction.
+  - `bench/results/result-1781973208.json`: Go/gin, syntax-only, 28,618 LOC,
+    151,226 LOC/s, max RSS 27,066,368 bytes, estimated output 1,902,628
+    bytes; run after Go router group-prefix extraction.
   - `bench/results/result-1781944479.json`: Go/gin, syntax-only, 28,618 LOC,
     154,533 LOC/s, max RSS 27,115,520 bytes, output 1,938,906 bytes.
   - `bench/results/result-1781944927.json`: Go/gin, syntax-only, 28,618 LOC,
