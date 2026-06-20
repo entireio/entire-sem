@@ -184,6 +184,44 @@ func TestTreeSitterParserTypeScriptGraphQLResolverEntities(t *testing.T) {
 	}
 }
 
+func TestGraphQLSchemaFieldEntities(t *testing.T) {
+	entities, language := TreeSitterParser{}.Parse("schema.graphql", `schema {
+  query: Query
+}
+
+type Query {
+  user(id: ID!): User!
+  viewer: User
+}
+
+extend type Mutation {
+  createUser(input: CreateUserInput!): User!
+}
+
+type User {
+  id: ID!
+}
+`)
+	if language != "GraphQL" {
+		t.Fatalf("language = %q", language)
+	}
+	seen := map[string]Entity{}
+	for _, entity := range entities {
+		seen[entity.Name] = entity
+	}
+	for _, name := range []string{"schema", "Query.user", "Query.viewer", "Mutation.createUser"} {
+		if _, ok := seen[name]; !ok {
+			t.Fatalf("missing GraphQL schema entity %s in %#v", name, entities)
+		}
+	}
+	if seen["Query.user"].Kind != "graphql_schema_field" || seen["Query.user"].Signature != "GraphQL schema query user" {
+		t.Fatalf("unexpected Query.user entity: %#v", seen["Query.user"])
+	}
+	if _, ok := seen["User.id"]; ok {
+		t.Fatalf("non-root object field should not be a GraphQL boundary entity: %#v", seen["User.id"])
+	}
+}
+
 func TestTreeSitterParserSupportsYAMLWorkflowExtensions(t *testing.T) {
 	if !Supported(".github/workflows/ci.yml") {
 		t.Fatal(".yml workflow should be supported")

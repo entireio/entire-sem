@@ -78,6 +78,7 @@ var ooRelationSupport = map[string][]string{
 	"Rust":             {"EXTENDS", "INHERITS", "IMPLEMENTS", "USES_TYPE", "PARAM_TYPE", "RETURNS_TYPE", "READS_FIELD", "WRITES_FIELD", "ACCESSES", "ASYNC_CALLS", "DATA_FLOWS"},
 	"Go":               {"USES_TYPE", "PARAM_TYPE", "RETURNS_TYPE", "READS_FIELD", "WRITES_FIELD", "ACCESSES", "ASYNC_CALLS", "DATA_FLOWS"},
 	"HCL":              {"CONFIGURES", "RESOURCE_DEPENDS_ON"},
+	"GraphQL":          {"HANDLES_GRAPHQL"},
 	"Protocol Buffers": {"HANDLES_GRPC"},
 	"YAML":             {"CONFIGURES", "RESOURCE_DEPENDS_ON"},
 	"Dockerfile":       {"CONFIGURES", "RESOURCE_DEPENDS_ON"},
@@ -956,7 +957,7 @@ func httpScanLanguage(language string) bool {
 
 func serviceScanLanguage(language string) bool {
 	switch language {
-	case "C#", "Go", "Java", "JavaScript", "PHP", "Protocol Buffers", "Python", "Ruby", "TypeScript":
+	case "C#", "Go", "GraphQL", "Java", "JavaScript", "PHP", "Protocol Buffers", "Python", "Ruby", "TypeScript":
 		return true
 	default:
 		return false

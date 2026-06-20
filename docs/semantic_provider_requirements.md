@@ -318,8 +318,9 @@ Relation vocabulary:
   routing context: a verb/route method call or mapping decorator).
 - `HANDLES_GRPC` / `HANDLES_GRAPHQL` / `HANDLES_TRPC` — service boundary edges
   from protobuf RPC declarations, GraphQL operation literals, JS/TS GraphQL
-  resolver-map fields (`Query`, `Mutation`, `Subscription`), and tRPC
-  procedure declarations to stable external endpoint nodes.
+  resolver-map fields (`Query`, `Mutation`, `Subscription`), GraphQL schema
+  root fields, and tRPC procedure declarations to stable external endpoint
+  nodes.
 - `HTTP_CALLS` — an outbound HTTP client call (fetch/axios/requests/httpx/http
   client) to a path. Client calls and route registrations to the same path
   share an `external:route:<path>` node, enabling client-to-route matching. When

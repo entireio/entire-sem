@@ -253,6 +253,10 @@ func fallbackEntities(path, content, language string) []Entity {
 		return htmlEntities(path, content)
 	case "CSS":
 		return cssEntities(content)
+	case "GraphQL":
+		entities := inventoryEntities(path, content, language)
+		entities = append(entities, graphqlSchemaEntities(content)...)
+		return entities
 	case "Vue", "Svelte":
 		return componentEntities(path, content, language)
 	default:
@@ -1440,7 +1444,90 @@ var (
 	graphqlResolverContextPattern = regexp.MustCompile(`(?i)\b(graphql|resolvers?)\b`)
 	graphqlResolverFieldPattern   = regexp.MustCompile(`^[A-Za-z_$][A-Za-z0-9_$]*$`)
 	graphqlResolverObjectPattern  = regexp.MustCompile(`(?m)\b(?:subscribe|resolve)\s*:`)
+	graphqlSchemaRootPattern      = regexp.MustCompile(`(?m)\b(?:extend\s+)?type\s+(Query|Mutation|Subscription)\b[^{]*\{`)
+	graphqlSchemaFieldNamePattern = regexp.MustCompile(`^[_A-Za-z][_0-9A-Za-z]*$`)
 )
+
+func graphqlSchemaEntities(content string) []Entity {
+	var entities []Entity
+	seen := map[string]bool{}
+	for _, loc := range graphqlSchemaRootPattern.FindAllStringSubmatchIndex(content, -1) {
+		rootKind := content[loc[2]:loc[3]]
+		open := strings.LastIndex(content[loc[0]:loc[1]], "{")
+		if open < 0 {
+			continue
+		}
+		open += loc[0]
+		close := matchingBraceOffset(content, open)
+		if close < 0 {
+			continue
+		}
+		body := content[open+1 : close]
+		for _, field := range graphqlSchemaFields(body) {
+			name := rootKind + "." + field.Name
+			if seen[name] {
+				continue
+			}
+			seen[name] = true
+			start := open + 1 + field.Start
+			end := open + 1 + field.End
+			block := content[start:end]
+			signature := "GraphQL schema " + strings.ToLower(rootKind) + " " + field.Name
+			entities = append(entities, Entity{
+				Kind:        "graphql_schema_field",
+				Name:        name,
+				Signature:   signature,
+				StartLine:   countLinesBefore(content, start) + 1,
+				EndLine:     countLinesBefore(content, end) + 1,
+				BodyHash:    hash(normalize(block)),
+				Fingerprint: hash(normalize(entityFingerprintSource(Entity{Name: name, Signature: signature}, block))),
+			})
+		}
+	}
+	return entities
+}
+
+func graphqlSchemaFields(body string) []graphqlResolverField {
+	var fields []graphqlResolverField
+	offset := 0
+	for _, line := range strings.SplitAfter(body, "\n") {
+		lineStart := offset
+		offset += len(line)
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "...") {
+			continue
+		}
+		if comment := strings.Index(trimmed, "#"); comment >= 0 {
+			trimmed = strings.TrimSpace(trimmed[:comment])
+		}
+		if trimmed == "" || strings.HasPrefix(trimmed, "@") || strings.HasPrefix(trimmed, "\"") {
+			continue
+		}
+		nameEnd := 0
+		for nameEnd < len(trimmed) {
+			ch := trimmed[nameEnd]
+			if ch == '(' || ch == ':' || ch == ' ' || ch == '\t' {
+				break
+			}
+			nameEnd++
+		}
+		name := strings.TrimSpace(trimmed[:nameEnd])
+		if !graphqlSchemaFieldNamePattern.MatchString(name) {
+			continue
+		}
+		if !strings.Contains(trimmed[nameEnd:], ":") {
+			continue
+		}
+		leading := len(line) - len(strings.TrimLeft(line, " \t"))
+		start := lineStart + leading
+		fieldLine := strings.TrimRightFunc(line, func(r rune) bool {
+			return r == '\n' || r == '\r'
+		})
+		end := lineStart + len(fieldLine)
+		fields = append(fields, graphqlResolverField{Name: name, Start: start, End: end})
+	}
+	return fields
+}
 
 func graphqlResolverEntities(path, content string) []Entity {
 	var entities []Entity

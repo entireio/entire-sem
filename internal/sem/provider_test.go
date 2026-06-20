@@ -3759,6 +3759,41 @@ func TestBuildProviderSnapshotEmitsGraphQLResolverBoundaries(t *testing.T) {
 	}
 }
 
+func TestBuildProviderSnapshotEmitsGraphQLSchemaBoundaries(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "schema.graphql", `type Query {
+  user(id: ID!): User!
+}
+
+extend type Mutation {
+  createUser(input: CreateUserInput!): User!
+}
+
+type User {
+  id: ID!
+}
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []struct {
+		from string
+		to   string
+	}{
+		{"Query.user", "query user"},
+		{"Mutation.createUser", "mutation createUser"},
+	} {
+		if !hasRelationByLastSegment(snapshot.Relations, "HANDLES_GRAPHQL", want.from, want.to) {
+			t.Fatalf("missing schema HANDLES_GRAPHQL %s -> %s in %#v", want.from, want.to, snapshot.Relations)
+		}
+	}
+	if hasRelationByLastSegment(snapshot.Relations, "HANDLES_GRAPHQL", "User.id", "query id") {
+		t.Fatalf("non-root object field was misreported as GraphQL boundary: %#v", snapshot.Relations)
+	}
+}
+
 func TestBuildProviderSnapshotEmitsAssignedReturnDataFlow(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "flow.ts", `function helper(): string {

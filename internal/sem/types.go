@@ -269,6 +269,19 @@ func serviceBoundaries(symbol SymbolRecord, block string) []serviceBoundary {
 			})
 		}
 	}
+	if symbol.Kind == "graphql_schema_field" {
+		fields := strings.Fields(symbol.Signature)
+		if len(fields) >= 4 && fields[0] == "GraphQL" && fields[1] == "schema" {
+			add(serviceBoundary{
+				Relation:     "HANDLES_GRAPHQL",
+				Kind:         "graphql",
+				Name:         strings.ToLower(fields[2]) + " " + fields[3],
+				Confidence:   0.9,
+				Reason:       "GraphQL schema root field detected in schema document",
+				EvidenceKind: "graphql_schema_field",
+			})
+		}
+	}
 	for _, match := range graphqlOperationRe.FindAllStringSubmatch(block, -1) {
 		add(serviceBoundary{
 			Relation:     "HANDLES_GRAPHQL",

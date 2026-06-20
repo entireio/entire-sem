@@ -336,9 +336,11 @@ Tasks:
   arbitrary runtime builders remain out of scope.
 - Emit `HANDLES_ROUTE` and `HTTP_CALLS` with method, path, confidence, and
   source evidence.
-- GraphQL operation literals and JS/TS resolver-map fields now emit
-  `HANDLES_GRAPHQL`; full schema/type-aware GraphQL linking remains out of
-  scope for the current heuristic pass.
+- GraphQL operation literals, JS/TS resolver-map fields, and GraphQL schema
+  root fields in `type`/`extend type` `Query`, `Mutation`, and `Subscription`
+  blocks now emit `HANDLES_GRAPHQL`; full schema validation, type checking,
+  and resolver type analysis remain out of scope for the current heuristic
+  pass.
 - Add gRPC/protobuf service extraction.
 - Add tRPC detection for TypeScript.
 - Add channel detection for common pub-sub/event APIs:

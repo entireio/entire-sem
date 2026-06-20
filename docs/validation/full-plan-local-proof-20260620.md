@@ -49,6 +49,10 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
 go test ./internal/sem -run 'TestStaticArrayJoinRouteExpressionComposesAndBridgesHTTPClient|TestHTTPCallsBridgeToLocalRouteHandler|TestComputedRouteExpressionComposesAndBridgesHTTPClient' -count=1
 go test ./...
 go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out bench/results -lock bench/repos.lock.json -languages Go -limit 1 -skip-clone -profile syntax-only -provider-version codex-array-join-http-calls -min-loc-per-sec 1
+go test ./internal/sem -run 'TestGraphQLSchemaFieldEntities|TestBuildProviderSnapshotEmitsGraphQLSchemaBoundaries|TestBuildProviderSnapshotEmitsGraphQLResolverBoundaries|TestTreeSitterParserTypeScriptGraphQLResolverEntities' -count=1
+go run ./cmd/entire-sem capabilities --json
+go test ./...
+go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out bench/results -lock bench/repos.lock.json -languages Go -limit 1 -skip-clone -profile syntax-only -provider-version codex-graphql-schema-fields -min-loc-per-sec 1
 ```
 
 ## Results
@@ -257,8 +261,11 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
   collection and that collection is passed to a known callee.
 - JS/TS GraphQL resolver maps now emit concrete `graphql_resolver` symbols and
   `HANDLES_GRAPHQL` edges for `Query`, `Mutation`, and `Subscription` fields;
-  this complements existing GraphQL operation-literal detection and remains a
-  heuristic resolver-map pass, not full schema/type-aware GraphQL linking.
+  GraphQL schema files now emit `graphql_schema_field` symbols and
+  `HANDLES_GRAPHQL` edges for root `Query`, `Mutation`, and `Subscription`
+  fields in `type` and `extend type` blocks. These complement existing
+  GraphQL operation-literal detection and remain heuristic boundary facts, not
+  full schema validation, type checking, or resolver type analysis.
 - Retained benchmark reports:
   - `bench/results/result-1781937160.json`: Go/gin, syntax-only, 28,618 LOC,
     152,621 LOC/s.
@@ -298,6 +305,9 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
   - `bench/results/result-1781970688.json`: Go/gin, syntax-only, 28,618 LOC,
     153,827 LOC/s, max RSS 27,148,288 bytes, estimated output 1,902,633
     bytes; run after inline static array-join HTTP client extraction.
+  - `bench/results/result-1781971341.json`: Go/gin, syntax-only, 28,618 LOC,
+    141,372 LOC/s, max RSS 28,852,224 bytes, estimated output 1,902,633
+    bytes; run after GraphQL schema root field boundary extraction.
   - `bench/results/result-1781944479.json`: Go/gin, syntax-only, 28,618 LOC,
     154,533 LOC/s, max RSS 27,115,520 bytes, output 1,938,906 bytes.
   - `bench/results/result-1781944927.json`: Go/gin, syntax-only, 28,618 LOC,
@@ -431,8 +441,9 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
   not quality proof for full C semantics.
 - Public large-corpus speed claims still need broader retained runs across more
   cached or supplied repositories and profiles.
-- GraphQL support covers operation literals and JS/TS resolver-map fields; it
-  is not full GraphQL schema validation or resolver type analysis.
+- GraphQL support covers operation literals, JS/TS resolver-map fields, and
+  schema root fields; it is not full GraphQL schema validation, type checking,
+  or resolver type analysis.
 - Attempted cached C/Linux `fast` profile with a 5 GB RSS ceiling exposed a
   real validation gap before this fix: live process inspection showed the run
   still active at roughly 7.3 GB RSS because the old guard only checked memory
