@@ -90,7 +90,7 @@ Confidence bands follow the v2-plan schema section (`0.90-1.00 exact`,
   Kubernetes, and Kustomize dependency patterns; Kubernetes named
   ConfigMap/Secret/service-account/PVC/RBAC/owner/Ingress/HPA references,
   Gateway API route backend refs, parent Gateway refs, and listener
-  certificateRefs, IngressClass refs, projected
+  certificateRefs, IngressClass refs, StorageClass refs, PersistentVolume refs, projected
   ConfigMap/Secret volume refs, ConfigMap/Secret key refs, image pull secrets,
   Service selectors, PodDisruptionBudget selectors, NetworkPolicy pod
   selectors, ServiceMonitor selectors, and PodMonitor selectors, including

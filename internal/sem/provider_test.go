@@ -820,6 +820,20 @@ metadata:
 kind: PersistentVolumeClaim
 metadata:
   name: api-cache
+spec:
+  storageClassName: fast
+  volumeName: api-cache-pv
+`)
+	writeFile(t, repo, "k8s/storage-class.yaml", `apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: fast
+provisioner: example.com/fast
+`)
+	writeFile(t, repo, "k8s/pv.yaml", `apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: api-cache-pv
 `)
 
 	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
@@ -838,6 +852,8 @@ metadata:
 		"external:config:kubernetes/serviceaccount/api-runner",
 		"external:config:kubernetes/configmap/api-projected-config",
 		"external:config:kubernetes/persistentvolumeclaim/api-cache",
+		"external:config:kubernetes/storageclass/fast",
+		"external:config:kubernetes/persistentvolume/api-cache-pv",
 	} {
 		if !hasRelationTo(snapshot.Relations, "RESOURCE_DEPENDS_ON", target) {
 			t.Fatalf("missing Kubernetes dependency to %s in %#v", target, snapshot.Relations)
@@ -866,6 +882,14 @@ metadata:
 	} {
 		if !hasRelationByLastSegment(snapshot.Relations, "RESOURCE_DEPENDS_ON", "Deployment.api", target) {
 			t.Fatalf("missing exact Kubernetes resource dependency Deployment.api -> %s in %#v", target, snapshot.Relations)
+		}
+	}
+	for _, target := range []string{
+		"StorageClass.fast",
+		"PersistentVolume.api-cache-pv",
+	} {
+		if !hasRelationByLastSegment(snapshot.Relations, "RESOURCE_DEPENDS_ON", "PersistentVolumeClaim.api-cache", target) {
+			t.Fatalf("missing exact Kubernetes resource dependency PersistentVolumeClaim.api-cache -> %s in %#v", target, snapshot.Relations)
 		}
 	}
 }
