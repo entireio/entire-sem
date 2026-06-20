@@ -113,7 +113,9 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
 - C# minimal API registrations such as `app.MapGet("/api/users/{id}",
   ApiHandlers.GetUser)` resolve static route strings or local constants to
   same-file handler functions/methods and bridge matching `HttpClient` calls as
-  direct `CALLS`.
+  direct `CALLS`; assigned and chained `MapGroup(...)` prefixes compose with
+  child `MapGet`/`MapPost` registrations, including nested assigned groups,
+  without emitting unmounted child routes.
 - PHP Laravel route declarations and `Route::prefix(...)->group(...)` route
   groups resolve local controller methods, Symfony/PHP route attributes compose
   class and method routes, and matching PHP `Http::` facade calls bridge to
@@ -425,6 +427,9 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
   - `bench/results/result-1781979384.json`: Go/gin, syntax-only, 28,618 LOC,
     165,860 LOC/s, max RSS 27,590,656 bytes, estimated output 1,902,632
     bytes; run after FastAPI/Starlette `add_api_route` handler extraction.
+  - `bench/results/result-1781979547.json`: Go/gin, syntax-only, 28,618 LOC,
+    171,904 LOC/s, max RSS 27,443,200 bytes, estimated output 1,902,634
+    bytes; run after C# minimal API `MapGroup` route extraction.
   - `bench/results/result-1781972446.json`: Go/gin, syntax-only, 28,618 LOC,
     162,982 LOC/s, max RSS 26,804,224 bytes, estimated output 1,902,630
     bytes; run after IngressClass reference extraction.
@@ -601,6 +606,9 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
     bytes.
   - `bench/results/result-1781979384.json`: Go/gin, syntax-only, 28,618 LOC,
     165,860 LOC/s, max RSS 27,590,656 bytes, estimated output 1,902,632
+    bytes.
+  - `bench/results/result-1781979547.json`: Go/gin, syntax-only, 28,618 LOC,
+    171,904 LOC/s, max RSS 27,443,200 bytes, estimated output 1,902,634
     bytes.
 
 ## Remaining Honesty Notes

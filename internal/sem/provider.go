@@ -9775,21 +9775,16 @@ type csharpMinimalAPIRouteRegistration struct {
 
 func csharpMinimalAPIRouteRegistrations(content string) []csharpMinimalAPIRouteRegistration {
 	constants := staticStringConstants(content)
-	mapRouteRe := regexp.MustCompile(`\.\s*Map(?i:Get|Post|Put|Patch|Delete|Head|Options)\s*\(\s*([^,\n]+)\s*,\s*([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)\b`)
+	groupPrefixes := csharpMinimalAPIGroupPrefixes(content, constants)
+	mapRouteRe := regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]*)\s*\.\s*Map(?i:Get|Post|Put|Patch|Delete|Head|Options)\s*\(\s*([^,\n]+)\s*,\s*([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)\b`)
+	chainedGroupRouteRe := regexp.MustCompile(`\b[A-Za-z_][A-Za-z0-9_]*\s*\.\s*MapGroup\s*\(\s*([^,\n)]+)\s*\)\s*\.\s*Map(?i:Get|Post|Put|Patch|Delete|Head|Options)\s*\(\s*([^,\n]+)\s*,\s*([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)\b`)
 	var registrations []csharpMinimalAPIRouteRegistration
 	seen := map[string]bool{}
-	for _, match := range mapRouteRe.FindAllStringSubmatch(content, -1) {
-		if len(match) != 3 {
-			continue
-		}
-		route, ok := staticRouteExpressionValue(match[1], constants)
-		if !ok {
-			continue
-		}
-		handler := strings.TrimSpace(match[2])
+	add := func(route, handler string) {
+		handler = strings.TrimSpace(handler)
 		key := route + "\x00" + handler
 		if seen[key] {
-			continue
+			return
 		}
 		seen[key] = true
 		registrations = append(registrations, csharpMinimalAPIRouteRegistration{
@@ -9798,6 +9793,33 @@ func csharpMinimalAPIRouteRegistrations(content string) []csharpMinimalAPIRouteR
 			Detail:  route + " -> " + handler,
 		})
 	}
+	for _, match := range mapRouteRe.FindAllStringSubmatch(content, -1) {
+		if len(match) != 4 {
+			continue
+		}
+		route, ok := staticRouteExpressionValue(match[2], constants)
+		if !ok {
+			continue
+		}
+		if prefix, ok := groupPrefixes[match[1]]; ok {
+			route = joinRoutePaths(prefix, route)
+		}
+		add(route, match[3])
+	}
+	for _, match := range chainedGroupRouteRe.FindAllStringSubmatch(content, -1) {
+		if len(match) != 4 {
+			continue
+		}
+		prefix, ok := staticRouteExpressionValue(match[1], constants)
+		if !ok {
+			continue
+		}
+		route, ok := staticRouteExpressionValue(match[2], constants)
+		if !ok {
+			continue
+		}
+		add(joinRoutePaths(prefix, route), match[3])
+	}
 	sort.Slice(registrations, func(i, j int) bool {
 		if registrations[i].Route != registrations[j].Route {
 			return registrations[i].Route < registrations[j].Route
@@ -9805,6 +9827,35 @@ func csharpMinimalAPIRouteRegistrations(content string) []csharpMinimalAPIRouteR
 		return registrations[i].Handler < registrations[j].Handler
 	})
 	return registrations
+}
+
+func csharpMinimalAPIGroupPrefixes(content string, constants map[string]string) map[string]string {
+	groupRe := regexp.MustCompile(`\b(?:var|[A-Za-z_][A-Za-z0-9_<>,.?]*)\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([A-Za-z_][A-Za-z0-9_]*)\s*\.\s*MapGroup\s*\(\s*([^,\n)]+)\s*\)`)
+	groups := map[string]string{}
+	for i := 0; i < 5; i++ {
+		changed := false
+		for _, match := range groupRe.FindAllStringSubmatch(content, -1) {
+			if len(match) != 4 {
+				continue
+			}
+			prefix, ok := staticRouteExpressionValue(match[3], constants)
+			if !ok {
+				continue
+			}
+			if base, ok := groups[match[2]]; ok {
+				prefix = joinRoutePaths(base, prefix)
+			}
+			if groups[match[1]] == prefix {
+				continue
+			}
+			groups[match[1]] = prefix
+			changed = true
+		}
+		if !changed {
+			break
+		}
+	}
+	return groups
 }
 
 func jvmAnnotationRouteLiterals(content string, symbol SymbolRecord, symbolsByID map[string]SymbolRecord) []string {

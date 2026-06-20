@@ -4189,6 +4189,74 @@ public static class ApiHandlers
 	}
 }
 
+func TestCSharpMinimalAPIMapGroupComposesHandlerAndBridge(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "Program.cs", `using System.Net.Http;
+using Microsoft.AspNetCore.Builder;
+
+const string ApiPrefix = "/api";
+
+var app = WebApplication.Create();
+var api = app.MapGroup(ApiPrefix);
+var v1 = api.MapGroup("/v1");
+
+api.MapGet("/users/{id}", ApiHandlers.GetUser);
+v1.MapGet("/teams/{id}", ApiHandlers.GetTeam);
+app.MapGroup("/admin").MapGet("/health", ApiHandlers.Health);
+
+public static class ApiHandlers
+{
+    public static string GetUser(string id)
+    {
+        return id;
+    }
+
+    public static string GetTeam(string id)
+    {
+        return id;
+    }
+
+    public static string Health()
+    {
+        return "ok";
+    }
+
+    public static async Task<object> Ping(HttpClient client, string id)
+    {
+        await client.GetFromJsonAsync<object>($"/api/users/{id}");
+        await client.GetFromJsonAsync<object>($"/api/v1/teams/{id}");
+        return await client.GetFromJsonAsync<object>("/admin/health");
+    }
+}
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasRelationByLastSegment(snapshot.Relations, "HANDLES_ROUTE", "ApiHandlers.GetUser", "/api/users/{id}") {
+		t.Fatalf("missing C# minimal API grouped GET route handler: %#v", snapshot.Relations)
+	}
+	if !hasRelationByLastSegment(snapshot.Relations, "HANDLES_ROUTE", "ApiHandlers.GetTeam", "/api/v1/teams/{id}") {
+		t.Fatalf("missing C# minimal API nested grouped GET route handler: %#v", snapshot.Relations)
+	}
+	if !hasRelationByLastSegment(snapshot.Relations, "HANDLES_ROUTE", "ApiHandlers.Health", "/admin/health") {
+		t.Fatalf("missing C# minimal API chained grouped route handler: %#v", snapshot.Relations)
+	}
+	if hasRelationByLastSegment(snapshot.Relations, "HANDLES_ROUTE", "ApiHandlers.GetUser", "/users/{id}") {
+		t.Fatalf("grouped C# minimal API route emitted unmounted child route: %#v", snapshot.Relations)
+	}
+	if !hasRelationByLastSegment(snapshot.Relations, "CALLS", "ApiHandlers.Ping", "ApiHandlers.GetUser") {
+		t.Fatalf("missing route bridge CALLS Ping->GetUser: %#v", snapshot.Relations)
+	}
+	if !hasRelationByLastSegment(snapshot.Relations, "CALLS", "ApiHandlers.Ping", "ApiHandlers.GetTeam") {
+		t.Fatalf("missing route bridge CALLS Ping->GetTeam: %#v", snapshot.Relations)
+	}
+	if !hasRelationByLastSegment(snapshot.Relations, "CALLS", "ApiHandlers.Ping", "ApiHandlers.Health") {
+		t.Fatalf("missing route bridge CALLS Ping->Health: %#v", snapshot.Relations)
+	}
+}
+
 func TestLaravelRoutesResolveControllerMethodsAndBridgeHTTPClient(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "routes/web.php", `<?php
