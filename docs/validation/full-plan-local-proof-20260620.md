@@ -85,6 +85,8 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
   to local type files with `import_resolved` metadata; `.csproj` root
   namespace and assembly-name aliases resolve unique C# namespace imports to
   local source files with `import_resolved` metadata.
+- Composer PSR-4 autoload prefixes resolve unique PHP namespace imports to
+  local source files with `import_resolved` metadata.
 - Rust `crate::`, `self::`, and Cargo package-name imports resolve to local
   module files with `import_resolved` metadata for conventional source layouts,
   deterministic `#[path] mod` aliases, and straightforward `pub use`
@@ -346,6 +348,9 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
   - `bench/results/result-1781976712.json`: Go/gin, syntax-only, 28,618 LOC,
     154,859 LOC/s, max RSS 27,475,968 bytes, estimated output 1,902,631
     bytes; run after `.csproj` C# namespace import resolution.
+  - `bench/results/result-1781976914.json`: Go/gin, syntax-only, 28,618 LOC,
+    161,958 LOC/s, max RSS 26,722,304 bytes, estimated output 1,902,630
+    bytes; run after Composer PSR-4 PHP namespace import resolution.
   - `bench/results/result-1781970127.json`: Go/gin, syntax-only, 28,618 LOC,
     150,315 LOC/s, max RSS 28,803,072 bytes, estimated output 1,902,626
     bytes; run after KEDA `authenticationRef` resource-reference extraction.

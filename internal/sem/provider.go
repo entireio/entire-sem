@@ -4994,6 +4994,10 @@ type manifestImportResolver struct {
 	csharpEvidence     map[string]string
 	csharpAmbiguous    map[string]bool
 	csharpPrefixes     []string
+	phpTypes           map[string]string
+	phpTypeEvidence    map[string]string
+	phpTypeAmbiguous   map[string]bool
+	phpPSR4Prefixes    []phpPSR4Prefix
 	rustCrateName      string
 	rustModules        map[string]string
 	rustAliases        map[string]string
@@ -5017,8 +5021,13 @@ type jsImportMapScope struct {
 	Targets map[string]string
 }
 
+type phpPSR4Prefix struct {
+	Prefix string
+	Dirs   []string
+}
+
 func buildManifestImportResolver(files []FileRecord, readContent contentReader) manifestImportResolver {
-	resolver := manifestImportResolver{goPackages: map[string]string{}, jsPackageExports: map[string]string{}, jsPackageImports: map[string]string{}, jsImportMap: map[string]string{}, jsModuleFiles: map[string]string{}, pythonSourceRoots: []string{"src"}, pythonModules: map[string]string{}, pythonNamespaces: map[string]bool{}, jvmTypes: map[string]string{}, jvmTypeEvidence: map[string]string{}, csharpNamespaces: map[string]string{}, csharpEvidence: map[string]string{}, csharpAmbiguous: map[string]bool{}, rustModules: map[string]string{}, rustAliases: map[string]string{}}
+	resolver := manifestImportResolver{goPackages: map[string]string{}, jsPackageExports: map[string]string{}, jsPackageImports: map[string]string{}, jsImportMap: map[string]string{}, jsModuleFiles: map[string]string{}, pythonSourceRoots: []string{"src"}, pythonModules: map[string]string{}, pythonNamespaces: map[string]bool{}, jvmTypes: map[string]string{}, jvmTypeEvidence: map[string]string{}, csharpNamespaces: map[string]string{}, csharpEvidence: map[string]string{}, csharpAmbiguous: map[string]bool{}, phpTypes: map[string]string{}, phpTypeEvidence: map[string]string{}, phpTypeAmbiguous: map[string]bool{}, rustModules: map[string]string{}, rustAliases: map[string]string{}}
 	if content, ok := readContent("go.mod"); ok {
 		resolver.goModule = parseGoModulePath(content)
 	}
@@ -5048,6 +5057,9 @@ func buildManifestImportResolver(files []FileRecord, readContent contentReader) 
 	resolver.pythonPackages = normalizePythonPackageNames(resolver.pythonPackages)
 	if content, ok := readContent("Cargo.toml"); ok {
 		resolver.rustCrateName = normalizeRustCrateName(parseCargoPackageName(content))
+	}
+	if content, ok := readContent("composer.json"); ok {
+		resolver.phpPSR4Prefixes = parseComposerPSR4Prefixes(content)
 	}
 	if content, ok := readContent("pom.xml"); ok {
 		resolver.jvmPackagePrefixes = append(resolver.jvmPackagePrefixes, parsePOMJVMPackagePrefixes(content)...)
@@ -5083,6 +5095,7 @@ func buildManifestImportResolver(files []FileRecord, readContent contentReader) 
 	var pyPaths []string
 	var jvmPaths []string
 	var csharpPaths []string
+	var phpPaths []string
 	var rustPaths []string
 	for _, file := range files {
 		if strings.EqualFold(filepath.Ext(file.Path), ".go") {
@@ -5099,6 +5112,9 @@ func buildManifestImportResolver(files []FileRecord, readContent contentReader) 
 		}
 		if strings.EqualFold(filepath.Ext(file.Path), ".cs") {
 			csharpPaths = append(csharpPaths, filepath.ToSlash(file.Path))
+		}
+		if strings.EqualFold(filepath.Ext(file.Path), ".php") {
+			phpPaths = append(phpPaths, filepath.ToSlash(file.Path))
 		}
 		if strings.EqualFold(filepath.Ext(file.Path), ".rs") {
 			rustPaths = append(rustPaths, filepath.ToSlash(file.Path))
@@ -5189,6 +5205,25 @@ func buildManifestImportResolver(files []FileRecord, readContent contentReader) 
 			resolver.addCSharpNamespace(prefix+"."+namespace, path, "csharp_csproj_namespace_import")
 		}
 	}
+	sort.Strings(phpPaths)
+	for _, path := range phpPaths {
+		content, ok := readContent(path)
+		if !ok {
+			continue
+		}
+		for _, qualifiedName := range phpQualifiedTypeNames(content) {
+			resolver.addPHPType(qualifiedName, path, "php_namespace_import")
+			for _, prefix := range resolver.phpPSR4Prefixes {
+				if !phpPathUnderAnyDir(path, prefix.Dirs) {
+					continue
+				}
+				if phpClassNameHasPrefix(qualifiedName, prefix.Prefix) {
+					continue
+				}
+				resolver.addPHPType(prefix.Prefix+qualifiedName, path, "composer_psr4_import")
+			}
+		}
+	}
 	sort.Strings(rustPaths)
 	for _, path := range rustPaths {
 		for _, module := range rustModuleKeysForPath(path) {
@@ -5232,6 +5267,21 @@ func (resolver manifestImportResolver) addCSharpNamespace(namespace, path, evide
 	}
 	resolver.csharpNamespaces[namespace] = path
 	resolver.csharpEvidence[namespace] = evidenceKind
+}
+
+func (resolver manifestImportResolver) addPHPType(qualifiedName, path, evidenceKind string) {
+	qualifiedName = normalizePHPClassName(qualifiedName)
+	if qualifiedName == "" {
+		return
+	}
+	if existing, exists := resolver.phpTypes[qualifiedName]; exists {
+		if existing != path {
+			resolver.phpTypeAmbiguous[qualifiedName] = true
+		}
+		return
+	}
+	resolver.phpTypes[qualifiedName] = path
+	resolver.phpTypeEvidence[qualifiedName] = evidenceKind
 }
 
 func parseGoModulePath(content string) string {
@@ -5625,6 +5675,9 @@ func (resolver manifestImportResolver) resolve(importingPath, spec string) (mani
 	}
 	if ext == ".cs" {
 		return resolver.resolveCSharpImport(importingPath, spec)
+	}
+	if ext == ".php" {
+		return resolver.resolvePHPImport(importingPath, spec)
 	}
 	if ext == ".rs" {
 		return resolver.resolveRustImport(importingPath, spec)
@@ -6228,6 +6281,196 @@ func normalizeCSharpNamespace(name string) string {
 	name = regexp.MustCompile(`[^A-Za-z0-9_.]+`).ReplaceAllString(name, ".")
 	name = regexp.MustCompile(`\.+`).ReplaceAllString(name, ".")
 	return strings.Trim(name, ".")
+}
+
+func (resolver manifestImportResolver) resolvePHPImport(importingPath, spec string) (manifestImportResolution, bool) {
+	spec = normalizePHPClassName(spec)
+	if spec == "" || resolver.phpTypeAmbiguous[spec] {
+		return manifestImportResolution{}, false
+	}
+	path, ok := resolver.phpTypes[spec]
+	if !ok || path == filepath.ToSlash(importingPath) {
+		return manifestImportResolution{}, false
+	}
+	evidenceKind := resolver.phpTypeEvidence[spec]
+	if evidenceKind == "" {
+		evidenceKind = "php_namespace_import"
+	}
+	confidence := 0.87
+	reason := "PHP namespace import resolved through local type declaration"
+	if evidenceKind == "composer_psr4_import" {
+		confidence = 0.88
+		reason = "PHP namespace import resolved through composer PSR-4 autoload"
+	}
+	return manifestImportResolution{
+		Path:         path,
+		Confidence:   confidence,
+		Scope:        "module",
+		Reason:       reason,
+		EvidenceKind: evidenceKind,
+	}, true
+}
+
+func parseComposerPSR4Prefixes(content string) []phpPSR4Prefix {
+	var data struct {
+		Autoload struct {
+			PSR4 map[string]any `json:"psr-4"`
+		} `json:"autoload"`
+		AutoloadDev struct {
+			PSR4 map[string]any `json:"psr-4"`
+		} `json:"autoload-dev"`
+	}
+	if err := json.Unmarshal([]byte(stripJSONLineComments(content)), &data); err != nil {
+		return nil
+	}
+	byPrefix := map[string]map[string]bool{}
+	add := func(rawPrefix string, rawDirs any) {
+		prefix := normalizePHPClassPrefix(rawPrefix)
+		if prefix == "" {
+			return
+		}
+		dirs := composerPSR4Dirs(rawDirs)
+		if len(dirs) == 0 {
+			return
+		}
+		if byPrefix[prefix] == nil {
+			byPrefix[prefix] = map[string]bool{}
+		}
+		for _, dir := range dirs {
+			byPrefix[prefix][dir] = true
+		}
+	}
+	for prefix, dirs := range data.Autoload.PSR4 {
+		add(prefix, dirs)
+	}
+	for prefix, dirs := range data.AutoloadDev.PSR4 {
+		add(prefix, dirs)
+	}
+	var prefixes []phpPSR4Prefix
+	for prefix, dirs := range byPrefix {
+		values := make([]string, 0, len(dirs))
+		for dir := range dirs {
+			values = append(values, dir)
+		}
+		sort.Strings(values)
+		prefixes = append(prefixes, phpPSR4Prefix{Prefix: prefix, Dirs: values})
+	}
+	sort.Slice(prefixes, func(i, j int) bool {
+		if len(prefixes[i].Prefix) == len(prefixes[j].Prefix) {
+			return prefixes[i].Prefix < prefixes[j].Prefix
+		}
+		return len(prefixes[i].Prefix) > len(prefixes[j].Prefix)
+	})
+	return prefixes
+}
+
+func composerPSR4Dirs(raw any) []string {
+	var dirs []string
+	add := func(value string) {
+		value = strings.Trim(filepath.ToSlash(strings.TrimSpace(value)), "/")
+		if value == "" || value == "." {
+			value = ""
+		}
+		dirs = append(dirs, value)
+	}
+	switch value := raw.(type) {
+	case string:
+		add(value)
+	case []any:
+		for _, item := range value {
+			if text, ok := item.(string); ok {
+				add(text)
+			}
+		}
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, dir := range dirs {
+		if !seen[dir] {
+			seen[dir] = true
+			out = append(out, dir)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if len(out[i]) == len(out[j]) {
+			return out[i] < out[j]
+		}
+		return len(out[i]) > len(out[j])
+	})
+	return out
+}
+
+func phpQualifiedTypeNames(content string) []string {
+	namespace := phpNamespaceName(content)
+	re := regexp.MustCompile(`(?im)^\s*(?:abstract\s+|final\s+)?(?:class|interface|trait|enum)\s+([A-Za-z_][A-Za-z0-9_]*)\b`)
+	var names []string
+	seen := map[string]bool{}
+	for _, match := range re.FindAllStringSubmatch(content, -1) {
+		name := match[1]
+		if namespace != "" {
+			name = namespace + `\` + name
+		}
+		name = normalizePHPClassName(name)
+		if name != "" && !seen[name] {
+			seen[name] = true
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
+func phpNamespaceName(content string) string {
+	re := regexp.MustCompile(`(?im)^\s*namespace\s+([A-Za-z_][A-Za-z0-9_\\]*)\s*(?:[;{]|$)`)
+	if match := re.FindStringSubmatch(content); len(match) == 2 {
+		return normalizePHPClassName(match[1])
+	}
+	return ""
+}
+
+func phpPathUnderAnyDir(path string, dirs []string) bool {
+	path = strings.Trim(filepath.ToSlash(path), "/")
+	for _, dir := range dirs {
+		dir = strings.Trim(filepath.ToSlash(dir), "/")
+		if dir == "" || path == dir || strings.HasPrefix(path, dir+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+func phpClassNameHasPrefix(name, prefix string) bool {
+	name = normalizePHPClassName(name)
+	prefix = normalizePHPClassPrefix(prefix)
+	return prefix != "" && (name == strings.TrimSuffix(prefix, `\`) || strings.HasPrefix(name, prefix))
+}
+
+func normalizePHPClassPrefix(name string) string {
+	name = normalizePHPClassName(name)
+	if name == "" {
+		return ""
+	}
+	return strings.TrimSuffix(name, `\`) + `\`
+}
+
+func normalizePHPClassName(name string) string {
+	name = strings.TrimSpace(name)
+	lower := strings.ToLower(name)
+	for _, prefix := range []string{"function ", "const "} {
+		if strings.HasPrefix(lower, prefix) {
+			name = strings.TrimSpace(name[len(prefix):])
+			lower = strings.ToLower(name)
+			break
+		}
+	}
+	if idx := regexp.MustCompile(`(?i)\s+as\s+`).FindStringIndex(name); len(idx) == 2 {
+		name = strings.TrimSpace(name[:idx[0]])
+	}
+	name = strings.Trim(name, `\`)
+	name = strings.ReplaceAll(name, "/", `\`)
+	name = regexp.MustCompile(`[^A-Za-z0-9_\\]+`).ReplaceAllString(name, `\`)
+	name = regexp.MustCompile(`\\+`).ReplaceAllString(name, `\`)
+	return strings.Trim(name, `\`)
 }
 
 func jvmLikeExtension(ext string) bool {

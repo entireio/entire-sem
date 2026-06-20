@@ -673,6 +673,73 @@ class Second {}
 	}
 }
 
+func TestPHPComposerPSR4ImportResolvesLocalTypeFile(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "composer.json", `{
+  "autoload": {
+    "psr-4": {
+      "App\\": "app/"
+    }
+  }
+}
+`)
+	writeFile(t, repo, "routes/web.php", `<?php
+
+use App\Services\UserService;
+
+function boot() {
+    return new UserService();
+}
+`)
+	writeFile(t, repo, "app/Services/UserService.php", `<?php
+
+namespace Services;
+
+class UserService {}
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := fileID(snapshot.Header.RepoKey, "app/Services/UserService.php")
+	if !hasImportRelationWithEvidence(snapshot.Relations, "routes/web.php", target, `App\Services\UserService`, "composer_psr4_import") {
+		t.Fatalf("missing composer PSR-4 PHP import to %s in %#v", target, snapshot.Relations)
+	}
+}
+
+func TestPHPNamespaceImportSkipsAmbiguousType(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "routes/web.php", `<?php
+
+use Shared\Services\UserService;
+`)
+	writeFile(t, repo, "src/First.php", `<?php
+
+namespace Shared\Services;
+
+class UserService {}
+`)
+	writeFile(t, repo, "src/Second.php", `<?php
+
+namespace Shared\Services;
+
+class UserService {}
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, relation := range snapshot.Relations {
+		if relation.Type == "IMPORTS" &&
+			strings.HasSuffix(relation.FromID, "file:routes/web.php") &&
+			relation.Resolution == "import_resolved" {
+			t.Fatalf("ambiguous PHP type should not resolve to one file: %#v", relation)
+		}
+	}
+}
+
 func TestRustCargoImportsResolveToLocalModuleFile(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "Cargo.toml", `[package]

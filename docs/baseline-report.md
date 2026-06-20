@@ -86,7 +86,8 @@ Confidence bands follow the v2-plan schema section (`0.90-1.00 exact`,
   namespace roots resolve locally at 0.88-0.90; exact JVM package imports
   and simple Maven/Gradle package-identity JVM imports resolve locally at 0.90;
   unique C# namespace imports, including `.csproj` root namespace aliases,
-  resolve locally at 0.86-0.87; Rust crate/Cargo module imports, deterministic `#[path] mod` aliases,
+  resolve locally at 0.86-0.87; Composer PSR-4 PHP namespace imports resolve
+  locally at 0.88; Rust crate/Cargo module imports, deterministic `#[path] mod` aliases,
   and straightforward `pub use` re-exports resolve locally at 0.88).
 - Calls: `CALLS` — same-file 0.92, imported 0.86, type-inferred receiver
   0.85-0.9, globally-unique name 0.68.
@@ -221,13 +222,15 @@ False negatives:
   package imports covered by package declarations or simple root Maven/Gradle
   package identity now resolve to local file records, and unique C# namespace
   imports covered by local namespaces or `.csproj` root namespace aliases
+  plus unique PHP namespace imports covered by Composer PSR-4 autoload prefixes
   resolve to local file records (`resolution:
   import_resolved`, `target_kind: file`). Remaining
   non-relative local imports that depend on deeper JS/TS conditional
   exports/import-map scopes, complex Python package-dir/editable-install/
   importlib behavior, Maven/Gradle classpath/build-variant behavior beyond
   root package identity, C# compiler reference/type usage resolution beyond
-  unique namespace-file matches, macro-expanded or complex Rust name resolution beyond
+  unique namespace-file matches, complex Composer autoload/classmap semantics
+  beyond PSR-4, macro-expanded or complex Rust name resolution beyond
   deterministic local module/re-export aliases, or other ecosystem manifests
   remain external.
 - **Field-access relations.** `READS_FIELD`/`WRITES_FIELD`/`ACCESSES` are now

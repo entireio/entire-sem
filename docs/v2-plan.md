@@ -215,7 +215,8 @@ Tasks:
   Java/Kotlin/Scala package imports are implemented through package declarations
   and source file names, with simple root Maven/Gradle package identity aliases;
   `.csproj` root namespace and assembly-name aliases resolve unique C#
-  namespace imports to local C# source files; Cargo package names,
+  namespace imports to local C# source files; Composer PSR-4 autoload prefixes
+  resolve unique PHP namespace imports to local PHP source files; Cargo package names,
   deterministic `#[path] mod` aliases, and straightforward
   `pub use` re-exports are implemented for local Rust module files. JS/TS
   literal CommonJS `require("...")`, literal dynamic
@@ -225,7 +226,7 @@ Tasks:
   call resolution. Maven/Gradle
   classpath/build-variant modeling beyond root package identity, C# compiler
   reference/type usage resolution beyond unique namespace-file matches,
-  arbitrary runtime-computed module names, and
+  complex Composer autoload/classmap semantics beyond PSR-4, arbitrary runtime-computed module names, and
   macro-expanded or complex Rust name resolution remain open.
 - Normalize module/package roots and file-to-module ownership.
 - Resolve relative imports for Go, Python, JS/TS, Rust, Java, C#, PHP.
