@@ -53,7 +53,8 @@ go test ./internal/sem -run 'TestGraphQLSchemaFieldEntities|TestBuildProviderSna
 go run ./cmd/entire-sem capabilities --json
 go test ./...
 go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out bench/results -lock bench/repos.lock.json -languages Go -limit 1 -skip-clone -profile syntax-only -provider-version codex-graphql-schema-fields -min-loc-per-sec 1
-go test ./internal/sem -run 'TestKubernetesResourceDependencies|TestProviderGoldenFixtureQualityCoverageReport' -count=1
+go test ./internal/sem -run 'TestKubernetes(ResourceDependencies|ResourceReferencesIncludeNamespaceQualifiedExternalNames)|TestProviderGoldenFixtureQualityCoverageReport' -count=1
+go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out bench/results -lock bench/repos.lock.json -languages Go -limit 1 -skip-clone -profile syntax-only -provider-version codex-k8s-namespaced-resource-refs -min-loc-per-sec 1
 go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out bench/results -lock bench/repos.lock.json -languages Go -limit 1 -skip-clone -profile syntax-only -provider-version codex-namespace-refs -min-loc-per-sec 1
 go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out bench/results -lock bench/repos.lock.json -languages Go -limit 1 -skip-clone -profile syntax-only -provider-version codex-vpa-refs -min-loc-per-sec 1
 go test ./internal/sem -run 'TestTreeSitterParserTypeScriptGraphQLResolverEntities|TestGraphQLSchemaFieldsLinkToResolverFields|TestProviderGoldenFixtureQualityCoverageReport' -count=1
@@ -255,6 +256,11 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
 - Kubernetes named resource references for ConfigMaps, Secrets, service
   accounts, and PVCs emit exact local `RESOURCE_DEPENDS_ON` edges when the
   referenced resource manifests are present in the snapshot.
+- Kubernetes named resource references also emit namespace-qualified external
+  endpoints when the referring manifest declares `metadata.namespace`, such as
+  `external:config:kubernetes/configmap/web/api-config` and
+  `external:config:kubernetes/secret/web/api-secret`, while preserving the
+  existing short endpoints and exact local resource edges.
 - Kubernetes RBAC role/subject references, owner references, Ingress Service
   backends, Gateway API route backend refs, Gateway API route parent Gateway
   refs, Gateway listener `certificateRefs`, Gateway API policy `targetRef`/
@@ -426,6 +432,10 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
   - `bench/results/result-1781993163.json`: post-Namespace-resource-ref smoke,
     Go/gin syntax-only, cached checkout, 28,618 LOC, 3,086 relations, 159,529
     LOC/s, max RSS 27,738,112 bytes, estimated output 1,902,626 bytes,
+    `completeness_level: degraded`; retained as small-corpus harness proof.
+  - `bench/results/result-1781998468.json`: post-namespaced-Kubernetes-resource-ref
+    smoke, Go/gin syntax-only, cached checkout, 28,618 LOC, 3,086 relations,
+    167,855 LOC/s, max RSS 27,820,032 bytes, estimated output 1,902,640 bytes,
     `completeness_level: degraded`; retained as small-corpus harness proof.
   - `bench/results/result-1781993523.json`: post-VPA-targetRef smoke, Go/gin
     syntax-only, cached checkout, 28,618 LOC, 3,086 relations, 161,337 LOC/s,

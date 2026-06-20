@@ -2932,10 +2932,14 @@ func kubernetesResourceDependsOnRelations(recordsByFile map[string][]SymbolRecor
 			continue
 		}
 		for _, dep := range kubernetesResourceReferences(content) {
+			targetName := dep.ExternalName
+			if targetName == "" {
+				targetName = dep.Name
+			}
 			relations = append(relations, RelationRecord{
 				RecordType:    "relation",
 				FromID:        source.ID,
-				ToID:          externalID("config", "kubernetes/"+dep.Kind+"/"+dep.Name),
+				ToID:          externalID("config", "kubernetes/"+dep.Kind+"/"+targetName),
 				Type:          "RESOURCE_DEPENDS_ON",
 				Confidence:    dep.Confidence,
 				Reason:        "Kubernetes manifest references another resource",
@@ -2947,7 +2951,7 @@ func kubernetesResourceDependsOnRelations(recordsByFile map[string][]SymbolRecor
 					FilePath:  source.FilePath,
 					StartLine: source.StartLine,
 					EndLine:   source.EndLine,
-					Detail:    dep.Kind + "/" + dep.Name,
+					Detail:    dep.Kind + "/" + targetName,
 				}},
 				WarningCodes: []string{"WEAK_PATTERN"},
 			})
@@ -2959,20 +2963,26 @@ func kubernetesResourceDependsOnRelations(recordsByFile map[string][]SymbolRecor
 type resourceReference struct {
 	Kind         string
 	Name         string
+	ExternalName string
 	EvidenceKind string
 	Confidence   float64
 }
 
 func kubernetesResourceReferences(content string) []resourceReference {
 	var refs []resourceReference
+	metadata := yamlMapAtPath(content, "metadata")
+	resourceNamespace := strings.TrimSpace(metadata["namespace"])
 	add := func(kind, name, evidence string, confidence float64) {
 		name = strings.Trim(strings.TrimSpace(name), `"'`)
 		if name == "" {
 			return
 		}
 		refs = append(refs, resourceReference{Kind: strings.ToLower(kind), Name: name, EvidenceKind: evidence, Confidence: confidence})
+		if resourceNamespace != "" && kubernetesNamespacedReferenceKind(kind) {
+			refs = append(refs, resourceReference{Kind: strings.ToLower(kind), Name: name, ExternalName: resourceNamespace + "/" + name, EvidenceKind: evidence, Confidence: confidence})
+		}
 	}
-	if metadata := yamlMapAtPath(content, "metadata"); len(metadata) > 0 {
+	if len(metadata) > 0 {
 		if namespace := metadata["namespace"]; namespace != "" {
 			add("namespace", namespace, "kubernetes_metadata_namespace", 0.84)
 		}
@@ -3211,6 +3221,17 @@ func kubernetesKindNameBlockReferences(content, blockKey, evidence string, confi
 		}
 	}
 	return refs
+}
+
+func kubernetesNamespacedReferenceKind(kind string) bool {
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "", "namespace", "node", "persistentvolume", "storageclass", "runtimeclass", "priorityclass",
+		"clusterissuer", "clustersecretstore", "clustertriggerauthentication", "clusterworkflowtemplate",
+		"clusteranalysistemplate", "providerconfig", "composition":
+		return false
+	default:
+		return true
+	}
 }
 
 func kubernetesNamedRefBlockReferences(content, blockKey, evidence string, confidence float64, kindFor func(map[string]string) string) []resourceReference {
@@ -4492,7 +4513,7 @@ func dedupeResourceReferences(refs []resourceReference) []resourceReference {
 	seen := map[string]bool{}
 	var out []resourceReference
 	for _, ref := range refs {
-		key := ref.Kind + "/" + ref.Name
+		key := ref.Kind + "/" + ref.Name + "/" + ref.ExternalName
 		if seen[key] {
 			continue
 		}
@@ -4501,6 +4522,9 @@ func dedupeResourceReferences(refs []resourceReference) []resourceReference {
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Kind == out[j].Kind {
+			if out[i].Name == out[j].Name {
+				return out[i].ExternalName < out[j].ExternalName
+			}
 			return out[i].Name < out[j].Name
 		}
 		return out[i].Kind < out[j].Kind

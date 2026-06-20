@@ -1263,15 +1263,25 @@ metadata:
 
 	for _, target := range []string{
 		"external:config:kubernetes/configmap/api-config",
+		"external:config:kubernetes/configmap/web/api-config",
 		"external:config:kubernetes/configmap/api-key-config",
+		"external:config:kubernetes/configmap/web/api-key-config",
 		"external:config:kubernetes/secret/api-secret",
+		"external:config:kubernetes/secret/web/api-secret",
 		"external:config:kubernetes/secret/api-env",
+		"external:config:kubernetes/secret/web/api-env",
 		"external:config:kubernetes/secret/api-key-secret",
+		"external:config:kubernetes/secret/web/api-key-secret",
 		"external:config:kubernetes/secret/api-projected-secret",
+		"external:config:kubernetes/secret/web/api-projected-secret",
 		"external:config:kubernetes/secret/registry-creds",
+		"external:config:kubernetes/secret/web/registry-creds",
 		"external:config:kubernetes/serviceaccount/api-runner",
+		"external:config:kubernetes/serviceaccount/web/api-runner",
 		"external:config:kubernetes/configmap/api-projected-config",
+		"external:config:kubernetes/configmap/web/api-projected-config",
 		"external:config:kubernetes/persistentvolumeclaim/api-cache",
+		"external:config:kubernetes/persistentvolumeclaim/web/api-cache",
 		"external:config:kubernetes/storageclass/fast",
 		"external:config:kubernetes/persistentvolume/api-cache-pv",
 		"external:config:kubernetes/runtimeclass/sandboxed",
@@ -1333,6 +1343,31 @@ metadata:
 	}
 	if !hasRelationByLastSegment(snapshot.Relations, "RESOURCE_DEPENDS_ON", "VerticalPodAutoscaler.api", "Deployment.api") {
 		t.Fatalf("missing exact Kubernetes VPA targetRef dependency in %#v", snapshot.Relations)
+	}
+}
+
+func TestKubernetesResourceReferencesIncludeNamespaceQualifiedExternalNames(t *testing.T) {
+	refs := kubernetesResourceReferences(`apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: web
+spec:
+  template:
+    spec:
+      envFrom:
+        - configMapRef:
+            name: api-config
+`)
+	var found bool
+	for _, ref := range refs {
+		if ref.Kind == "configmap" && ref.Name == "api-config" && ref.ExternalName == "web/api-config" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("missing namespaced configmap ref in %#v", refs)
 	}
 }
 

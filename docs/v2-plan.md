@@ -430,7 +430,11 @@ Delivered:
   Gateway listener certificateRefs, IngressClass refs, StorageClass refs,
   PersistentVolume refs, RuntimeClass refs, PriorityClass refs, HPA scale
   targets, projected ConfigMap/Secret volume refs, ConfigMap/Secret key refs,
-  and image pull secrets.
+  and image pull secrets. When the referring manifest declares
+  `metadata.namespace`, namespaced resource references also emit
+  namespace-qualified external endpoints such as
+  `external:config:kubernetes/secret/web/api-secret`, while preserving the
+  existing short endpoint.
 - Istio VirtualService route destinations and gateway refs, plus
   DestinationRule hosts, resolve to exact local Service/Gateway resource
   symbols when the referenced manifests are present.
