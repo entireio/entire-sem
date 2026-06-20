@@ -2369,6 +2369,13 @@ metadata:
 spec:
   providerConfigRef:
     name: aws-default
+  writeConnectionSecretToRef:
+    name: logs-connection
+`)
+	writeFile(t, repo, "k8s/bucket-secret.yaml", `apiVersion: v1
+kind: Secret
+metadata:
+  name: logs-connection
 `)
 	writeFile(t, repo, "k8s/webapp-claim.yaml", `apiVersion: platform.example.org/v1alpha1
 kind: WebApp
@@ -2389,6 +2396,7 @@ spec:
 	}
 	for _, edge := range [][2]string{
 		{"Bucket.logs", "ProviderConfig.aws-default"},
+		{"Bucket.logs", "Secret.logs-connection"},
 		{"WebApp.frontend", "Composition.webapp"},
 		{"WebApp.frontend", "XWebApp.frontend-abc"},
 	} {

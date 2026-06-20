@@ -240,10 +240,11 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
   `Kustomization` to `GitRepository`/`Kustomization` when the referenced
   manifests are present, including Flux `kustomization.yaml` files that would
   otherwise collide with ordinary Kustomize overlay detection.
-- Crossplane `providerConfigRef`, `compositionRef`, and explicit `resourceRef`
-  references emit exact local `RESOURCE_DEPENDS_ON` edges to ProviderConfig,
-  Composition, and composite resource manifests when the referenced resources
-  are present in the snapshot.
+- Crossplane `providerConfigRef`, `compositionRef`, explicit `resourceRef`,
+  and `writeConnectionSecretToRef` references emit exact local
+  `RESOURCE_DEPENDS_ON` edges to ProviderConfig, Composition, composite
+  resource, and Secret manifests when the referenced resources are present in
+  the snapshot.
 - Istio VirtualService route destinations and gateway refs, plus
   DestinationRule hosts, emit exact local `RESOURCE_DEPENDS_ON` edges to
   Service/Gateway resources when the referenced manifests are present in the
@@ -502,6 +503,9 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
   - `bench/results/result-1781983962.json`: Go/gin, syntax-only, 28,618 LOC,
     164,366 LOC/s, max RSS 26,968,064 bytes, estimated output 1,902,624
     bytes; run after Argo CD Application/AppProject dependency extraction.
+  - `bench/results/result-1781984324.json`: Go/gin, syntax-only, 28,618 LOC,
+    175,205 LOC/s, max RSS 27,000,832 bytes, estimated output 1,902,634
+    bytes; run after Crossplane connection Secret dependency extraction.
   - `bench/results/result-1781972446.json`: Go/gin, syntax-only, 28,618 LOC,
     162,982 LOC/s, max RSS 26,804,224 bytes, estimated output 1,902,630
     bytes; run after IngressClass reference extraction.

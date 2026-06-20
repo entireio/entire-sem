@@ -3105,6 +3105,9 @@ func kubernetesResourceReferences(content string) []resourceReference {
 		for _, ref := range kubernetesNamedRefBlockReferences(content, "resourceRefs", "kubernetes_crossplane_resource_ref", 0.82, kubernetesExplicitReferenceKind) {
 			add(ref.Kind, ref.Name, ref.EvidenceKind, ref.Confidence)
 		}
+		for _, ref := range kubernetesNamedRefBlockReferences(content, "writeConnectionSecretToRef", "kubernetes_crossplane_connection_secret_ref", 0.82, kubernetesDefaultReferenceKind("secret")) {
+			add(ref.Kind, ref.Name, ref.EvidenceKind, ref.Confidence)
+		}
 	}
 	for _, ref := range kubernetesKindNameBlockReferences(content, "ownerReferences", "kubernetes_owner_reference", 0.78) {
 		add(ref.Kind, ref.Name, ref.EvidenceKind, ref.Confidence)
@@ -3320,7 +3323,8 @@ func kubernetesManifestHasCrossplaneReferences(content string) bool {
 		strings.Contains(content, "compositionRef:") ||
 		strings.Contains(content, "compositionRevisionRef:") ||
 		strings.Contains(content, "resourceRef:") ||
-		strings.Contains(content, "resourceRefs:")
+		strings.Contains(content, "resourceRefs:") ||
+		strings.Contains(content, "writeConnectionSecretToRef:")
 }
 
 func kubernetesWorkflowTemplateReferenceKind(fields map[string]string) string {

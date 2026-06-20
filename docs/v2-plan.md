@@ -457,7 +457,7 @@ Open:
   WorkflowTemplate refs, Argo Rollouts AnalysisTemplate refs, Argo CD
   Application/AppProject refs, Tekton Pipeline/Task refs, ServiceBinding
   service/workload refs, Knative Trigger broker/subscriber refs, Flux CD source, chart, dependsOn, and HelmRelease valuesFrom ConfigMap/Secret refs,
-  Crossplane ProviderConfig/Composition/resource refs, and Istio
+  Crossplane ProviderConfig/Composition/resource/connection Secret refs, and Istio
   VirtualService/DestinationRule refs.
   Remaining Kubernetes resource gaps include less common Kubernetes controllers
   beyond these selectors and other custom resource conventions.
