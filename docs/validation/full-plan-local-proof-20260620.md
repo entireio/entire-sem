@@ -139,6 +139,10 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
   `path(..., include("module.urls"))` URLConf mounts resolve static patterns
   to local handler symbols, including `views.handler` imports, and bridge
   matching Python HTTP client calls as direct `CALLS`.
+- FastAPI/Starlette `add_api_route(path, handler)` registrations resolve
+  static or local-literal-constant paths to same-file handler symbols,
+  including unique same-file selector handler expressions, and avoid
+  misclassifying the registration function as the route handler.
 - Express-style JS/TS router mounts compose same-block
   `app.use("/prefix", router)` prefixes with static `router.get/post/...`
   routes, emit `HANDLES_ROUTE`, and bridge exact matching `fetch`/Axios client
@@ -418,6 +422,9 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
   - `bench/results/result-1781979249.json`: Go/gin, syntax-only, 28,618 LOC,
     171,318 LOC/s, max RSS 28,999,680 bytes, estimated output 1,902,638
     bytes; run after unique same-file JS/TS route selector handler extraction.
+  - `bench/results/result-1781979384.json`: Go/gin, syntax-only, 28,618 LOC,
+    165,860 LOC/s, max RSS 27,590,656 bytes, estimated output 1,902,632
+    bytes; run after FastAPI/Starlette `add_api_route` handler extraction.
   - `bench/results/result-1781972446.json`: Go/gin, syntax-only, 28,618 LOC,
     162,982 LOC/s, max RSS 26,804,224 bytes, estimated output 1,902,630
     bytes; run after IngressClass reference extraction.
@@ -591,6 +598,9 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
     bytes.
   - `bench/results/result-1781979249.json`: Go/gin, syntax-only, 28,618 LOC,
     171,318 LOC/s, max RSS 28,999,680 bytes, estimated output 1,902,638
+    bytes.
+  - `bench/results/result-1781979384.json`: Go/gin, syntax-only, 28,618 LOC,
+    165,860 LOC/s, max RSS 27,590,656 bytes, estimated output 1,902,632
     bytes.
 
 ## Remaining Honesty Notes

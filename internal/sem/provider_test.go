@@ -3795,6 +3795,69 @@ def ping():
 	}
 }
 
+func TestPythonAddAPIRouteResolvesHandlerAndBridge(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "app.py", `from fastapi import FastAPI
+import requests
+
+app = FastAPI()
+user_route = "/users/{id}"
+
+def show_user(id: str):
+    return {"id": id}
+
+def register():
+    app.add_api_route(user_route, show_user, methods=["GET"])
+
+def ping():
+    return requests.get("/users/{id}")
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasRelationToExternalRoute(snapshot.Relations, "HANDLES_ROUTE", "show_user", "/users/{id}") {
+		t.Fatalf("missing FastAPI add_api_route handler: %#v", snapshot.Relations)
+	}
+	if hasRelationToExternalRoute(snapshot.Relations, "HANDLES_ROUTE", "register", "/users/{id}") {
+		t.Fatalf("registration function was misclassified as add_api_route handler: %#v", snapshot.Relations)
+	}
+	if !hasRelationByLastSegment(snapshot.Relations, "CALLS", "ping", "show_user") {
+		t.Fatalf("missing route bridge CALLS ping->show_user: %#v", snapshot.Relations)
+	}
+}
+
+func TestPythonAddAPIRouteSelectorHandlerResolvesUniqueMemberAndBridge(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "app.py", `from fastapi import FastAPI
+import requests
+
+app = FastAPI()
+handlers = object()
+
+def show_user(id: str):
+    return {"id": id}
+
+def register():
+    app.add_api_route("/users/{id}", handlers.show_user, methods=["GET"])
+
+def ping():
+    return requests.get("/users/{id}")
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasRelationToExternalRoute(snapshot.Relations, "HANDLES_ROUTE", "show_user", "/users/{id}") {
+		t.Fatalf("missing FastAPI add_api_route selector handler: %#v", snapshot.Relations)
+	}
+	if !hasRelationByLastSegment(snapshot.Relations, "CALLS", "ping", "show_user") {
+		t.Fatalf("missing route bridge CALLS ping->show_user: %#v", snapshot.Relations)
+	}
+}
+
 func TestPythonTornadoRouteTupleBridgesToHTTPClient(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "app.py", `import requests
