@@ -5889,7 +5889,8 @@ func routeLiteralsWithConstants(content string, constants map[string]string) []s
 
 func routeLiteralsForSymbol(path, content, block string, symbol SymbolRecord, symbolsByID map[string]SymbolRecord) []string {
 	seen := map[string]struct{}{}
-	if strings.EqualFold(filepath.Ext(path), ".cs") {
+	ext := filepath.Ext(path)
+	if strings.EqualFold(ext, ".cs") {
 		if typeLikeKind(symbol.Kind) {
 			return nil
 		}
@@ -5900,7 +5901,7 @@ func routeLiteralsForSymbol(path, content, block string, symbol SymbolRecord, sy
 			return sortedKeys(seen)
 		}
 	}
-	if jvmLikeExtension(filepath.Ext(path)) {
+	if jvmLikeExtension(ext) {
 		if typeLikeKind(symbol.Kind) {
 			return nil
 		}
@@ -5911,7 +5912,7 @@ func routeLiteralsForSymbol(path, content, block string, symbol SymbolRecord, sy
 			return sortedKeys(seen)
 		}
 	}
-	if strings.EqualFold(filepath.Ext(path), ".php") {
+	if strings.EqualFold(ext, ".php") {
 		if typeLikeKind(symbol.Kind) {
 			return nil
 		}
@@ -5922,15 +5923,26 @@ func routeLiteralsForSymbol(path, content, block string, symbol SymbolRecord, sy
 			return sortedKeys(seen)
 		}
 	}
+	if jsLikeExtension(ext) {
+		if typeLikeKind(symbol.Kind) && len(nestJSControllerRouteLiteralsAroundSymbol(content, symbol)) > 0 {
+			return nil
+		}
+		for _, route := range nestJSAnnotationRouteLiterals(content, symbol, symbolsByID) {
+			seen[route] = struct{}{}
+		}
+		if len(seen) > 0 {
+			return sortedKeys(seen)
+		}
+	}
 	for _, route := range routeLiteralsWithConstants(block, staticStringConstants(content)) {
 		seen[route] = struct{}{}
 	}
-	if jsLikeExtension(filepath.Ext(path)) {
+	if jsLikeExtension(ext) {
 		for _, route := range jsRouterComposedRouteLiterals(block, staticStringConstants(content)) {
 			seen[route] = struct{}{}
 		}
 	}
-	if strings.EqualFold(filepath.Ext(path), ".py") {
+	if strings.EqualFold(ext, ".py") {
 		for _, route := range pythonDecoratorRouteLiterals(content, symbol) {
 			seen[route] = struct{}{}
 		}
@@ -6982,6 +6994,121 @@ func jvmAnnotationRouteLiterals(content string, symbol SymbolRecord, symbolsByID
 		}
 	}
 	return sortedKeys(seen)
+}
+
+func nestJSAnnotationRouteLiterals(content string, symbol SymbolRecord, symbolsByID map[string]SymbolRecord) []string {
+	if symbol.Kind != "method" && symbol.Kind != "function" {
+		return nil
+	}
+	methodRoutes := nestJSMethodRouteLiteralsAroundSymbol(content, symbol)
+	if len(methodRoutes) == 0 {
+		return nil
+	}
+	var classPrefixes []string
+	if symbol.ContainerID != "" {
+		if container, ok := symbolsByID[symbol.ContainerID]; ok && typeLikeKind(container.Kind) {
+			classPrefixes = nestJSControllerRouteLiteralsAroundSymbol(content, container)
+		}
+	}
+	if len(classPrefixes) == 0 {
+		return methodRoutes
+	}
+	seen := map[string]struct{}{}
+	for _, prefix := range classPrefixes {
+		for _, route := range methodRoutes {
+			seen[joinRoutePaths(prefix, route)] = struct{}{}
+		}
+	}
+	return sortedKeys(seen)
+}
+
+func nestJSControllerRouteLiteralsAroundSymbol(content string, symbol SymbolRecord) []string {
+	return nestJSRouteDecoratorLiteralsAroundSymbol(content, symbol, true)
+}
+
+func nestJSMethodRouteLiteralsAroundSymbol(content string, symbol SymbolRecord) []string {
+	return nestJSRouteDecoratorLiteralsAroundSymbol(content, symbol, false)
+}
+
+func nestJSRouteDecoratorLiteralsAroundSymbol(content string, symbol SymbolRecord, controllerOnly bool) []string {
+	lines := strings.Split(content, "\n")
+	index := symbol.StartLine - 1
+	if index >= len(lines) {
+		index = len(lines) - 1
+	}
+	seen := map[string]struct{}{}
+	collect := func(line string) {
+		for _, route := range nestJSRouteDecoratorLiterals(line, controllerOnly) {
+			seen[route] = struct{}{}
+		}
+	}
+	if index >= 0 && index < len(lines) && strings.HasPrefix(strings.TrimSpace(lines[index]), "@") {
+		for i := index; i < len(lines) && i-index <= 8; i++ {
+			line := strings.TrimSpace(lines[i])
+			if line == "" {
+				continue
+			}
+			if !strings.HasPrefix(line, "@") {
+				break
+			}
+			collect(line)
+		}
+	}
+	for i := index - 1; i >= 0 && index-i <= 8; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		if !strings.HasPrefix(line, "@") {
+			break
+		}
+		collect(line)
+	}
+	return sortedKeys(seen)
+}
+
+func nestJSRouteDecoratorLiterals(line string, controllerOnly bool) []string {
+	decoratorRe := regexp.MustCompile("(?i)@(?:[A-Za-z_$][A-Za-z0-9_$]*\\.)?(Controller|Get|Post|Put|Patch|Delete|Head|Options|All)\\s*(?:\\((.*)\\))?")
+	stringRe := regexp.MustCompile(`^\s*(?:"([^"]*)"|'([^']*)'|` + "`" + `([^` + "`" + `]*)` + "`" + `)`)
+	pathPropertyRe := regexp.MustCompile(`(?i)\bpath\s*:\s*(?:"([^"]*)"|'([^']*)'|` + "`" + `([^` + "`" + `]*)` + "`" + `)`)
+	var routes []string
+	for _, match := range decoratorRe.FindAllStringSubmatch(line, -1) {
+		if len(match) != 3 {
+			continue
+		}
+		name := strings.ToLower(match[1])
+		if controllerOnly && name != "controller" {
+			continue
+		}
+		if !controllerOnly && name == "controller" {
+			continue
+		}
+		arg := strings.TrimSpace(match[2])
+		route := ""
+		if parts := stringRe.FindStringSubmatch(arg); len(parts) == 4 {
+			route = firstNonEmpty(parts[1], parts[2], parts[3])
+		} else if parts := pathPropertyRe.FindStringSubmatch(arg); len(parts) == 4 {
+			route = firstNonEmpty(parts[1], parts[2], parts[3])
+		}
+		if normalized := normalizeSlashRoute(route); normalized != "" {
+			routes = append(routes, normalized)
+			continue
+		}
+		if name != "controller" {
+			routes = append(routes, "/")
+		}
+	}
+	sort.Strings(routes)
+	return routes
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func annotationRouteLiteralsNearSymbol(content string, symbol SymbolRecord, springOnly bool) []string {

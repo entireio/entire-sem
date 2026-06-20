@@ -293,9 +293,9 @@ Tasks:
 
 - Improve route handler detection:
   Express/Fastify/Next.js, Django, Go `net/http`/chi/gin, Java Spring, C#
-  ASP.NET, PHP Laravel/Symfony. Django `path(...)` registrations and simple
-  `re_path(...)` registrations resolve to same-file local handler symbols when
-  patterns are static. Go `net/http` `HandleFunc` registrations and
+  ASP.NET, PHP Laravel/Symfony, NestJS. Django `path(...)` registrations and
+  simple `re_path(...)` registrations resolve to same-file local handler
+  symbols when patterns are static. Go `net/http` `HandleFunc` registrations and
   `HandlerFunc` wrappers resolve to same-file local handler symbols when paths
   are static or local literal constants; common Go chi/gin-style router method
   registrations do the same. Flask/FastAPI-style Python route decorators are
@@ -307,6 +307,8 @@ Tasks:
   attributes compose class and method routes. Direct Fastify/app/server JS/TS
   route registrations resolve local handler functions. Next.js route-file
   boundaries bridge matching JS/TS clients, including bracket-parameter paths.
+  NestJS controller/method decorators compose class prefixes with method routes
+  and bridge matching JS/TS HTTP clients.
   Express-style JS/TS same-block router mounts plus
   same-name, aliased named-import, and namespace-member imported router mounts
   compose `app.use("/prefix", router)` with static `router.get/post/...`

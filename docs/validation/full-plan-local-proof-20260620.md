@@ -92,6 +92,9 @@ go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go
   `app.use("/prefix", router)` prefixes with static `router.get/post/...`
   routes, emit `HANDLES_ROUTE`, and bridge exact matching `fetch`/Axios client
   calls as direct `CALLS`.
+- NestJS controller/method decorators compose class prefixes with method-level
+  routes, emit `HANDLES_ROUTE`, and bridge exact matching JS/TS HTTP client
+  calls as direct `CALLS`.
 - Same-name imported Express routers compose cross-file
   `app.use("/prefix", router)` mounts with static `router.get/post/...`
   registrations and bridge exact matching HTTP client calls to the handler
@@ -263,6 +266,8 @@ go run ./cmd/sem-bench -skip-clone -manifest bench/repos.fast.json -languages Go
     148,241 LOC/s, max RSS 26,869,760 bytes, output 1,938,906 bytes.
   - `bench/results/result-1781955405.json`: Go/gin, syntax-only, 28,618 LOC,
     131,801 LOC/s, max RSS 26,755,072 bytes, output 1,938,906 bytes.
+  - `bench/results/result-1781955778.json`: Go/gin, syntax-only, 28,618 LOC,
+    148,719 LOC/s, max RSS 28,573,696 bytes, output 1,938,906 bytes.
 
 ## Remaining Honesty Notes
 

@@ -2165,6 +2165,49 @@ export async function ping(): Promise<unknown> {
 	}
 }
 
+func TestNestJSControllerRoutesComposeAndBridgeHTTPClient(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "users.controller.ts", `import { Controller, Get, Post } from "@nestjs/common"
+
+@Controller({ path: "api/users" })
+export class UsersController {
+  @Get(":id")
+  showUser() {
+    return "ok"
+  }
+
+  @Post()
+  createUser() {
+    return "created"
+  }
+
+  async ping() {
+    return fetch("/api/users/:id")
+  }
+}
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasRelationToExternalRoute(snapshot.Relations, "HANDLES_ROUTE", "UsersController.showUser", "/api/users/:id") {
+		t.Fatalf("missing composed NestJS GET route: %#v", snapshot.Relations)
+	}
+	if !hasRelationToExternalRoute(snapshot.Relations, "HANDLES_ROUTE", "UsersController.createUser", "/api/users") {
+		t.Fatalf("missing composed NestJS POST route: %#v", snapshot.Relations)
+	}
+	if !hasRelationToExternalRoute(snapshot.Relations, "HTTP_CALLS", "UsersController.ping", "/api/users/:id") {
+		t.Fatalf("missing NestJS HTTP_CALLS relation: %#v", snapshot.Relations)
+	}
+	if !hasRelationByLastSegment(snapshot.Relations, "CALLS", "UsersController.ping", "UsersController.showUser") {
+		t.Fatalf("missing route bridge CALLS ping->showUser: %#v", snapshot.Relations)
+	}
+	if hasRelationByLastSegment(snapshot.Relations, "HANDLES_ROUTE", "UsersController", "/api/users/:id") {
+		t.Fatalf("controller class was misclassified as route handler: %#v", snapshot.Relations)
+	}
+}
+
 func TestPythonRouteDecoratorsBridgeToHTTPClients(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "app.py", `from fastapi import FastAPI
