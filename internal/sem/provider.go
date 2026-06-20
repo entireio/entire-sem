@@ -8880,6 +8880,7 @@ func jsFastifyPluginRoutes(content string, constants map[string]string, symbols 
 func jsRouterRoutes(block string, constants map[string]string) []jsRouterRoute {
 	jsHandlerExpr := `[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)?`
 	re := regexp.MustCompile(`(?i)\b([A-Za-z_$][\w$]*)\.(get|post|put|patch|delete|head|options)\s*\(\s*([^,\n)]+)(?:\s*,\s*(` + jsHandlerExpr + `))?`)
+	prefixes := jsRouterConstructorPrefixes(block, constants)
 	var routes []jsRouterRoute
 	for _, match := range re.FindAllStringSubmatch(block, -1) {
 		if len(match) != 5 {
@@ -8887,10 +8888,38 @@ func jsRouterRoutes(block string, constants map[string]string) []jsRouterRoute {
 		}
 		route, ok := staticRouteExpressionValue(match[3], constants)
 		if ok {
+			if prefix := prefixes[match[1]]; prefix != "" {
+				route = joinRoutePaths(prefix, route)
+			}
 			routes = append(routes, jsRouterRoute{Receiver: match[1], Route: route, Handler: match[4]})
 		}
 	}
 	return routes
+}
+
+func jsRouterConstructorPrefixes(block string, constants map[string]string) map[string]string {
+	re := regexp.MustCompile(`(?is)\b(?:const|let|var)?\s*([A-Za-z_$][\w$]*)\s*=\s*new\s+(?:[A-Za-z_$][\w$]*\.)?(?:Router|KoaRouter)\s*\(\s*\{([^}]*)\}\s*\)`)
+	prefixes := map[string]string{}
+	for _, match := range re.FindAllStringSubmatch(block, -1) {
+		if len(match) != 3 {
+			continue
+		}
+		prefixMatch := regexp.MustCompile(`(?is)\bprefix\s*:\s*([^,\n}]+)`).FindStringSubmatch(match[2])
+		if len(prefixMatch) == 2 {
+			prefix, ok := staticRouteExpressionValue(prefixMatch[1], constants)
+			if !ok {
+				continue
+			}
+			prefixes[match[1]] = prefix
+			continue
+		}
+		if regexp.MustCompile(`(?:^|,)\s*prefix\s*(?:,|$)`).MatchString(strings.TrimSpace(match[2])) {
+			if prefix, ok := staticRouteExpressionValue("prefix", constants); ok {
+				prefixes[match[1]] = prefix
+			}
+		}
+	}
+	return prefixes
 }
 
 func jsDirectRouteRelations(files []FileRecord, recordsByFile map[string][]SymbolRecord, readContent contentReader) []expressRouteRelation {

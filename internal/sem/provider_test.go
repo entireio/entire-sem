@@ -3612,6 +3612,46 @@ export async function ping(): Promise<unknown> {
 	}
 }
 
+func TestKoaRouterConstructorPrefixComposesAndBridgesHTTPClient(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "routes.ts", `const prefix = "/users"
+export const users = new Router({ prefix })
+
+users.get("/:id", showUser)
+
+export function showUser(ctx: any): void {
+  ctx.body = "ok"
+}
+`)
+	writeFile(t, repo, "app.ts", `import { users } from "./routes"
+
+export function register(app: any): void {
+  app.use(users.routes())
+}
+
+export async function ping(): Promise<unknown> {
+  return fetch("/users/:id")
+}
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasRelationToExternalRoute(snapshot.Relations, "HANDLES_ROUTE", "showUser", "/users/:id") {
+		t.Fatalf("missing Koa constructor-prefix route: %#v", snapshot.Relations)
+	}
+	if hasRelationToExternalRoute(snapshot.Relations, "HANDLES_ROUTE", "showUser", "/:id") {
+		t.Fatalf("Koa constructor-prefix route emitted unprefixed child route: %#v", snapshot.Relations)
+	}
+	if !hasRelationToExternalRoute(snapshot.Relations, "HTTP_CALLS", "ping", "/users/:id") {
+		t.Fatalf("missing matching HTTP_CALLS relation: %#v", snapshot.Relations)
+	}
+	if !hasRelationByLastSegment(snapshot.Relations, "CALLS", "ping", "showUser") {
+		t.Fatalf("missing route bridge CALLS ping->showUser: %#v", snapshot.Relations)
+	}
+}
+
 func TestExpressAliasedImportedRouterPrefixComposesAndBridgesHTTPClient(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "routes.ts", `export const usersRouter = Router()

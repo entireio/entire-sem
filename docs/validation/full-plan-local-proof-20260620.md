@@ -327,8 +327,9 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
   boundary/linking facts, not full schema validation, type checking, or
   non-root resolver type analysis.
 - Koa/@koa-router `router.routes()` mounts, including static `koa-mount`
-  prefixes, compose with static router registrations and bridge exact matching
-  HTTP clients to local handlers.
+  prefixes and `new Router({ prefix })` constructor prefixes, compose with
+  static router registrations and bridge exact matching HTTP clients to local
+  handlers.
 - Flask Blueprint `register_blueprint(..., url_prefix=...)` mounts compose
   with Blueprint route decorators and bridge exact matching Python HTTP clients
   to local handlers.
@@ -446,6 +447,9 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
   - `bench/results/result-1781980824.json`: Go/gin, syntax-only, 28,618 LOC,
     163,919 LOC/s, max RSS 29,163,520 bytes, estimated output 1,902,634
     bytes; run after Rails nested resource route extraction.
+  - `bench/results/result-1781981275.json`: Go/gin, syntax-only, 28,618 LOC,
+    164,885 LOC/s, max RSS 29,573,120 bytes, estimated output 1,902,634
+    bytes; run after Koa router constructor-prefix extraction.
   - `bench/results/result-1781972446.json`: Go/gin, syntax-only, 28,618 LOC,
     162,982 LOC/s, max RSS 26,804,224 bytes, estimated output 1,902,630
     bytes; run after IngressClass reference extraction.
