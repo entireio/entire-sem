@@ -895,6 +895,66 @@ group = buildParameters.publishing.group
 	}
 }
 
+func TestTreeSitterParserKotlinMasksModernCallAndAnnotationSyntax(t *testing.T) {
+	entities, language, status := TreeSitterParser{}.ParseWithStatus("KoinModern.kt", `import kotlin.reflect.KClass
+
+@Target(AnnotationTarget.CLASS, AnnotationTarget.FUNCTION)
+public annotation class Single(val binds: Array<KClass<*>> = [], val createdAtStart: Boolean = false)
+
+class WorkManagerActivity {
+    fun onCreate() {
+        findViewById<TextView>(R.id.workmanager_message).text = "Work Manager is starting."
+        module {
+            single<Simple.ComponentInterface1> { Simple.Component1() } withOptions {
+                override()
+            }
+        }
+    }
+}
+
+private fun Koin.checkDefinition(allParameters: ParametersBinding) {
+    val parameters: ParametersHolder = allParameters.parametersCreators[
+        CheckedComponent(
+            definition.qualifier,
+            definition.primaryType,
+        ),
+    ]?.invoke(definition.qualifier)
+}
+`)
+	if language != "Kotlin" {
+		t.Fatalf("language = %q", language)
+	}
+	if status.ParseError {
+		t.Fatalf("unexpected parse status: %#v", status)
+	}
+	if len(entities) == 0 {
+		t.Fatalf("expected Kotlin entities after masking modern syntax")
+	}
+}
+
+func TestTreeSitterParserKotlinMasksGradleAllOpenBlock(t *testing.T) {
+	_, language, status := TreeSitterParser{}.ParseWithStatus("benchmark.gradle.kts", `plugins {
+    kotlin("jvm")
+}
+
+allOpen {
+    annotation("org.openjdk.jmh.annotations.State")
+}
+
+benchmark {
+    targets {
+        register("jvm")
+    }
+}
+`)
+	if language != "Kotlin" {
+		t.Fatalf("language = %q", language)
+	}
+	if status.ParseError {
+		t.Fatalf("unexpected parse status: %#v", status)
+	}
+}
+
 func TestTreeSitterParserYAMLMasksAntoraPlaceholders(t *testing.T) {
 	entities, language, status := TreeSitterParser{}.ParseWithStatus("antora-playbook.yml", `antora:
   extensions:

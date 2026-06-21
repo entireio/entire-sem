@@ -400,8 +400,12 @@ func maskGroovyUnsupportedSyntax(content string) string {
 }
 
 var (
-	kotlinSuspendLambdaPattern = regexp.MustCompile(`\bsuspend\s+\{`)
-	kotlinMultiDollarString    = regexp.MustCompile(`\$+\s*"`)
+	kotlinSuspendLambdaPattern        = regexp.MustCompile(`\bsuspend\s+\{`)
+	kotlinMultiDollarString           = regexp.MustCompile(`\$+\s*"`)
+	kotlinCallTypeArgumentsWithParen  = regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]*)<[^<>\n(){}]+>\(`)
+	kotlinCallTypeArgumentsWithLambda = regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]*)<[^<>\n(){}]+>(\s*\{)`)
+	kotlinEmptyArrayDefault           = regexp.MustCompile(`=\s*\[\]`)
+	kotlinOverrideCallPattern         = regexp.MustCompile(`\boverride\(\)`)
 )
 
 func maskKotlinUnsupportedSyntax(path, content string) string {
@@ -411,11 +415,99 @@ func maskKotlinUnsupportedSyntax(path, content string) string {
 	content = kotlinMultiDollarString.ReplaceAllStringFunc(content, func(match string) string {
 		return strings.Repeat(" ", len(match)-1) + "\""
 	})
+	content = maskKotlinCallTypeArguments(content)
+	content = kotlinEmptyArrayDefault.ReplaceAllStringFunc(content, func(match string) string {
+		return sameLengthReplacement("= 0", len(match))
+	})
+	content = kotlinOverrideCallPattern.ReplaceAllString(content, "masked__()")
+	content = maskKotlinUnsupportedLines(content)
+	content = maskKotlinTrailingCommas(content)
 	if strings.EqualFold(filepath.Ext(path), ".kts") {
 		content = maskKotlinGradleOptionValueAssignments(content)
 		content = maskKotlinGradleWhenGetOrElse(content)
+		content = maskKotlinGradleNamedBlock(content, "allOpen", "run {}")
 	}
 	return content
+}
+
+func maskKotlinUnsupportedLines(content string) string {
+	lines := strings.SplitAfter(content, "\n")
+	for i := 0; i < len(lines); i++ {
+		text, newline := splitLineEnding(lines[i])
+		trimmed := strings.TrimSpace(text)
+		if strings.HasPrefix(trimmed, "*") || strings.HasPrefix(trimmed, "//") {
+			continue
+		}
+		switch {
+		case strings.HasPrefix(trimmed, "findViewById(") && strings.Contains(trimmed, ").") && strings.Contains(trimmed, "="):
+			lines[i] = paddedReplacement(leadingWhitespace(text), "findViewById(R.id.masked)", len(text)) + newline
+		case strings.Contains(text, " withOptions {"):
+			suffix := strings.Index(text, " withOptions {")
+			replacement := strings.TrimRight(text[:suffix], " \t")
+			lines[i] = paddedReplacement(leadingWhitespace(text), strings.TrimSpace(replacement), len(text)) + newline
+			indent := leadingWhitespace(text)
+			for j := i + 1; j < len(lines); j++ {
+				lineText, lineNewline := splitLineEnding(lines[j])
+				lines[j] = maskLineText(lineText) + lineNewline
+				if leadingWhitespace(lineText) == indent && strings.TrimSpace(lineText) == "}" {
+					i = j
+					break
+				}
+			}
+		}
+	}
+	return strings.Join(lines, "")
+}
+
+func maskKotlinCallTypeArguments(content string) string {
+	content = kotlinCallTypeArgumentsWithParen.ReplaceAllStringFunc(content, func(match string) string {
+		open := strings.Index(match, "<")
+		if open < 0 {
+			return match
+		}
+		replacement := match[:open] + "("
+		return replacement + strings.Repeat(" ", len(match)-len(replacement))
+	})
+	return kotlinCallTypeArgumentsWithLambda.ReplaceAllStringFunc(content, func(match string) string {
+		parts := kotlinCallTypeArgumentsWithLambda.FindStringSubmatch(match)
+		if len(parts) != 3 {
+			return match
+		}
+		replacement := parts[1] + parts[2]
+		return replacement + strings.Repeat(" ", len(match)-len(replacement))
+	})
+}
+
+func maskKotlinTrailingCommas(content string) string {
+	lines := strings.SplitAfter(content, "\n")
+	for i := 0; i < len(lines); i++ {
+		text, newline := splitLineEnding(lines[i])
+		trimmed := strings.TrimSpace(text)
+		if !strings.HasSuffix(trimmed, ",") {
+			continue
+		}
+		next := kotlinNextNonEmptyTrimmedLine(lines, i+1)
+		if !strings.HasPrefix(next, ")") && !strings.HasPrefix(next, "]") {
+			continue
+		}
+		comma := strings.LastIndex(text, ",")
+		if comma >= 0 {
+			text = text[:comma] + " " + text[comma+1:]
+			lines[i] = text + newline
+		}
+	}
+	return strings.Join(lines, "")
+}
+
+func kotlinNextNonEmptyTrimmedLine(lines []string, start int) string {
+	for i := start; i < len(lines); i++ {
+		text, _ := splitLineEnding(lines[i])
+		trimmed := strings.TrimSpace(text)
+		if trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func maskYAMLUnsupportedSyntax(content string) string {
@@ -912,6 +1004,34 @@ func maskKotlinGradleOptionValueAssignments(content string) string {
 
 func maskKotlinGradleWhenGetOrElse(content string) string {
 	return maskKotlinGradleBlocks(content, ".getOrElse(when (", ".getOrElse(\"masked\")")
+}
+
+func maskKotlinGradleNamedBlock(content, name, replacement string) string {
+	lines := strings.SplitAfter(content, "\n")
+	for i := 0; i < len(lines); i++ {
+		text, newline := splitLineEnding(lines[i])
+		if strings.TrimSpace(text) != name+" {" {
+			continue
+		}
+		indent := leadingWhitespace(text)
+		blankUntil := i
+		balance := 0
+		for j := i; j < len(lines); j++ {
+			lineText, _ := splitLineEnding(lines[j])
+			balance += strings.Count(lineText, "{") - strings.Count(lineText, "}")
+			blankUntil = j
+			if j > i && balance <= 0 {
+				break
+			}
+		}
+		lines[i] = paddedReplacement(indent, replacement, len(text)) + newline
+		for j := i + 1; j <= blankUntil; j++ {
+			lineText, lineNewline := splitLineEnding(lines[j])
+			lines[j] = maskLineText(lineText) + lineNewline
+		}
+		i = blankUntil
+	}
+	return strings.Join(lines, "")
 }
 
 func maskKotlinGradleBlocks(content, marker, replacement string) string {
