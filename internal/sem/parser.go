@@ -831,8 +831,13 @@ var (
 	cEnumMacroPattern                               = regexp.MustCompile(`^[A-Z][A-Z0-9_]*_KEYS\s*\(`)
 	cFileScopeStatementMacroPattern                 = regexp.MustCompile(`^(?:PG_MODULE_MAGIC(?:_EXT)?|PG_FUNCTION_INFO_V1|PGDLLEXPORT|PG_KEYWORD|PG_FUNCTION_ARGS|PG_USED_FOR_ASSERTS_ONLY)\s*\(`)
 	cStringMacroPattern                             = regexp.MustCompile(`\b[A-Z][A-Z0-9_]*_FEATURE\s*\([^)\n]*\)`)
-	cAnnotationMacroPattern                         = regexp.MustCompile(`\b(?:printflike|__dead|__packed|__unused|__maybe_unused|__attribute__)\s*\([^)\n]*(?:\)[^)\n]*)?\)`)
-	cBareAnnotationPattern                          = regexp.MustCompile(`\b(?:__dead|__packed|__unused|__maybe_unused)\b`)
+	cAnnotationMacroPattern                         = regexp.MustCompile(`\b(?:printflike|__dead|__packed|__unused|__maybe_unused|__attribute__|pg_attribute_\w+)\s*\([^)\n]*(?:\)[^)\n]*)?\)`)
+	// Bare (parenless) C qualifier/attribute macros that prefix or annotate
+	// declarations and break the C grammar. `\w*DLL(IMPORT|EXPORT)` generalizes
+	// across C runtimes (PostgreSQL PGDLLIMPORT, Julia JL_DLLEXPORT, ...); the
+	// remaining names are the high-frequency PostgreSQL declaration qualifiers
+	// surfaced by the postgres/postgres failure clustering.
+	cBareAnnotationPattern = regexp.MustCompile(`\b(?:__dead|__packed|__unused|__maybe_unused|\w*DLL(?:IMPORT|EXPORT)|PG_USED_FOR_ASSERTS_ONLY|NON_EXEC_STATIC|pg_attribute_\w+|WINAPI)\b`)
 	cTypeMacroPattern                               = regexp.MustCompile(`\b(?:TAILQ|STAILQ|LIST|SLIST|RB|SPLAY)_(?:HEAD|ENTRY)\s*\([^)\n]*\)`)
 	cHeadInitializerPattern                         = regexp.MustCompile(`\b(?:(?:TAILQ|STAILQ|LIST|SLIST)_(?:HEAD_)?INITIALIZER|RB_INITIALIZER|SPLAY_INITIALIZER)\s*\([^)\n]*\)`)
 )

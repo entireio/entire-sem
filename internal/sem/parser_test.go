@@ -2557,3 +2557,30 @@ func TestTreeSitterParserKotlinNamesSkipAnnotationsAndTypeParameters(t *testing.
 		t.Fatalf("type parameter leaked as a symbol name: %#v", entities)
 	}
 }
+
+func TestTreeSitterParserCMasksExportAndAttributeMacros(t *testing.T) {
+	// C runtime export/attribute macros (PGDLLIMPORT, PG_USED_FOR_ASSERTS_ONLY,
+	// pg_attribute_*) prefix or annotate declarations and break the C grammar,
+	// cascading parse errors onto following tokens. Masking them must let the
+	// real declarations parse with correct names.
+	src := "extern PGDLLIMPORT volatile sig_atomic_t InterruptPending;\n" +
+		"PGDLLIMPORT int log_min_messages = 0;\n" +
+		"static int counter pg_attribute_unused() = 0;\n" +
+		"int real_function(int value)\n{\n    return value + log_min_messages;\n}\n"
+	entities, language, status := TreeSitterParser{}.ParseWithStatus("guc.c", src)
+	if language != "C" {
+		t.Fatalf("language = %q", language)
+	}
+	if status.ParseError {
+		t.Fatalf("unexpected parse error after masking export macros: %s", status.Detail)
+	}
+	found := false
+	for _, e := range entities {
+		if e.Name == "real_function" && (e.Kind == "function" || e.Kind == "method") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("real_function not extracted (macro cascade not contained): %#v", entities)
+	}
+}
