@@ -394,7 +394,7 @@ query_decrpm() {
 	}
 }
 
-func TestTreeSitterParserBashMasksZshCompletionExpansions(t *testing.T) {
+func TestTreeSitterParserZshParsesCompletionExpansions(t *testing.T) {
 	entities, language, status := TreeSitterParser{}.ParseWithStatus("completion.zsh", `#compdef base-test
 
 __base-test_complete() {
@@ -415,7 +415,7 @@ __base-test_cursor_index_in_current_word() {
     printf %s "${#${(z)LBUFFER}[-1]}"
 }
 `)
-	if language != "Bash" {
+	if language != "Zsh" {
 		t.Fatalf("language = %q", language)
 	}
 	if status.ParseError {
@@ -2292,6 +2292,14 @@ end
 		{
 			path:     "auth.sh",
 			language: "Bash",
+			input: `validate_token() { echo ok; }
+function run_task { echo run; }
+`,
+			names: []string{"validate_token", "run_task"},
+		},
+		{
+			path:     "auth.zsh",
+			language: "Zsh",
 			input: `validate_token() { echo ok; }
 function run_task { echo run; }
 `,

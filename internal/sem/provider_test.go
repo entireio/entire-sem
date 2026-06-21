@@ -9048,6 +9048,7 @@ func TestCapabilitiesAdvertiseExpandedLanguageSet(t *testing.T) {
 		"Scala",
 		"Swift",
 		"TypeScript",
+		"Zsh",
 		"Dart",
 		"Zig",
 		"Bicep",
@@ -9060,7 +9061,7 @@ func TestCapabilitiesAdvertiseExpandedLanguageSet(t *testing.T) {
 			t.Fatalf("capabilities missing language %q in %#v", want, caps.SupportedLanguages)
 		}
 	}
-	for _, want := range []string{"TypeScript", "Python", "JavaScript", "Java", "C++", "C", "C#", "Go", "PHP", "Rust", "Kotlin", "Ruby", "Swift", "SQL", "Bash"} {
+	for _, want := range []string{"TypeScript", "Python", "JavaScript", "Java", "C++", "C", "C#", "Go", "PHP", "Rust", "Kotlin", "Ruby", "Swift", "SQL", "Bash", "Zsh"} {
 		if !semanticSeen[want] {
 			t.Fatalf("capabilities should classify %q as semantic, got semantic=%#v inventory=%#v", want, caps.SemanticLanguages, caps.InventoryOnlyLanguages)
 		}

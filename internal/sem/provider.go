@@ -538,7 +538,7 @@ func supportsCallExtraction(spec languageSpec) bool {
 		return false
 	}
 	switch spec.language {
-	case "Bash", "C", "C++", "C#", "Elixir", "Go", "Groovy", "Java", "JavaScript", "Kotlin", "Lua", "OCaml", "PHP", "Python", "Ruby", "Rust", "Scala", "Swift", "TypeScript":
+	case "Bash", "C", "C++", "C#", "Elixir", "Go", "Groovy", "Java", "JavaScript", "Kotlin", "Lua", "OCaml", "PHP", "Python", "Ruby", "Rust", "Scala", "Swift", "TypeScript", "Zsh":
 		return true
 	default:
 		return false

@@ -36,6 +36,7 @@ import (
 	treesitterts "github.com/smacker/go-tree-sitter/typescript/typescript"
 	treesitteryaml "github.com/smacker/go-tree-sitter/yaml"
 	"github.com/suhaanthayyil/entire-sem/internal/sem/pgsql"
+	"github.com/suhaanthayyil/entire-sem/internal/sem/zsh"
 )
 
 type languageSpec struct {
@@ -98,7 +99,7 @@ var treeSitterLanguages = map[string]languageSpec{
 	".xml":        {language: "XML"},
 	".yaml":       {language: "YAML", grammar: treesitteryaml.GetLanguage()},
 	".yml":        {language: "YAML", grammar: treesitteryaml.GetLanguage()},
-	".zsh":        {language: "Bash", grammar: bash.GetLanguage()},
+	".zsh":        {language: "Zsh", grammar: zsh.GetLanguage()},
 	".dockerfile": {language: "Dockerfile"},
 }
 
@@ -143,6 +144,9 @@ func (TreeSitterParser) ParseWithStatus(path, content string) ([]Entity, string,
 	}
 	if spec.language == "Bash" {
 		parseSrc = []byte(maskBashUnsupportedSyntax(content))
+	}
+	if spec.language == "Zsh" {
+		parseSrc = []byte(maskZshUnsupportedSyntax(content))
 	}
 	if spec.language == "Java" {
 		parseSrc = []byte(maskJavaUnsupportedSyntax(content))
@@ -970,6 +974,84 @@ func maskBashUnsupportedSyntax(content string) string {
 			text = paddedReplacement(leadingWhitespace(text), `completions=("x")`, len(text))
 		}
 		lines[i] = text + newline
+	}
+	return strings.Join(lines, "")
+}
+
+func maskZshUnsupportedSyntax(content string) string {
+	content = maskZshParameterExpansions(content)
+	content = strings.ReplaceAll(content, ">|", "> ")
+	content = maskZshAnonymousFunctions(content)
+	return maskBashUnsupportedSyntax(content)
+}
+
+func maskZshParameterExpansions(content string) string {
+	var out strings.Builder
+	out.Grow(len(content))
+	for i := 0; i < len(content); {
+		if i+1 >= len(content) || content[i] != '$' || content[i+1] != '{' {
+			out.WriteByte(content[i])
+			i++
+			continue
+		}
+		end := findShellExpansionEnd(content, i+2)
+		if end < 0 {
+			out.WriteByte(content[i])
+			i++
+			continue
+		}
+		expansion := content[i : end+1]
+		inner := content[i+2 : end]
+		if zshSpecificParameterExpansion(inner) {
+			out.WriteString(sameLengthReplacement("0", len(expansion)))
+		} else {
+			out.WriteString(expansion)
+		}
+		i = end + 1
+	}
+	return out.String()
+}
+
+func findShellExpansionEnd(content string, start int) int {
+	depth := 1
+	for i := start; i < len(content); i++ {
+		switch content[i] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+func zshSpecificParameterExpansion(inner string) bool {
+	return strings.HasPrefix(inner, "(") ||
+		strings.HasPrefix(inner, "+") ||
+		strings.Contains(inner, "${") ||
+		strings.Contains(inner, ":#") ||
+		strings.Contains(inner, ":|") ||
+		strings.Contains(inner, ":gs") ||
+		strings.Contains(inner, ":h") ||
+		strings.Contains(inner, "[(I") ||
+		strings.Contains(inner, "[(r") ||
+		strings.Contains(inner, "[(R")
+}
+
+func maskZshAnonymousFunctions(content string) string {
+	lines := strings.SplitAfter(content, "\n")
+	for i, line := range lines {
+		text, newline := splitLineEnding(line)
+		trimmed := strings.TrimSpace(text)
+		switch trimmed {
+		case "() {":
+			lines[i] = paddedReplacement(leadingWhitespace(text), "f(){", len(text)) + newline
+		case "function {":
+			lines[i] = paddedReplacement(leadingWhitespace(text), "anon() {", len(text)) + newline
+		}
 	}
 	return strings.Join(lines, "")
 }
