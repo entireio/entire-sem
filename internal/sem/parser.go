@@ -477,11 +477,55 @@ func maskCPlusPlusUnsupportedSyntax(content string) string {
 			lines[i] = paddedReplacement(leadingWhitespace(text), "}", len(text)) + newline
 		case "FMT_BEGIN_EXPORT", "FMT_END_EXPORT":
 			lines[i] = maskLineText(text) + newline
+		case "FMT_TRY {":
+			lines[i] = paddedReplacement(leadingWhitespace(text), "try {", len(text)) + newline
+		case "FMT_CATCH(...) {}":
+			lines[i] = paddedReplacement(leadingWhitespace(text), "catch(...) {}", len(text)) + newline
 		default:
-			if strings.HasPrefix(trimmed, "FMT_PRAGMA_") {
+			if strings.HasPrefix(trimmed, "export module ") {
+				lines[i] = maskLineText(text) + newline
+				continue
+			}
+			text = replaceAllSameLength(text, "FMT_TRY", "try")
+			text = replaceAllSameLength(text, "FMT_CATCH", "catch")
+			text = replaceAllSameLength(text, "using typename ", "using ")
+			if masked, ok := maskCPlusPlusTestMacroDefinition(text); ok {
+				lines[i] = masked + newline
+			} else if strings.Contains(trimmed, "= delete;") {
+				lines[i] = maskLineText(text) + newline
+			} else if strings.HasPrefix(trimmed, "extern template ") {
+				for {
+					lines[i] = maskLineText(text) + newline
+					if strings.Contains(text, ";") || i+1 >= len(lines) {
+						break
+					}
+					i++
+					text, newline = splitLineEnding(lines[i])
+				}
+			} else if cPlusPlusBlankMacroLine(trimmed) {
+				lines[i] = maskLineText(text) + newline
+			} else if strings.Contains(text, "FMT_ENABLE_IF(") && balancedCallEnd(text, strings.Index(text, "FMT_ENABLE_IF(")+len("FMT_ENABLE_IF")) < 0 {
+				marker := strings.Index(text, "FMT_ENABLE_IF(")
+				lines[i] = text[:marker] + sameLengthReplacement("int = 0>", len(text)-marker) + newline
+				for !strings.Contains(text, ")>") && i+1 < len(lines) {
+					i++
+					text, newline = splitLineEnding(lines[i])
+					lines[i] = maskLineText(text) + newline
+				}
+			} else if strings.HasPrefix(trimmed, "FMT_PRAGMA_") {
 				lines[i] = maskLineText(text) + newline
 			} else if !strings.HasPrefix(trimmed, "#") {
-				text = maskCPlusPlusFunctionLikeMacro(text, "FMT_ENABLE_IF", "typename = void")
+				text = maskCPlusPlusFunctionLikeMacro(text, "FMT_ENABLE_IF", "typename T = void")
+				text = maskCPlusPlusFunctionLikeMacro(text, "FMT_SO_VISIBILITY", "")
+				text = maskCPlusPlusFunctionLikeMacro(text, "__declspec", "")
+				text = maskCPlusPlusUnsignedFunctionalCast(text)
+				text = maskCPlusPlusEmptyDefaultInitializers(text)
+				text = replaceAllSameLength(text, "template <typename,", "template <class T, ")
+				if strings.Contains(text, ".*(&") {
+					text = paddedReplacement(leadingWhitespace(text), "return {};", len(text))
+				}
+				text = replacePatternSameLength(text, cPlusPlusAnonymousEnumPattern, "enum cxx_enum")
+				text = replacePatternSameLength(text, cPlusPlusExplicitOperatorCallPattern, "call(")
 				lines[i] = maskCPlusPlusAnnotationMacros(text) + newline
 			}
 		}
@@ -489,12 +533,54 @@ func maskCPlusPlusUnsupportedSyntax(content string) string {
 	return strings.Join(lines, "")
 }
 
-var cPlusPlusAnnotationMacroPattern = regexp.MustCompile(`\b(?:FMT_(?:API|FUNC|EXPORT|CONSTEXPR(?:20|_STRING)?|CONSTEVAL|ALWAYS_INLINE|NODISCARD|NORETURN|DEPRECATED|MAYBE_UNUSED)|GTEST_API_|GMOCK_API_)\b`)
+var (
+	cPlusPlusAnnotationMacroPattern      = regexp.MustCompile(`\b(?:FMT_(?:API|FUNC|EXPORT|INLINE(?:_VARIABLE)?|CONSTEXPR(?:20|_STRING)?|CONSTEVAL|ALWAYS_INLINE|NODISCARD|NORETURN|DEPRECATED|MAYBE_UNUSED|NO_UNIQUE_ADDRESS|LIFETIMEBOUND)|GTEST_API_|GMOCK_API_|GTEST_NO_INLINE_|__stdcall)\b`)
+	cPlusPlusTestMacroPattern            = regexp.MustCompile(`^(\s*)(?:TEST|TEST_F|TEST_P|TYPED_TEST|TYPED_TEST_P)\s*\([^)]*\)\s*`)
+	cPlusPlusUnsignedCastPattern         = regexp.MustCompile(`\bunsigned\(([^)\n]+)\)`)
+	cPlusPlusAnonymousEnumPattern        = regexp.MustCompile(`\benum\s*:\s*unsigned\b`)
+	cPlusPlusExplicitOperatorCallPattern = regexp.MustCompile(`operator\(\)<[^>\n]+>\(`)
+	cPlusPlusNoArgGTestMacroLinePattern  = regexp.MustCompile(`^GTEST_[A-Z0-9_]+_\(\)\s*;?\s*(?://.*)?$`)
+)
 
 func maskCPlusPlusAnnotationMacros(text string) string {
 	return cPlusPlusAnnotationMacroPattern.ReplaceAllStringFunc(text, func(match string) string {
 		return strings.Repeat(" ", len(match))
 	})
+}
+
+func cPlusPlusBlankMacroLine(trimmed string) bool {
+	switch {
+	case strings.HasPrefix(trimmed, "MOCK_METHOD("):
+		return true
+	case strings.HasPrefix(trimmed, "GMOCK_DECLARE_KIND_("):
+		return true
+	case strings.HasPrefix(trimmed, "VISIT_TYPE("):
+		return true
+	case strings.HasPrefix(trimmed, "SPECIALIZE_MAKE_SIGNED("):
+		return true
+	case strings.HasPrefix(trimmed, "FMT_TYPE_CONSTANT("):
+		return true
+	case strings.HasPrefix(trimmed, "FMT_FORMAT_AS("):
+		return true
+	case cPlusPlusNoArgGTestMacroLinePattern.MatchString(trimmed):
+		return true
+	default:
+		return false
+	}
+}
+
+func maskCPlusPlusTestMacroDefinition(text string) (string, bool) {
+	match := cPlusPlusTestMacroPattern.FindString(text)
+	if match == "" {
+		return "", false
+	}
+	brace := strings.Index(text[len(match):], "{")
+	if brace < 0 {
+		return "", false
+	}
+	brace += len(match)
+	replacement := paddedReplacement(leadingWhitespace(text), "void test_macro() ", brace)
+	return replacement + text[brace:], true
 }
 
 func maskCPlusPlusFunctionLikeMacro(text, name, replacement string) string {
@@ -507,14 +593,38 @@ func maskCPlusPlusFunctionLikeMacro(text, name, replacement string) string {
 		if end < 0 {
 			return text
 		}
-		width := end - start
-		out := replacement
-		if len(out) > width {
-			out = out[:width]
-		}
-		out += strings.Repeat(" ", width-len(out))
-		text = text[:start] + out + text[end:]
+		text = text[:start] + sameLengthReplacement(replacement, end-start) + text[end:]
 	}
+}
+
+func maskCPlusPlusUnsignedFunctionalCast(text string) string {
+	return cPlusPlusUnsignedCastPattern.ReplaceAllString(text, "uint32_t($1)")
+}
+
+func maskCPlusPlusEmptyDefaultInitializers(text string) string {
+	text = replaceAllSameLength(text, "locale_ref loc = {}", "locale_ref loc = loc")
+	text = replaceAllSameLength(text, "locale_ref = {}", "locale_ref = loc")
+	text = replaceAllSameLength(text, "format_specs = {}", "format_specs = s")
+	text = replaceAllSameLength(text, "const format_specs& specs = {}", "const format_specs& specs = s")
+	text = replaceAllSameLength(text, "const format_specs& = {}", "const format_specs& = s")
+	return text
+}
+
+func replaceAllSameLength(text, old, replacement string) string {
+	return strings.ReplaceAll(text, old, sameLengthReplacement(replacement, len(old)))
+}
+
+func replacePatternSameLength(text string, pattern *regexp.Regexp, replacement string) string {
+	return pattern.ReplaceAllStringFunc(text, func(match string) string {
+		return sameLengthReplacement(replacement, len(match))
+	})
+}
+
+func sameLengthReplacement(replacement string, length int) string {
+	if len(replacement) >= length {
+		return replacement[:length]
+	}
+	return replacement + strings.Repeat(" ", length-len(replacement))
 }
 
 func balancedCallEnd(text string, open int) int {

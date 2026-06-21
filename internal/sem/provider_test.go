@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -9359,6 +9361,65 @@ func TestBuildRelationsDropsAmbiguousCrossFileCallNameCollisions(t *testing.T) {
 		if relation.Type == "CALLS" && relation.FromID == "caller" {
 			t.Fatalf("ambiguous sleep call should not resolve globally: %#v", relation)
 		}
+	}
+}
+
+func TestBuildRelationsResolvesCPlusPlusSameFileOverloadSet(t *testing.T) {
+	files := []FileRecord{
+		{RecordType: "file", ID: fileID("repo", "src/format-inl.h"), Path: "src/format-inl.h", Language: "C++"},
+		{RecordType: "file", ID: fileID("repo", "include/format.h"), Path: "include/format.h", Language: "C++"},
+	}
+	recordsByFile := map[string][]SymbolRecord{
+		"src/format-inl.h": {{
+			RecordType:    "symbol",
+			ID:            "caller",
+			Kind:          "function",
+			Name:          "vformat",
+			QualifiedName: "vformat",
+			FilePath:      "src/format-inl.h",
+			StartLine:     1,
+			EndLine:       4,
+			Language:      "C++",
+		}},
+		"include/format.h": {{
+			RecordType:    "symbol",
+			ID:            "to-string-buffer",
+			Kind:          "function",
+			Name:          "to_string",
+			QualifiedName: "to_string",
+			FilePath:      "include/format.h",
+			StartLine:     1,
+			EndLine:       3,
+			Language:      "C++",
+		}, {
+			RecordType:    "symbol",
+			ID:            "to-string-value",
+			Kind:          "function",
+			Name:          "to_string",
+			QualifiedName: "to_string",
+			FilePath:      "include/format.h",
+			StartLine:     5,
+			EndLine:       7,
+			Language:      "C++",
+		}},
+	}
+	contentByFile := map[string]string{
+		"src/format-inl.h": "auto vformat() -> std::string {\n  return to_string(buffer);\n}\n",
+		"include/format.h": "auto to_string(Buffer) -> std::string {}\nauto to_string(int) -> std::string {}\n",
+	}
+
+	var targets []string
+	for _, relation := range buildRelations("repo", files, recordsByFile, mapReader(contentByFile)) {
+		if relation.Type == "CALLS" && relation.FromID == "caller" {
+			targets = append(targets, relation.ToID)
+			if relation.Resolution != "name_only" || relation.RelationScope != "workspace" {
+				t.Fatalf("unexpected overload relation metadata: %#v", relation)
+			}
+		}
+	}
+	sort.Strings(targets)
+	if !reflect.DeepEqual(targets, []string{"to-string-buffer", "to-string-value"}) {
+		t.Fatalf("expected C++ overload set call targets, got %#v", targets)
 	}
 }
 

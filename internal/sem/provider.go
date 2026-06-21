@@ -1359,7 +1359,44 @@ func resolveCallTargets(name string, from SymbolRecord, candidates, sameFile []S
 			Scope:        "workspace",
 		}}
 	}
+	if cFamilyOverloadResolutionEnabled(from.Language) {
+		if overloads, ok := sameFileOverloadSet(remaining); ok {
+			out := make([]resolvedCallTarget, 0, len(overloads))
+			for _, overload := range overloads {
+				out = append(out, resolvedCallTarget{
+					SymbolRecord: overload,
+					Confidence:   0.62,
+					Reason:       "direct call expression matched C/C++ overload set in one file",
+					Resolution:   "name_only",
+					Scope:        "workspace",
+				})
+			}
+			return out
+		}
+	}
 	return nil
+}
+
+func cFamilyOverloadResolutionEnabled(language string) bool {
+	return language == "C" || language == "C++"
+}
+
+func sameFileOverloadSet(candidates []SymbolRecord) ([]SymbolRecord, bool) {
+	if len(candidates) < 2 {
+		return nil, false
+	}
+	filePath := candidates[0].FilePath
+	language := candidates[0].Language
+	name := candidates[0].Name
+	if filePath == "" || name == "" {
+		return nil, false
+	}
+	for _, candidate := range candidates {
+		if candidate.FilePath != filePath || candidate.Language != language || candidate.Name != name {
+			return nil, false
+		}
+	}
+	return candidates, true
 }
 
 // buildRelations collects every relation, deduplicates (first occurrence wins,

@@ -765,12 +765,157 @@ func TestTreeSitterParserCPlusPlusMasksFunctionLikeMacros(t *testing.T) {
 auto convert(From value) -> To {
   return static_cast<To>(value);
 }
+
+template <typename OutputIt,
+          FMT_ENABLE_IF(is_back_insert_iterator<OutputIt>::value&&
+                            is_contiguous<typename OutputIt::container>::value)>
+auto reserve(OutputIt it, size_t n) -> typename OutputIt::value_type* {
+  return nullptr;
+}
+
+class FMT_SO_VISIBILITY("default") format_error : public std::runtime_error {
+};
+
+class basic_memory_buffer {
+  FMT_NO_UNIQUE_ADDRESS Allocator alloc_;
+};
+
+extern "C" __declspec(dllimport) int __stdcall WriteConsoleW(void*);
 `)
 	if language != "C++" {
 		t.Fatalf("language = %q", language)
 	}
 	if status.ParseError {
 		t.Fatalf("unexpected parse status: %#v", status)
+	}
+}
+
+func TestTreeSitterParserCPlusPlusMasksTestDeclarationMacros(t *testing.T) {
+	_, language, status := TreeSitterParser{}.ParseWithStatus("base-test.cc", `template <typename T> struct mock_buffer final : fmt::detail::buffer<T> {
+  MOCK_METHOD(size_t, do_grow, (size_t));
+  static void grow(fmt::detail::buffer<T>& buf, size_t capacity) {}
+};
+
+#define VISIT_TYPE(type_, visit_type_) \
+  template <> struct visit_type<type_> { using type = visit_type_; }
+VISIT_TYPE(signed char, int);
+
+GMOCK_DECLARE_KIND_(bool, kBool);
+
+TEST(buffer_test, indestructible) {
+  static_assert(true, "ok");
+}
+`)
+	if language != "C++" {
+		t.Fatalf("language = %q", language)
+	}
+	if status.ParseError {
+		t.Fatalf("unexpected parse status: %#v", status)
+	}
+}
+
+func TestTreeSitterParserCPlusPlusMasksFmtExceptionAndCasts(t *testing.T) {
+	_, language, status := TreeSitterParser{}.ParseWithStatus("format-inl.h", `void format_system_error(int error_code) {
+  FMT_TRY {
+    auto ec = std::error_code(error_code, std::generic_category());
+  }
+  FMT_CATCH(...) {}
+}
+
+void set_fill_size(size_t size) {
+  data_ = (data_ & ~fill_size_mask) | (unsigned(size) << fill_size_shift);
+}
+`)
+	if language != "C++" {
+		t.Fatalf("language = %q", language)
+	}
+	if status.ParseError {
+		t.Fatalf("unexpected parse status: %#v", status)
+	}
+}
+
+func TestTreeSitterParserCPlusPlusMasksMoreFmtForms(t *testing.T) {
+	_, language, status := TreeSitterParser{}.ParseWithStatus("base.h", `FMT_TYPE_CONSTANT(int, int_type)
+FMT_FORMAT_AS(signed char, int);
+
+enum : unsigned {
+  type_mask = 0x00007,
+};
+
+extern template FMT_API auto thousands_sep_impl<char>(locale_ref)
+    -> thousands_sep_result<char>;
+
+void operator_call(bool value) {
+  operator()<bool>(value);
+}
+
+void vformat_to(locale_ref loc = {}) {}
+
+auto read(scan_iterator it, T& value, const format_specs& specs = {})
+    -> scan_iterator {
+  return it;
+}
+
+auto write(OutputIt out, monostate, format_specs = {}, locale_ref = {})
+    -> OutputIt {
+  return out;
+}
+
+export module fmt;
+
+void inline_try() {
+  FMT_TRY { flush(); }
+  FMT_CATCH(...) {}
+}
+
+template <typename, typename OutputIt> void write(OutputIt, foo) = delete;
+
+struct derived {
+  static auto get(const T& v) -> all {
+    return {v.*(&getter::c)};
+  }
+};
+
+template <typename Tuple, FMT_ENABLE_IF(is_tuple_like<Tuple>::value)>
+auto join(const Tuple& tuple FMT_LIFETIMEBOUND, string_view sep) -> int {
+  return 0;
+}
+
+class max_size_allocator {
+ public:
+  using typename Allocator::value_type;
+};
+`)
+	if language != "C++" {
+		t.Fatalf("language = %q", language)
+	}
+	if status.ParseError {
+		t.Fatalf("unexpected parse status: %#v", status)
+	}
+}
+
+func TestTreeSitterParserCPlusPlusExtractsTrailingReturnTemplateFunction(t *testing.T) {
+	entities, language, status := TreeSitterParser{}.ParseWithStatus("format.h", `template <size_t SIZE>
+FMT_NODISCARD auto to_string(const basic_memory_buffer<char, SIZE>& buf)
+    -> std::string {
+  return {buf.data(), buf.size()};
+}
+`)
+	if language != "C++" {
+		t.Fatalf("language = %q", language)
+	}
+	if status.ParseError {
+		t.Fatalf("unexpected parse status: %#v", status)
+	}
+	found := false
+	for _, entity := range entities {
+		if entity.Kind == "function" && entity.Name == "to_string" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected to_string function entity, got %#v", entities)
 	}
 }
 
