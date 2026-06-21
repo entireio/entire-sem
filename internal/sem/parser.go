@@ -155,6 +155,7 @@ func (TreeSitterParser) ParseWithStatus(path, content string) ([]Entity, string,
 		entities = append(entities, kotlinPrimaryConstructorFieldEntities(content)...)
 	}
 	if spec.language == "JavaScript" || spec.language == "TypeScript" {
+		entities = appendMissingEntities(entities, javascriptExportedVariableEntities(content)...)
 		entities = append(entities, graphqlResolverEntities(path, content)...)
 	}
 	if spec.language == "SQL" {
@@ -752,7 +753,7 @@ func walkEntities(node *sitter.Node, src []byte, language, scope string, entitie
 		*entities = append(*entities, fields...)
 		return
 	}
-	entity, ok := entityFromNode(node, src, scope)
+	entity, ok := entityFromNode(node, src, language, scope)
 	childScope := scope
 	if ok {
 		*entities = append(*entities, entity)
@@ -997,7 +998,7 @@ func splitTopLevelCommaSpans(value string) []commaSpan {
 	return spans
 }
 
-func entityFromNode(node *sitter.Node, src []byte, scope string) (Entity, bool) {
+func entityFromNode(node *sitter.Node, src []byte, language, scope string) (Entity, bool) {
 	var kind string
 	var name string
 	switch node.Type() {
@@ -1128,10 +1129,13 @@ func entityFromNode(node *sitter.Node, src []byte, scope string) (Entity, bool) 
 		}
 	case "variable_declarator":
 		value := node.ChildByFieldName("value")
-		if !functionLikeValue(value) {
+		if functionLikeValue(value) {
+			kind = "function"
+		} else if isExportedTopLevelJSVariable(node, language) {
+			kind = "variable"
+		} else {
 			return Entity{}, false
 		}
-		kind = "function"
 		name = nodeName(node, src)
 	default:
 		return Entity{}, false
@@ -2410,6 +2414,72 @@ func functionLikeValue(node *sitter.Node) bool {
 	default:
 		return false
 	}
+}
+
+var jsExportedVariablePattern = regexp.MustCompile(`(?m)^\s*export\s+(?:const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=`)
+
+func javascriptExportedVariableEntities(content string) []Entity {
+	matches := jsExportedVariablePattern.FindAllStringSubmatchIndex(content, -1)
+	entities := make([]Entity, 0, len(matches))
+	for _, match := range matches {
+		if len(match) < 4 {
+			continue
+		}
+		name := content[match[2]:match[3]]
+		lineStart := strings.LastIndexByte(content[:match[0]], '\n') + 1
+		lineEndRel := strings.IndexByte(content[match[0]:], '\n')
+		lineEnd := len(content)
+		if lineEndRel >= 0 {
+			lineEnd = match[0] + lineEndRel
+		}
+		signature := strings.TrimSpace(content[lineStart:lineEnd])
+		startLine := strings.Count(content[:match[0]], "\n") + 1
+		entities = append(entities, Entity{
+			Kind:        "variable",
+			Name:        name,
+			Signature:   signature,
+			StartLine:   startLine,
+			EndLine:     startLine,
+			BodyHash:    hash(normalize(signature)),
+			Fingerprint: hash(normalize(entityFingerprintSource(Entity{Name: name, Signature: signature}, signature))),
+		})
+	}
+	return entities
+}
+
+func appendMissingEntities(entities []Entity, candidates ...Entity) []Entity {
+	seen := make(map[string]bool, len(entities))
+	for _, entity := range entities {
+		seen[entity.Kind+"\x00"+entity.Name] = true
+	}
+	for _, candidate := range candidates {
+		key := candidate.Kind + "\x00" + candidate.Name
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		entities = append(entities, candidate)
+	}
+	return entities
+}
+
+func isExportedTopLevelJSVariable(node *sitter.Node, language string) bool {
+	if language != "JavaScript" && language != "TypeScript" {
+		return false
+	}
+	parent := node.Parent()
+	if !validNode(parent) {
+		return false
+	}
+	if parent.Type() != "lexical_declaration" && parent.Type() != "variable_declaration" {
+		return false
+	}
+	grandparent := parent.Parent()
+	if !validNode(grandparent) || grandparent.Type() != "export_statement" {
+		return false
+	}
+	root := grandparent.Parent()
+	return validNode(root) && root.Type() == "program"
 }
 
 func scopesChildren(kind string) bool {

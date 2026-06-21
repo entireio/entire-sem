@@ -147,6 +147,52 @@ jobs:
 	}
 }
 
+func TestTreeSitterParserTypeScriptExportedFactoryVariables(t *testing.T) {
+	entities, language := TreeSitterParser{}.Parse("slice.ts", `function buildCreateSlice() {
+  return function createSlice() {}
+}
+
+export const createSlice = buildCreateSlice()
+const internalSlice = buildCreateSlice()
+`)
+	if language != "TypeScript" {
+		t.Fatalf("language = %q", language)
+	}
+	seen := map[string]Entity{}
+	for _, entity := range entities {
+		seen[entity.Name] = entity
+	}
+	createSlice, ok := seen["createSlice"]
+	if !ok {
+		t.Fatalf("missing exported factory variable in %#v", entities)
+	}
+	if createSlice.Kind != "variable" {
+		t.Fatalf("createSlice kind = %q, want variable", createSlice.Kind)
+	}
+	if _, ok := seen["internalSlice"]; ok {
+		t.Fatalf("non-exported factory variable was promoted: %#v", entities)
+	}
+}
+
+func TestTreeSitterParserTypeScriptExportedVariablesSurviveParseRecovery(t *testing.T) {
+	entities, language, status := TreeSitterParser{}.ParseWithStatus("slice.ts", `type Broken = <
+
+export const createSlice = /* @__PURE__ */ buildCreateSlice()
+`)
+	if language != "TypeScript" {
+		t.Fatalf("language = %q", language)
+	}
+	if !status.ParseError {
+		t.Fatalf("expected parse recovery status")
+	}
+	for _, entity := range entities {
+		if entity.Name == "createSlice" && entity.Kind == "variable" {
+			return
+		}
+	}
+	t.Fatalf("missing exported variable after parse recovery: %#v", entities)
+}
+
 func TestTreeSitterParserTypeScriptGraphQLResolverEntities(t *testing.T) {
 	entities, language := TreeSitterParser{}.Parse("src/resolvers.ts", `export const resolvers = {
   Query: {
