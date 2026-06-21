@@ -174,6 +174,9 @@ func (TreeSitterParser) ParseWithStatus(path, content string) ([]Entity, string,
 
 	var entities []Entity
 	walkEntities(root, src, spec.language, "", &entities)
+	if spec.language == "C++" {
+		entities = appendMissingEntities(entities, cPlusPlusTypeAliasEntities(content)...)
+	}
 	if spec.language == "Kotlin" {
 		entities = append(entities, kotlinPrimaryConstructorFieldEntities(content)...)
 	}
@@ -3273,6 +3276,39 @@ func appendMissingEntities(entities []Entity, candidates ...Entity) []Entity {
 		}
 		seen[key] = true
 		entities = append(entities, candidate)
+	}
+	return entities
+}
+
+var cPlusPlusUsingAliasLineRe = regexp.MustCompile(`^\s*(?:template\s*<[^>\n]+>\s*)?using\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([^;]+);`)
+
+func cPlusPlusTypeAliasEntities(content string) []Entity {
+	lines := strings.SplitAfter(content, "\n")
+	var entities []Entity
+	braceDepth := 0
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if match := cPlusPlusUsingAliasLineRe.FindStringSubmatch(line); match != nil && braceDepth <= 1 {
+			signature := strings.TrimSpace(strings.TrimSuffix(line, "\n"))
+			name := match[1]
+			block := strings.TrimSpace(line)
+			entities = append(entities, Entity{
+				Kind:        "type",
+				Name:        name,
+				Signature:   signature,
+				StartLine:   i + 1,
+				EndLine:     i + 1,
+				BodyHash:    hash(normalize(block)),
+				Fingerprint: hash(normalize(entityFingerprintSource(Entity{Name: name, Signature: signature}, block))),
+			})
+		}
+		if trimmed != "" && !strings.HasPrefix(trimmed, "#") {
+			braceDepth += strings.Count(line, "{")
+			braceDepth -= strings.Count(line, "}")
+			if braceDepth < 0 {
+				braceDepth = 0
+			}
+		}
 	}
 	return entities
 }

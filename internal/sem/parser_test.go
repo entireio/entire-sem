@@ -1088,6 +1088,37 @@ DOCTEST_MSVC_SUPPRESS_WARNING_POP
 	}
 }
 
+func TestTreeSitterParserCPlusPlusExtractsUsingAliases(t *testing.T) {
+	entities, language, status := TreeSitterParser{}.ParseWithStatus("json_fwd.hpp", `namespace nlohmann {
+template<typename>
+class basic_json;
+using json = basic_json<>;
+using ordered_json = basic_json<nlohmann::ordered_map>;
+}
+`)
+	if language != "C++" {
+		t.Fatalf("language = %q", language)
+	}
+	if status.ParseError {
+		t.Fatalf("unexpected parse status: %#v", status)
+	}
+	seen := map[string]Entity{}
+	for _, entity := range entities {
+		if entity.Kind == "type" {
+			seen[entity.Name] = entity
+		}
+	}
+	for _, name := range []string{"json", "ordered_json"} {
+		entity, ok := seen[name]
+		if !ok {
+			t.Fatalf("missing C++ using alias %q in %#v", name, entities)
+		}
+		if entity.Signature == "" || entity.StartLine == 0 {
+			t.Fatalf("incomplete alias entity for %q: %#v", name, entity)
+		}
+	}
+}
+
 func TestTreeSitterParserTypeScriptMasksTypeofDynamicImportTypeArgument(t *testing.T) {
 	_, language, status := TreeSitterParser{}.ParseWithStatus("configureStore.test.ts", `vi.doMock('redux', async (importOriginal) => {
   const redux = await importOriginal<typeof import('redux')>()
