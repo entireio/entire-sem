@@ -177,6 +177,58 @@ const internalSlice = buildCreateSlice()
 	}
 }
 
+func TestTreeSitterParserCMasksBSDMacros(t *testing.T) {
+	entities, language, status := TreeSitterParser{}.ParseWithStatus("server.c", `#include "tmux.h"
+
+TAILQ_HEAD(clients, client);
+RB_GENERATE_STATIC(args_tree, args_entry, entry, args_cmp);
+static TAILQ_HEAD(, window) alerts_list = TAILQ_HEAD_INITIALIZER(alerts_list);
+
+void printflike(3, 4)
+cmd_log_argv(int argc, char **argv, const char *fmt, ...)
+{
+}
+
+static void
+alerts_timer(__unused int fd, __unused short events, __unused void *arg)
+{
+}
+
+static int
+server_loop(void)
+{
+	struct client *c, *tmp;
+	if (timercmp(&c->activity_time, &tmp->activity_time, >))
+		return 1;
+	TAILQ_FOREACH(c, &clients, entry) {
+		notify_client(c);
+	}
+	TAILQ_FOREACH_SAFE(c, &clients, entry, tmp) {
+		notify_client(c);
+	}
+	RB_FOREACH(c, args_tree, &args->tree) {
+		notify_client(c);
+	}
+	return 0;
+}
+`)
+	if language != "C" {
+		t.Fatalf("language = %q", language)
+	}
+	if status.ParseError {
+		t.Fatalf("unexpected parse error: %s", status.Detail)
+	}
+	seen := map[string]Entity{}
+	for _, entity := range entities {
+		seen[entity.Name] = entity
+	}
+	for _, name := range []string{"cmd_log_argv", "server_loop"} {
+		if seen[name].Name == "" {
+			t.Fatalf("missing C entity %q in %#v", name, entities)
+		}
+	}
+}
+
 func TestTreeSitterParserJavaScriptAssignmentMethodEntities(t *testing.T) {
 	entities, language := TreeSitterParser{}.Parse("application.js", `var app = exports = module.exports = {};
 

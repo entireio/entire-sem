@@ -138,6 +138,9 @@ func (TreeSitterParser) ParseWithStatus(path, content string) ([]Entity, string,
 	if spec.language == "SQL" {
 		parseSrc = []byte(maskPostgresUnsupportedSyntax(content))
 	}
+	if spec.language == "C" {
+		parseSrc = []byte(maskCUnsupportedSyntax(content))
+	}
 	if spec.language == "Java" {
 		parseSrc = []byte(maskJavaUnsupportedSyntax(content))
 	}
@@ -417,6 +420,66 @@ func maskYAMLUnsupportedSyntax(content string) string {
 		}
 		return r
 	}, content)
+}
+
+var (
+	cControlIteratorMacroPattern = regexp.MustCompile(`^(?:TAILQ|STAILQ|LIST|SLIST|RB|SPLAY)_(?:FOREACH|FOREACH_SAFE|FOREACH_REVERSE|FOREACH_REVERSE_SAFE)\s*\(`)
+	cGenerateMacroPattern        = regexp.MustCompile(`^(?:TAILQ|STAILQ|LIST|SLIST|RB|SPLAY)_(?:HEAD|ENTRY|PROTOTYPE|PROTOTYPE_STATIC|GENERATE|GENERATE_STATIC)\s*\(`)
+	cAnnotationMacroPattern      = regexp.MustCompile(`\b(?:printflike|__dead|__packed|__unused|__maybe_unused|__attribute__)\s*\([^)\n]*(?:\)[^)\n]*)?\)`)
+	cBareAnnotationPattern       = regexp.MustCompile(`\b(?:__dead|__packed|__unused|__maybe_unused)\b`)
+	cTypeMacroPattern            = regexp.MustCompile(`\b(?:TAILQ|STAILQ|LIST|SLIST|RB|SPLAY)_(?:HEAD|ENTRY)\s*\([^)\n]*\)`)
+	cHeadInitializerPattern      = regexp.MustCompile(`\b(?:TAILQ|STAILQ|LIST|SLIST)_(?:HEAD_)?INITIALIZER\s*\([^)\n]*\)`)
+)
+
+func maskCUnsupportedSyntax(content string) string {
+	lines := strings.SplitAfter(content, "\n")
+	for i := 0; i < len(lines); i++ {
+		text, newline := splitLineEnding(lines[i])
+		trimmed := strings.TrimSpace(text)
+		if strings.HasPrefix(trimmed, "#") {
+			for {
+				lines[i] = maskLineText(text) + newline
+				if !strings.HasSuffix(strings.TrimRight(text, " \t"), "\\") || i+1 >= len(lines) {
+					break
+				}
+				i++
+				text, newline = splitLineEnding(lines[i])
+			}
+			continue
+		}
+		if cControlIteratorMacroPattern.MatchString(trimmed) {
+			lines[i] = paddedReplacement(leadingWhitespace(text), "for (;;) {", len(text)) + newline
+			continue
+		}
+		if cGenerateMacroPattern.MatchString(trimmed) {
+			lines[i] = maskLineText(text) + newline
+			continue
+		}
+		text = maskCAnnotationMacros(text)
+		text = maskCTypeMacros(text)
+		text = replaceAllSameLength(text, ", >)", ", 0)")
+		text = replaceAllSameLength(text, ", <)", ", 0)")
+		lines[i] = text + newline
+	}
+	return strings.Join(lines, "")
+}
+
+func maskCAnnotationMacros(text string) string {
+	return cAnnotationMacroPattern.ReplaceAllStringFunc(text, func(match string) string {
+		return strings.Repeat(" ", len(match))
+	})
+}
+
+func maskCTypeMacros(text string) string {
+	text = cTypeMacroPattern.ReplaceAllStringFunc(text, func(match string) string {
+		return sameLengthReplacement("struct c_macro", len(match))
+	})
+	text = cHeadInitializerPattern.ReplaceAllStringFunc(text, func(match string) string {
+		return sameLengthReplacement("0", len(match))
+	})
+	return cBareAnnotationPattern.ReplaceAllStringFunc(text, func(match string) string {
+		return strings.Repeat(" ", len(match))
+	})
 }
 
 func maskKotlinGradleOptionValueAssignments(content string) string {
