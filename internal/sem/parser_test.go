@@ -899,6 +899,51 @@ func TestTreeSitterParserYAMLMasksQuotedMappingKeys(t *testing.T) {
 	}
 }
 
+func TestTreeSitterParserCSharpMasksPreprocessorAndPrimaryConstructors(t *testing.T) {
+	entities, language, status := TreeSitterParser{}.ParseWithStatus("WrappedReaderTests.cs", "\ufeff"+`#if !NET5_0_OR_GREATER
+namespace System.Diagnostics.CodeAnalysis
+{
+    internal sealed class NotNullWhenAttribute : Attribute {}
+}
+#endif
+
+using System;
+
+#if NET8_0_OR_GREATER
+namespace Dapper.Tests;
+#endif
+
+public class WrappedReaderTests
+{
+    private static readonly int[] ErrZeroRows = [];
+    static readonly Hashtable s_ReadViaGetFieldValueCache = [];
+
+#if DEBUG
+    [Obsolete(nameof(Read))]
+#endif
+    public void Read() {}
+
+    class DummyDbException(string message) : DbException(message);
+
+    public void Add(Type type, TypeMapEntry value, Dictionary<Type, TypeMapEntry> snapshot)
+    {
+        SetTypeMap(new Dictionary<Type, TypeMapEntry>(snapshot) { [type] = value });
+        typeHandlers = [];
+        locals ??= [];
+    }
+}
+`)
+	if language != "C#" {
+		t.Fatalf("language = %q", language)
+	}
+	if status.ParseError {
+		t.Fatalf("unexpected parse status: %#v", status)
+	}
+	if len(entities) == 0 {
+		t.Fatalf("expected C# entities after masking preprocessor directives")
+	}
+}
+
 func TestTreeSitterParserDetectsCPlusPlusHeaders(t *testing.T) {
 	entities, language, status := TreeSitterParser{}.ParseWithStatus("args.h", `#ifndef FMT_ARGS_H_
 #define FMT_ARGS_H_

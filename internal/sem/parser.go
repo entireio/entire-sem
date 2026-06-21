@@ -147,6 +147,9 @@ func (TreeSitterParser) ParseWithStatus(path, content string) ([]Entity, string,
 	if spec.language == "Java" {
 		parseSrc = []byte(maskJavaUnsupportedSyntax(content))
 	}
+	if spec.language == "C#" {
+		parseSrc = []byte(maskCSharpUnsupportedSyntax(content))
+	}
 	if spec.language == "Groovy" {
 		parseSrc = []byte(maskGroovyUnsupportedSyntax(content))
 	}
@@ -456,15 +459,48 @@ func maskYAMLQuotedMappingKey(line string) string {
 	return line[:start] + string(quote) + "key" + string(quote) + line[end+1:]
 }
 
+func maskCSharpUnsupportedSyntax(content string) string {
+	content = strings.ReplaceAll(content, "\ufeff", " ")
+	lines := strings.SplitAfter(content, "\n")
+	for i, line := range lines {
+		text, newline := splitLineEnding(line)
+		trimmed := strings.TrimPrefix(strings.TrimSpace(text), "\ufeff")
+		switch {
+		case strings.HasPrefix(trimmed, "#"):
+			lines[i] = maskLineText(text) + newline
+		case cSharpPrimaryConstructorClassLinePattern.MatchString(text):
+			lines[i] = cSharpMaskPrimaryConstructorClass(text) + newline
+		default:
+			text = replacePatternSameLength(text, cSharpNullCoalescingCollectionExpressionPattern, "??= null")
+			text = replacePatternSameLength(text, cSharpAssignmentCollectionExpressionPattern, "= null")
+			lines[i] = replacePatternSameLength(text, cSharpDictionaryIndexInitializerPattern, "{}") + newline
+		}
+	}
+	return strings.Join(lines, "")
+}
+
+func cSharpMaskPrimaryConstructorClass(text string) string {
+	matches := cSharpPrimaryConstructorClassLinePattern.FindStringSubmatch(text)
+	if len(matches) < 2 {
+		return text
+	}
+	replacement := "class " + matches[1] + " {}"
+	return paddedReplacement(leadingWhitespace(text), replacement, len(text))
+}
+
 var (
-	cControlIteratorMacroPattern = regexp.MustCompile(`^(?:TAILQ|STAILQ|LIST|SLIST|RB|SPLAY)_(?:FOREACH|FOREACH_SAFE|FOREACH_REVERSE|FOREACH_REVERSE_SAFE)\s*\(`)
-	cGenerateMacroPattern        = regexp.MustCompile(`^(?:TAILQ|STAILQ|LIST|SLIST|RB|SPLAY)_(?:HEAD|ENTRY|PROTOTYPE|PROTOTYPE_STATIC|GENERATE|GENERATE_STATIC)\s*\(`)
-	cEnumMacroPattern            = regexp.MustCompile(`^[A-Z][A-Z0-9_]*_KEYS\s*\(`)
-	cStringMacroPattern          = regexp.MustCompile(`\b[A-Z][A-Z0-9_]*_FEATURE\s*\([^)\n]*\)`)
-	cAnnotationMacroPattern      = regexp.MustCompile(`\b(?:printflike|__dead|__packed|__unused|__maybe_unused|__attribute__)\s*\([^)\n]*(?:\)[^)\n]*)?\)`)
-	cBareAnnotationPattern       = regexp.MustCompile(`\b(?:__dead|__packed|__unused|__maybe_unused)\b`)
-	cTypeMacroPattern            = regexp.MustCompile(`\b(?:TAILQ|STAILQ|LIST|SLIST|RB|SPLAY)_(?:HEAD|ENTRY)\s*\([^)\n]*\)`)
-	cHeadInitializerPattern      = regexp.MustCompile(`\b(?:(?:TAILQ|STAILQ|LIST|SLIST)_(?:HEAD_)?INITIALIZER|RB_INITIALIZER|SPLAY_INITIALIZER)\s*\([^)\n]*\)`)
+	cSharpPrimaryConstructorClassLinePattern        = regexp.MustCompile(`^\s*(?:(?:public|internal|private|protected|sealed|abstract|partial|static)\s+)*class\s+([A-Za-z_][A-Za-z0-9_]*)\s*\([^;\n]*\)\s*(?::\s*[^{};\n]+)?\s*;\s*$`)
+	cSharpDictionaryIndexInitializerPattern         = regexp.MustCompile(`\{\s*\[[^\]\n]+\]\s*=\s*[^{}\n]+\}`)
+	cSharpAssignmentCollectionExpressionPattern     = regexp.MustCompile(`=\s*\[\]`)
+	cSharpNullCoalescingCollectionExpressionPattern = regexp.MustCompile(`\?\?=\s*\[\]`)
+	cControlIteratorMacroPattern                    = regexp.MustCompile(`^(?:TAILQ|STAILQ|LIST|SLIST|RB|SPLAY)_(?:FOREACH|FOREACH_SAFE|FOREACH_REVERSE|FOREACH_REVERSE_SAFE)\s*\(`)
+	cGenerateMacroPattern                           = regexp.MustCompile(`^(?:TAILQ|STAILQ|LIST|SLIST|RB|SPLAY)_(?:HEAD|ENTRY|PROTOTYPE|PROTOTYPE_STATIC|GENERATE|GENERATE_STATIC)\s*\(`)
+	cEnumMacroPattern                               = regexp.MustCompile(`^[A-Z][A-Z0-9_]*_KEYS\s*\(`)
+	cStringMacroPattern                             = regexp.MustCompile(`\b[A-Z][A-Z0-9_]*_FEATURE\s*\([^)\n]*\)`)
+	cAnnotationMacroPattern                         = regexp.MustCompile(`\b(?:printflike|__dead|__packed|__unused|__maybe_unused|__attribute__)\s*\([^)\n]*(?:\)[^)\n]*)?\)`)
+	cBareAnnotationPattern                          = regexp.MustCompile(`\b(?:__dead|__packed|__unused|__maybe_unused)\b`)
+	cTypeMacroPattern                               = regexp.MustCompile(`\b(?:TAILQ|STAILQ|LIST|SLIST|RB|SPLAY)_(?:HEAD|ENTRY)\s*\([^)\n]*\)`)
+	cHeadInitializerPattern                         = regexp.MustCompile(`\b(?:(?:TAILQ|STAILQ|LIST|SLIST)_(?:HEAD_)?INITIALIZER|RB_INITIALIZER|SPLAY_INITIALIZER)\s*\([^)\n]*\)`)
 )
 
 func maskCUnsupportedSyntax(content string) string {
