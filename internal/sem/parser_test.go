@@ -362,6 +362,37 @@ utf8_add_to_width_cache(const char *s)
 	}
 }
 
+func TestTreeSitterParserBashMasksHereDocPipelines(t *testing.T) {
+	entities, language, status := TreeSitterParser{}.ParseWithStatus("regress.sh", `#!/bin/sh
+
+cat <<EOF|cmp -s $TMP - || exit 1
+expected
+EOF
+
+(cat <<EOF|cmp -s - $OUT) || exit 1
+TERM=$TERM
+EOF
+
+query_decrpm() {
+	${_setup:+printf '$_setup'; sleep 0.2}
+	printf '\033[%s\$p' "$_mode"
+}
+`)
+	if language != "Bash" {
+		t.Fatalf("language = %q", language)
+	}
+	if status.ParseError {
+		t.Fatalf("unexpected parse error: %s", status.Detail)
+	}
+	seen := map[string]Entity{}
+	for _, entity := range entities {
+		seen[entity.Name] = entity
+	}
+	if seen["query_decrpm"].Name == "" {
+		t.Fatalf("missing shell function in %#v", entities)
+	}
+}
+
 func TestTreeSitterParserJavaScriptAssignmentMethodEntities(t *testing.T) {
 	entities, language := TreeSitterParser{}.Parse("application.js", `var app = exports = module.exports = {};
 

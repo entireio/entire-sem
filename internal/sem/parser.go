@@ -141,6 +141,9 @@ func (TreeSitterParser) ParseWithStatus(path, content string) ([]Entity, string,
 	if spec.language == "C" {
 		parseSrc = []byte(maskCUnsupportedSyntax(content))
 	}
+	if spec.language == "Bash" {
+		parseSrc = []byte(maskBashUnsupportedSyntax(content))
+	}
 	if spec.language == "Java" {
 		parseSrc = []byte(maskJavaUnsupportedSyntax(content))
 	}
@@ -538,6 +541,42 @@ func cPreprocessorSkipping(stack []bool) bool {
 		}
 	}
 	return false
+}
+
+var (
+	bashHereDocPipePattern      = regexp.MustCompile(`<<-?['"]?[A-Za-z_][A-Za-z0-9_]*['"]?\|`)
+	bashHereDocPipeNamePattern  = regexp.MustCompile(`<<-?['"]?([A-Za-z_][A-Za-z0-9_]*)['"]?\|`)
+	bashCommandParameterPattern = regexp.MustCompile(`\$\{[A-Za-z_][A-Za-z0-9_]*:\+[^}\n;]+;[^}\n]*\}`)
+)
+
+func maskBashUnsupportedSyntax(content string) string {
+	masked := bashCommandParameterPattern.ReplaceAllStringFunc(content, func(match string) string {
+		return sameLengthReplacement(`""`, len(match))
+	})
+	lines := strings.SplitAfter(masked, "\n")
+	skipHereDocUntil := ""
+	for i, line := range lines {
+		text, newline := splitLineEnding(line)
+		if skipHereDocUntil != "" {
+			if strings.TrimSpace(text) == skipHereDocUntil {
+				skipHereDocUntil = ""
+			}
+			lines[i] = maskLineText(text) + newline
+			continue
+		}
+		if bashHereDocPipePattern.MatchString(text) {
+			if match := bashHereDocPipeNamePattern.FindStringSubmatch(text); len(match) == 2 {
+				skipHereDocUntil = match[1]
+			}
+			replacement := "true"
+			if strings.HasPrefix(strings.TrimSpace(text), "(") {
+				replacement = "(true) || true"
+			}
+			text = paddedReplacement(leadingWhitespace(text), replacement, len(text))
+		}
+		lines[i] = text + newline
+	}
+	return strings.Join(lines, "")
 }
 
 func maskCAnnotationMacros(text string) string {
