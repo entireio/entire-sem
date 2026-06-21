@@ -53,8 +53,11 @@ versioned, confidence-scored facts that `entire-brain` can persist and query.
   object-literal forwarding including JS/TS `key: param`, JS/TS shorthand
   fields, Python dict literal fields, and direct parameter aliases, plus
   conservative collection-element forwarding when a caller parameter or direct
-  alias is inserted into a local collection or array/list literal, and direct
-  object or array/list literal argument forwarding to a resolved callee.
+  alias is inserted into a local collection or array/list literal, conservative
+  JS/TS callback-element forwarding when a parameter-owned collection or direct
+  alias is iterated with common collection methods and the callback forwards
+  the element to a callee, and direct object or array/list literal argument
+  forwarding to a resolved callee.
 - Service and async boundaries are emitted: route/client/channel edges plus
   `HANDLES_GRPC`, `HANDLES_GRAPHQL`, `HANDLES_TRPC`, and `ASYNC_CALLS`.
 - IaC/configuration extraction emits HCL dependencies and `CONFIGURES` edges for
@@ -153,7 +156,8 @@ Remain out of provider scope or later expansion:
   object-literal forwarding flow including JS/TS shorthand, Python dict
   literals, and direct parameter aliases, conservative local
   collection-element or collection-literal forwarding flow including direct
-  parameter aliases, and direct object/array/list literal argument forwarding.
+  parameter aliases, conservative JS/TS collection-callback element forwarding,
+  and direct object/array/list literal argument forwarding.
 - deeper semantics for fallback formats where only lightweight structure is
   currently emitted.
 - more parser grammars when a real repo or benchmark fixture needs them.

@@ -7333,6 +7333,69 @@ def run(input):
 	}
 }
 
+func TestBuildProviderSnapshotEmitsCallbackElementForwardDataFlow(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "flow.ts", `type Item = { id: string }
+
+function normalize(item: Item): string {
+  return item.id
+}
+
+function persist(item: Item): void {
+  console.log(item.id)
+}
+
+function ignore(value: string): void {
+  console.log(value)
+}
+
+export function run(items: Item[]): Item[] {
+  const alias = items
+  items.map(item => normalize(item))
+  alias.forEach(function(entry) {
+    persist(entry)
+  })
+  const local = ["static"]
+  local.map(value => ignore(value))
+  return items
+}
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []struct {
+		callee string
+		detail string
+	}{
+		{callee: "normalize", detail: "items[] -> item -> normalize()"},
+		{callee: "persist", detail: "items[] -> entry -> persist()"},
+	} {
+		var found RelationRecord
+		for _, relation := range snapshot.Relations {
+			if relation.Type == "DATA_FLOWS" && lastSegment(relation.FromID) == "run" && lastSegment(relation.ToID) == want.callee && len(relation.Evidence) == 1 && relation.Evidence[0].Kind == "callback_element_forward_flow" {
+				found = relation
+				break
+			}
+		}
+		if found.FromID == "" {
+			t.Fatalf("missing callback element DATA_FLOWS run->%s: %#v", want.callee, snapshot.Relations)
+		}
+		if found.Reason != "caller collection element forwarded into callee argument" || found.Confidence > 0.7 {
+			t.Fatalf("unexpected callback element flow metadata for %s: %#v", want.callee, found)
+		}
+		if len(found.Evidence) != 1 || found.Evidence[0].Detail != want.detail {
+			t.Fatalf("unexpected callback element flow evidence for %s: %#v", want.callee, found.Evidence)
+		}
+	}
+	for _, relation := range snapshot.Relations {
+		if relation.Type == "DATA_FLOWS" && lastSegment(relation.FromID) == "run" && lastSegment(relation.ToID) == "ignore" {
+			t.Fatalf("local collection callback produced DATA_FLOWS: %#v", relation)
+		}
+	}
+}
+
 func TestBuildProviderSnapshotEmitsMultiHopAliasForwardDataFlow(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "flow.ts", `type Payload = { value?: string }

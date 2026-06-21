@@ -94,11 +94,21 @@ go test ./internal/sem -run 'Test(StaticPathJoinRouteExpressionComposesAndBridge
 go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out bench/results -lock bench/repos.lock.json -languages Go -limit 1 -skip-clone -profile syntax-only -provider-version codex-path-join-routes -min-loc-per-sec 1
 go test ./internal/sem -run 'Test(GraphQLOperationLiteralsEmitRootFieldBoundaries|BuildProviderSnapshotEmitsGraphQLResolverBoundaries|BuildProviderSnapshotEmitsGraphQLSchemaBoundaries|GraphQLSchemaFieldsLinkToResolverFields|GraphQLSchemaFieldsLinkToModularResolverObjects)' -count=1
 go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out bench/results -lock bench/repos.lock.json -languages Go -limit 1 -skip-clone -profile syntax-only -provider-version codex-graphql-operation-fields -min-loc-per-sec 1
+go test ./internal/sem -run 'TestBuildProviderSnapshotEmits.*(DataFlow|Forward)|TestProviderGoldenFixtureQualityCoverageReport' -count=1
+go test ./...
+go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out bench/results -lock bench/repos.lock.json -languages Go -limit 1 -skip-clone -profile syntax-only -provider-version codex-callback-element-flow -min-loc-per-sec 1
 ```
 
 ## Results
 
 - Full repository tests passed.
+- Callback-element data-flow tests pass: JS/TS parameter-owned collections and
+  direct aliases iterated with common collection callbacks now emit
+  `DATA_FLOWS` from the caller to callees receiving callback elements, while
+  local/static collections do not.
+- Latest local Go/gin syntax-only smoke benchmark:
+  `bench/results/result-1782000210.json`, 28,618 LOC, 168,460 LOC/s,
+  29,900,800 bytes max RSS, 1 parse failure, estimated output 1,902,633 bytes.
 - Live benchmark RSS guard tests pass: `MeasureRepoWithOptions` cancels the
   measured provider context as soon as process peak RSS exceeds
   `MaxRSSBytes`, and the CLI `-max-rss-bytes` flag is wired into that live

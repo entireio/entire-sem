@@ -473,6 +473,9 @@ var (
 	localCollectionVarRe     = regexp.MustCompile(`(?m)\b(?:const|let|var)?\s*\$?([A-Za-z_$][\w$]*)\s*(?:\:\s*[^=\n]+)?\s*(?::=|=)\s*(?:\[\s*\]|new\s+(?:Array|Set|Map)\s*\(\s*\))`)
 	collectionLiteralVarRe   = regexp.MustCompile(`(?s)\b(?:const|let|var)?\s*\$?([A-Za-z_$][\w$]*)\s*(?:\:\s*[^=\n]+)?\s*(?::=|=)\s*\[([^\[\]]*)\]`)
 	collectionAddRe          = regexp.MustCompile(`(?m)\b\$?([A-Za-z_$][\w$]*)\s*\.\s*(?:push|append|add)\s*\(\s*\$?([A-Za-z_$][\w$]*)\s*\)`)
+	collectionCallbackRe     = regexp.MustCompile(`\b\$?([A-Za-z_$][\w$]*)\s*\.\s*(?:map|forEach|filter|flatMap|some|every|find)\s*\(`)
+	arrowCallbackParamRe     = regexp.MustCompile(`(?s)^\s*\(?\s*\$?([A-Za-z_$][\w$]*)(?:\s*,[^)]*)?\)?\s*=>`)
+	functionCallbackParamRe  = regexp.MustCompile(`(?s)^\s*(?:async\s+)?function(?:\s+[A-Za-z_$][\w$]*)?\s*\(\s*\$?([A-Za-z_$][\w$]*)`)
 	simpleIdentifierRe       = regexp.MustCompile(`^\$?[A-Za-z_$][\w$]*$`)
 )
 
@@ -649,6 +652,9 @@ func returnFlowCalls(block, signature string) []returnFlowCall {
 		flows[flow.Name+"\x00"+flow.EvidenceKind+"\x00"+flow.Detail] = flow
 	}
 	for _, flow := range collectionElementForwardingFlows(stripped, signature) {
+		flows[flow.Name+"\x00"+flow.EvidenceKind+"\x00"+flow.Detail] = flow
+	}
+	for _, flow := range callbackElementForwardingFlows(stripped, signature) {
 		flows[flow.Name+"\x00"+flow.EvidenceKind+"\x00"+flow.Detail] = flow
 	}
 	for _, flow := range directLiteralForwardingFlows(stripped, signature) {
@@ -1453,6 +1459,95 @@ func collectionLiteralElementParams(block string, params map[string]bool, aliase
 		}
 	}
 	return out
+}
+
+func callbackElementForwardingFlows(block, signature string) []returnFlowCall {
+	params := parameterNames(signature)
+	if len(params) == 0 {
+		return nil
+	}
+	aliases := parameterAliasMap(block, params)
+	var flows []returnFlowCall
+	seen := map[string]bool{}
+	for _, match := range collectionCallbackRe.FindAllStringSubmatchIndex(block, -1) {
+		if len(match) != 4 {
+			continue
+		}
+		receiver := strings.TrimPrefix(block[match[2]:match[3]], "$")
+		paramName := resolveParameterOrAlias(receiver, params, aliases)
+		if paramName == "" {
+			continue
+		}
+		open := strings.LastIndex(block[match[0]:match[1]], "(")
+		if open < 0 {
+			continue
+		}
+		open += match[0]
+		close := matchingParen(block, open)
+		if close < 0 {
+			continue
+		}
+		callback := block[open+1 : close]
+		elementParam := callbackElementParam(callback)
+		if elementParam == "" {
+			continue
+		}
+		for _, callee := range callsWithArgument(callback, elementParam) {
+			if dataFlowCallNameIgnored(callee) {
+				continue
+			}
+			key := callee + "\x00" + paramName + "\x00" + elementParam
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			flows = append(flows, returnFlowCall{
+				Name:         callee,
+				Reason:       "caller collection element forwarded into callee argument",
+				EvidenceKind: "callback_element_forward_flow",
+				Detail:       paramName + "[] -> " + elementParam + " -> " + callee + "()",
+				Direction:    "caller_to_callee",
+			})
+		}
+	}
+	sort.Slice(flows, func(i, j int) bool {
+		if flows[i].Name != flows[j].Name {
+			return flows[i].Name < flows[j].Name
+		}
+		return flows[i].Detail < flows[j].Detail
+	})
+	return flows
+}
+
+func callbackElementParam(callback string) string {
+	if match := arrowCallbackParamRe.FindStringSubmatch(callback); len(match) == 2 {
+		return strings.TrimPrefix(strings.TrimSpace(match[1]), "$")
+	}
+	if match := functionCallbackParamRe.FindStringSubmatch(callback); len(match) == 2 {
+		return strings.TrimPrefix(strings.TrimSpace(match[1]), "$")
+	}
+	return ""
+}
+
+func callsWithArgument(block, argName string) []string {
+	argName = strings.TrimPrefix(strings.TrimSpace(argName), "$")
+	if argName == "" {
+		return nil
+	}
+	callRe := regexp.MustCompile(`\b([A-Za-z_$][A-Za-z0-9_$]*)\s*\(([^()\n]*)\)`)
+	seen := map[string]struct{}{}
+	for _, match := range callRe.FindAllStringSubmatch(block, -1) {
+		if len(match) != 3 {
+			continue
+		}
+		for _, arg := range splitSimpleArguments(match[2]) {
+			if strings.TrimPrefix(strings.TrimSpace(arg), "$") != argName {
+				continue
+			}
+			seen[strings.TrimPrefix(match[1], "$")] = struct{}{}
+		}
+	}
+	return sortedKeys(seen)
 }
 
 func directLiteralForwardingFlows(block, signature string) []returnFlowCall {
