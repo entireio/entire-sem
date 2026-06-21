@@ -220,6 +220,66 @@ export function run(options: Options): string {
 	}
 }
 
+func TestCPlusPlusLocalIncludesResolveToFiles(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "include/fmt/format.h", `#pragma once
+template <typename T>
+auto format(T value) -> std::string {
+  return {};
+}
+`)
+	writeFile(t, repo, "include/fmt/args.h", `#pragma once
+#include "format.h"
+
+class dynamic_format_arg_store {};
+`)
+	writeFile(t, repo, "src/fmt.cc", `#include "fmt/format.h"
+#include <string>
+
+auto use_format() -> std::string {
+  return format(1);
+}
+`)
+	writeFile(t, repo, "test/gtest-extra.h", `#pragma once
+class extra_test {};
+`)
+	writeFile(t, repo, "test/format-test.cc", `#include "fmt/format.h"
+#include "gtest-extra.h"
+#include <string>
+
+void test_format() {}
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	formatTarget := fileID(snapshot.Header.RepoKey, "include/fmt/format.h")
+	extraTarget := fileID(snapshot.Header.RepoKey, "test/gtest-extra.h")
+	for _, want := range []struct {
+		from   string
+		target string
+		detail string
+	}{
+		{"include/fmt/args.h", formatTarget, "format.h"},
+		{"src/fmt.cc", formatTarget, "fmt/format.h"},
+		{"test/format-test.cc", formatTarget, "fmt/format.h"},
+		{"test/format-test.cc", extraTarget, "gtest-extra.h"},
+	} {
+		if !hasImportRelationWithEvidence(snapshot.Relations, want.from, want.target, want.detail, "import_statement") {
+			t.Fatalf("missing C/C++ local include %s -> %s (%s) in %#v", want.from, want.target, want.detail, snapshot.Relations)
+		}
+	}
+	if hasImportRelation(snapshot.Relations, "src/fmt.cc", fileID(snapshot.Header.RepoKey, "test/format-test.cc")) {
+		t.Fatalf("standard <string> include resolved to an unrelated local file: %#v", snapshot.Relations)
+	}
+	for _, file := range snapshot.Files {
+		if file.Path == "include/fmt/format.h" && file.Language != "C++" {
+			t.Fatalf("C++ header file language = %q, want C++", file.Language)
+		}
+	}
+}
+
 func TestTypeScriptWorkspacePackageReexportCallsResolveToSource(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "packages/toolkit/package.json", `{

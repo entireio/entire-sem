@@ -758,6 +758,7 @@ func StreamSnapshot(ctx context.Context, repo, providerVersion string, options P
 				Detail:               parseStatus.Detail,
 			})
 		}
+		file.Language = language
 		languageSet[language] = struct{}{}
 		if err := emit(file); err != nil {
 			return err
@@ -5823,6 +5824,8 @@ func isRelativeImportSpec(importingPath, spec string) bool {
 // manifestImportResolver after this relative-import pass.
 func resolveLocalImport(importingPath, spec string, knownFiles map[string]bool) (string, bool) {
 	switch strings.ToLower(filepath.Ext(importingPath)) {
+	case ".c", ".h", ".cc", ".cpp", ".cxx", ".hh", ".hpp", ".hxx":
+		return resolveCFamilyLocalInclude(importingPath, spec, knownFiles)
 	case ".js", ".jsx", ".ts", ".tsx":
 		if !strings.HasPrefix(spec, "./") && !strings.HasPrefix(spec, "../") {
 			return "", false
@@ -5869,6 +5872,49 @@ func resolveLocalImport(importingPath, spec string, knownFiles map[string]bool) 
 	default:
 		return "", false
 	}
+}
+
+func resolveCFamilyLocalInclude(importingPath, spec string, knownFiles map[string]bool) (string, bool) {
+	spec = strings.TrimSpace(filepath.ToSlash(spec))
+	if spec == "" {
+		return "", false
+	}
+	dir := filepath.Dir(importingPath)
+	ext := filepath.Ext(spec)
+	if ext == "" {
+		// Avoid resolving standard headers such as <string>, <map>, or
+		// <system_error> by basename coincidence.
+		return "", false
+	}
+	candidates := []string{
+		filepath.ToSlash(filepath.Join(dir, spec)),
+		spec,
+		filepath.ToSlash(filepath.Join("include", spec)),
+	}
+	if !strings.Contains(spec, "/") {
+		candidates = append(candidates,
+			filepath.ToSlash(filepath.Join("include", filepath.Base(spec))),
+			filepath.ToSlash(filepath.Join("test", filepath.Base(spec))),
+		)
+	}
+	for _, candidate := range candidates {
+		if knownFiles[candidate] {
+			return candidate, true
+		}
+	}
+	if strings.Contains(spec, "/") {
+		var matches []string
+		suffix := "/" + spec
+		for path := range knownFiles {
+			if strings.HasSuffix(path, suffix) {
+				matches = append(matches, path)
+			}
+		}
+		if len(matches) == 1 {
+			return matches[0], true
+		}
+	}
+	return "", false
 }
 
 type manifestImportResolver struct {
