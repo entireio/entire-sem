@@ -10156,3 +10156,39 @@ func symbolByKindAndName(records []SymbolRecord, kind, qualifiedName string) Sym
 	}
 	return SymbolRecord{}
 }
+
+func TestRustCodegenMacroBodiesDoNotProduceCallEdges(t *testing.T) {
+	// Identifiers inside Rust code-generation macros (quote!/quote_block!) are
+	// token templates for generated code, not calls executed by the function.
+	// serde_derive's `_serde::Serializer::serialize_struct(...)` inside quote!
+	// must not resolve to a local `fn serialize_struct`.
+	repo := t.TempDir()
+	writeFile(t, repo, "src/ser.rs", `fn serialize_struct() -> i32 { 1 }
+
+fn real_helper() -> i32 { 2 }
+
+fn caller() -> TokenStream {
+    let value = real_helper();
+    quote_block! {
+        let mut __serde_state = _serde::Serializer::serialize_struct(
+            __serializer, name, len,
+        )?;
+        _serde::ser::SerializeStruct::serialize_field(&mut state, key, value);
+    }
+}
+`)
+
+	snapshot, err := BuildProviderSnapshotWithOptions(t.Context(), repo, "test-version", ProviderSnapshotOptions{Worktree: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasRelationByLastSegment(snapshot.Relations, "CALLS", "caller", "real_helper") {
+		t.Fatalf("missing real call outside the macro: %#v", snapshot.Relations)
+	}
+	if hasRelationByLastSegment(snapshot.Relations, "CALLS", "caller", "serialize_struct") {
+		t.Fatalf("macro-template token treated as a call to local serialize_struct: %#v", snapshot.Relations)
+	}
+	if hasRelationByLastSegment(snapshot.Relations, "CALLS", "caller", "serialize_field") {
+		t.Fatalf("macro-template token treated as a call to local serialize_field: %#v", snapshot.Relations)
+	}
+}

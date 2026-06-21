@@ -1897,7 +1897,11 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 			}
 			block := symbolBlockFromLines(lines, from)
 			if fileNeedsCallScan && !typeLikeKind(from.Kind) {
-				for _, name := range sortedKeysOf(callLikeIdentifiers(block)) {
+				callBlock := block
+				if file.Language == "Rust" {
+					callBlock = stripRustCodegenMacroBodies(block)
+				}
+				for _, name := range sortedKeysOf(callLikeIdentifiers(callBlock)) {
 					if name == from.Name {
 						continue
 					}
@@ -2129,6 +2133,9 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 
 		if fileNeedsCallScan {
 			topLevel := stripDeclarationOnlyCallSignatures(file.Language, topLevelBlockFromLines(lines, currentFileSymbols))
+			if file.Language == "Rust" {
+				topLevel = stripRustCodegenMacroBodies(topLevel)
+			}
 			if strings.TrimSpace(topLevel) != "" {
 				fileSource := SymbolRecord{
 					ID:       fileID(repoKey, file.Path),
@@ -8821,6 +8828,67 @@ func importModuleMatchesFile(module, importingPath, targetPath string) bool {
 	module = strings.TrimSuffix(filepath.ToSlash(module), filepath.Ext(module))
 	target := strings.TrimSuffix(targetPath, filepath.Ext(targetPath))
 	return strings.HasSuffix(target, module) || strings.HasSuffix(target, "/"+module) || target == module
+}
+
+// rustCodegenMacroStart matches the opening of a Rust code-generation macro
+// invocation (`quote! { ... }`, `quote_block! { ... }`, etc.). The bodies of
+// these macros are token templates for generated code, not calls executed by
+// the surrounding function, so identifiers inside them must not produce CALLS
+// edges (e.g. serde_derive's `_serde::Serializer::serialize_struct(...)` inside
+// quote! wrongly resolved to the local `fn serialize_struct`).
+var rustCodegenMacroStart = regexp.MustCompile(`\b(?:quote|quote_block|quote_spanned|parse_quote|parse_quote_spanned)\s*!\s*[\[({]`)
+
+// stripRustCodegenMacroBodies blanks the delimited body of each Rust
+// code-generation macro invocation while preserving the surrounding code, so
+// real calls outside the macro are still scanned. Length is preserved.
+func stripRustCodegenMacroBodies(content string) string {
+	out := []byte(content)
+	// Operate on a literal/comment-masked copy so delimiters inside strings or
+	// comments do not throw off nesting. Indices line up because masking
+	// preserves length.
+	masked := []byte(stripCodeLiteralsAndComments(content))
+	for _, loc := range rustCodegenMacroStart.FindAllIndex(masked, -1) {
+		open := loc[1] - 1
+		close := matchDelimiter(masked, open)
+		if close < 0 {
+			continue
+		}
+		for j := open + 1; j < close; j++ {
+			out[j] = ' '
+			masked[j] = ' '
+		}
+	}
+	return string(out)
+}
+
+// matchDelimiter returns the index of the delimiter that closes the opening
+// bracket at openIdx, tracking nesting of the same bracket family, or -1.
+func matchDelimiter(b []byte, openIdx int) int {
+	open := b[openIdx]
+	var close byte
+	switch open {
+	case '(':
+		close = ')'
+	case '{':
+		close = '}'
+	case '[':
+		close = ']'
+	default:
+		return -1
+	}
+	depth := 0
+	for i := openIdx; i < len(b); i++ {
+		switch b[i] {
+		case open:
+			depth++
+		case close:
+			depth--
+			if depth == 0 {
+				return i
+			}
+		}
+	}
+	return -1
 }
 
 func callLikeIdentifiers(content string) map[string]struct{} {
