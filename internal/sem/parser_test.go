@@ -919,6 +919,86 @@ FMT_NODISCARD auto to_string(const basic_memory_buffer<char, SIZE>& buf)
 	}
 }
 
+func TestTreeSitterParserCPlusPlusMasksNlohmannMacros(t *testing.T) {
+	entities, language, status := TreeSitterParser{}.ParseWithStatus("json.hpp", `NLOHMANN_JSON_NAMESPACE_BEGIN
+
+JSON_HEDLEY_NON_NULL(1)
+JSON_HEDLEY_RETURNS_NON_NULL
+void grisu2(char* buf, int& len);
+
+bool check(bool value) {
+  return JSON_HEDLEY_UNLIKELY(!value);
+}
+
+template <typename BasicJsonType>
+void dependent_call(BasicJsonType&& j) {
+  j.template get<int>();
+  j->operator[]("key");
+}
+
+template <typename BasicJsonType>
+struct adl_serializer {
+  template <typename TargetType>
+  static void from_json(BasicJsonType&& j, TargetType& val) {
+    val = j.template get<TargetType>();
+  }
+};
+
+JSON_PRIVATE_UNLESS_TESTED:
+void private_helper();
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(person, name, address, age)
+
+enum class choice { yes, no };
+NLOHMANN_JSON_SERIALIZE_ENUM(choice, {
+  {choice::yes, "yes"},
+  {choice::no, "no"},
+})
+
+NLOHMANN_JSON_NAMESPACE_END
+`)
+	if language != "C++" {
+		t.Fatalf("language = %q", language)
+	}
+	if status.ParseError {
+		t.Fatalf("unexpected parse status: %#v", status)
+	}
+	found := false
+	for _, entity := range entities {
+		if entity.Kind == "struct" && entity.Name == "adl_serializer" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected C++ entities after masking nlohmann macros, got %#v", entities)
+	}
+}
+
+func TestTreeSitterParserCPlusPlusMasksDoctestMacros(t *testing.T) {
+	entities, language, status := TreeSitterParser{}.ParseWithStatus("unit.cpp", `DOCTEST_MSVC_SUPPRESS_WARNING(4189)
+TEST_CASE("modifiers" * doctest::test_suite("json"))
+{
+    SECTION("clear()")
+    {
+        CAPTURE(1);
+        CHECK(json::parse("{}").is_object());
+        CHECK_THROWS_AS(json::parse("["), json::parse_error&);
+    }
+}
+DOCTEST_MSVC_SUPPRESS_WARNING_POP
+`)
+	if language != "C++" {
+		t.Fatalf("language = %q", language)
+	}
+	if status.ParseError {
+		t.Fatalf("unexpected parse status: %#v", status)
+	}
+	if len(entities) == 0 {
+		t.Fatalf("expected C++ entities after masking doctest macros")
+	}
+}
+
 func TestTreeSitterParserTypeScriptMasksTypeofDynamicImportTypeArgument(t *testing.T) {
 	_, language, status := TreeSitterParser{}.ParseWithStatus("configureStore.test.ts", `vi.doMock('redux', async (importOriginal) => {
   const redux = await importOriginal<typeof import('redux')>()
