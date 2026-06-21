@@ -493,8 +493,15 @@ func cSharpMaskPrimaryConstructorClass(text string) string {
 
 func maskSwiftUnsupportedSyntax(content string) string {
 	lines := strings.SplitAfter(content, "\n")
-	for i, line := range lines {
+	for i := 0; i < len(lines); i++ {
+		line := lines[i]
 		text, newline := splitLineEnding(line)
+		if end, ok := maskSwiftComputedStringPropertyBlock(lines, i, text, newline); ok {
+			i = end
+			continue
+		}
+		text = maskSwiftPropertyWrapperPrefix(text)
+		text = maskSwiftEmptyAttributeCalls(text)
 		text = replacePatternSameLength(text, swiftTypedThrowsPattern, "throws")
 		if replacement, ok := maskSwiftAsyncForLine(text); ok {
 			text = replacement
@@ -502,9 +509,170 @@ func maskSwiftUnsupportedSyntax(content string) string {
 		if replacement, ok := maskSwiftOptionalBindingShorthand(text); ok {
 			text = replacement
 		}
+		if strings.Contains(text, `"""`) {
+			text, i = maskSwiftMultilineStringLiteral(lines, i, text, newline)
+			if i < len(lines) {
+				continue
+			}
+			break
+		}
+		if swiftLeadingOperatorContinuationLinePattern.MatchString(text) {
+			if strings.Contains(text, "{") {
+				balance := strings.Count(text, "(") - strings.Count(text, ")")
+				balance += strings.Count(text, "{") - strings.Count(text, "}")
+				lines[i] = maskLineText(text) + newline
+				for balance > 0 && i+1 < len(lines) {
+					i++
+					text, newline = splitLineEnding(lines[i])
+					balance += strings.Count(text, "(") - strings.Count(text, ")")
+					balance += strings.Count(text, "{") - strings.Count(text, "}")
+					lines[i] = maskLineText(text) + newline
+				}
+				continue
+			}
+			if strings.HasSuffix(strings.TrimSpace(text), ")") && !strings.Contains(text, "(") {
+				text = paddedReplacement(leadingWhitespace(text), ")", len(text))
+			} else {
+				text = maskLineText(text)
+			}
+		}
 		lines[i] = text + newline
 	}
 	return strings.Join(lines, "")
+}
+
+func maskSwiftComputedStringPropertyBlock(lines []string, i int, text, newline string) (int, bool) {
+	trimmed := strings.TrimSpace(text)
+	matches := swiftComputedStringPropertyStartPattern.FindStringSubmatch(trimmed)
+	if len(matches) != 4 {
+		return i, false
+	}
+	indent := leadingWhitespace(text)
+	end := -1
+	hasMultilineString := strings.Contains(text, `"""`)
+	for j := i + 1; j < len(lines); j++ {
+		lineText, _ := splitLineEnding(lines[j])
+		if strings.Contains(lineText, `"""`) {
+			hasMultilineString = true
+		}
+		if leadingWhitespace(lineText) == indent && strings.TrimSpace(lineText) == "}" {
+			end = j
+			break
+		}
+	}
+	if end < 0 || !hasMultilineString || i+1 >= end {
+		if end < 0 || !swiftComputedStringPropertyHasRecoverableBody(lines[i+1:end]) {
+			return i, false
+		}
+	}
+	value := `"s"`
+	if matches[3] == "[String]" {
+		value = `[]`
+	}
+	replacement := strings.TrimSpace(matches[1] + "var " + matches[2] + ": " + matches[3] + " = " + value)
+	if len(replacement) > len(trimmed) && matches[1] != "" {
+		replacement = "var " + matches[2] + ": " + matches[3] + " = " + value
+	}
+	if len(replacement) > len(trimmed) {
+		return i, false
+	}
+	lines[i] = paddedReplacement(leadingWhitespace(text), replacement, len(text)) + newline
+	for j := i + 1; j <= end; j++ {
+		lineText, lineNewline := splitLineEnding(lines[j])
+		lines[j] = maskLineText(lineText) + lineNewline
+	}
+	return end, true
+}
+
+func maskSwiftMultilineStringLiteral(lines []string, i int, text, newline string) (string, int) {
+	start := strings.Index(text, `"""`)
+	if start < 0 {
+		return text, i
+	}
+	replacement := text[:start] + sameLengthReplacement(`"s"`, len(text)-start)
+	lines[i] = replacement + newline
+	for j := i + 1; j < len(lines); j++ {
+		lineText, lineNewline := splitLineEnding(lines[j])
+		if strings.Contains(lineText, `"""`) {
+			closeIndex := strings.Index(lineText, `"""`)
+			suffix := strings.TrimSpace(lineText[closeIndex+len(`"""`):])
+			if suffix != "" {
+				lines[j] = paddedReplacement(leadingWhitespace(lineText), suffix, len(lineText)) + lineNewline
+				return replacement, j
+			}
+			next := swiftNextNonEmptyTrimmedLine(lines, j+1)
+			lines[j] = maskLineText(lineText) + lineNewline
+			if strings.HasPrefix(next, ".") {
+				return replacement, maskSwiftChainedDotLines(lines, j+1)
+			}
+			return replacement, j
+		}
+		lines[j] = maskLineText(lineText) + lineNewline
+	}
+	return replacement, len(lines)
+}
+
+func maskSwiftChainedDotLines(lines []string, start int) int {
+	last := start - 1
+	for i := start; i < len(lines); i++ {
+		text, newline := splitLineEnding(lines[i])
+		if !strings.HasPrefix(strings.TrimSpace(text), ".") {
+			return last
+		}
+		lines[i] = maskLineText(text) + newline
+		last = i
+	}
+	return last
+}
+
+func swiftNextNonEmptyTrimmedLine(lines []string, start int) string {
+	for i := start; i < len(lines); i++ {
+		text, _ := splitLineEnding(lines[i])
+		trimmed := strings.TrimSpace(text)
+		if trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func maskSwiftEmptyAttributeCalls(text string) string {
+	return swiftEmptyAttributeCallPattern.ReplaceAllStringFunc(text, func(match string) string {
+		return strings.TrimSuffix(match, "()") + strings.Repeat(" ", len("()"))
+	})
+}
+
+func swiftComputedStringPropertyHasRecoverableBody(lines []string) bool {
+	hasExpression := false
+	for _, line := range lines {
+		text, _ := splitLineEnding(line)
+		trimmed := strings.TrimSpace(text)
+		if trimmed == "" || strings.HasPrefix(trimmed, "//") {
+			continue
+		}
+		if strings.HasPrefix(trimmed, `"`) || strings.HasPrefix(trimmed, "[") {
+			hasExpression = true
+			continue
+		}
+		return false
+	}
+	return hasExpression
+}
+
+func maskSwiftPropertyWrapperPrefix(text string) string {
+	matches := swiftPropertyWrapperPrefixPattern.FindStringIndex(text)
+	if len(matches) != 2 {
+		return text
+	}
+	wrapperEnd := strings.LastIndex(text[:matches[1]], " var ")
+	if wrapperEnd < 0 {
+		wrapperEnd = strings.LastIndex(text[:matches[1]], " let ")
+	}
+	if wrapperEnd < 0 {
+		return text
+	}
+	declStart := wrapperEnd + 1
+	return text[:matches[0]] + strings.Repeat(" ", declStart-matches[0]) + text[declStart:]
 }
 
 func maskSwiftAsyncForLine(text string) (string, bool) {
@@ -528,7 +696,7 @@ func maskSwiftAsyncForLine(text string) (string, bool) {
 
 func maskSwiftOptionalBindingShorthand(text string) (string, bool) {
 	matches := swiftOptionalBindingShorthandPattern.FindStringSubmatchIndex(text)
-	if len(matches) != 6 {
+	if len(matches) != 4 {
 		return text, false
 	}
 	replacement := "if true {"
@@ -542,6 +710,10 @@ var (
 	cSharpNullCoalescingCollectionExpressionPattern = regexp.MustCompile(`\?\?=\s*\[\]`)
 	swiftTypedThrowsPattern                         = regexp.MustCompile(`throws\([A-Za-z_][A-Za-z0-9_.<>]*\)`)
 	swiftOptionalBindingShorthandPattern            = regexp.MustCompile(`\bif\s+let\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{`)
+	swiftEmptyAttributeCallPattern                  = regexp.MustCompile(`@[A-Za-z_][A-Za-z0-9_]*\(\)`)
+	swiftPropertyWrapperPrefixPattern               = regexp.MustCompile(`^(\s*)@[A-Za-z_][A-Za-z0-9_]*(?:\([^)]*\))?\s+(?:var|let)\s+`)
+	swiftLeadingOperatorContinuationLinePattern     = regexp.MustCompile(`^\s*(?:<|>|<=|>=|==|!=|&&|\|\|)\s+`)
+	swiftComputedStringPropertyStartPattern         = regexp.MustCompile(`^((?:(?:private|fileprivate|internal|public)\s+)?)var\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(String|\[String\])\s*\{$`)
 	cControlIteratorMacroPattern                    = regexp.MustCompile(`^(?:TAILQ|STAILQ|LIST|SLIST|RB|SPLAY)_(?:FOREACH|FOREACH_SAFE|FOREACH_REVERSE|FOREACH_REVERSE_SAFE)\s*\(`)
 	cGenerateMacroPattern                           = regexp.MustCompile(`^(?:TAILQ|STAILQ|LIST|SLIST|RB|SPLAY)_(?:HEAD|ENTRY|PROTOTYPE|PROTOTYPE_STATIC|GENERATE|GENERATE_STATIC)\s*\(`)
 	cEnumMacroPattern                               = regexp.MustCompile(`^[A-Z][A-Z0-9_]*_KEYS\s*\(`)
@@ -667,11 +839,19 @@ var (
 	bashHereDocPipePattern      = regexp.MustCompile(`<<-?['"]?[A-Za-z_][A-Za-z0-9_]*['"]?\|`)
 	bashHereDocPipeNamePattern  = regexp.MustCompile(`<<-?['"]?([A-Za-z_][A-Za-z0-9_]*)['"]?\|`)
 	bashCommandParameterPattern = regexp.MustCompile(`\$\{[A-Za-z_][A-Za-z0-9_]*:\+[^}\n;]+;[^}\n]*\}`)
+	zshGlobParameterPattern     = regexp.MustCompile(`\$\{(?:\([^}\n]*\))?[@A-Za-z_][^}\n]*:#\([^}\n]*\)\}`)
+	zshNestedParameterPattern   = regexp.MustCompile(`\$\{#[^}\n]*\$\{[^}\n]+\}[^}\n]*\}`)
 )
 
 func maskBashUnsupportedSyntax(content string) string {
 	masked := bashCommandParameterPattern.ReplaceAllStringFunc(content, func(match string) string {
 		return sameLengthReplacement(`""`, len(match))
+	})
+	masked = zshGlobParameterPattern.ReplaceAllStringFunc(masked, func(match string) string {
+		return sameLengthReplacement(`"x"`, len(match))
+	})
+	masked = zshNestedParameterPattern.ReplaceAllStringFunc(masked, func(match string) string {
+		return sameLengthReplacement(`"1"`, len(match))
 	})
 	lines := strings.SplitAfter(masked, "\n")
 	skipHereDocUntil := ""
@@ -693,6 +873,9 @@ func maskBashUnsupportedSyntax(content string) string {
 				replacement = "(true) || true"
 			}
 			text = paddedReplacement(leadingWhitespace(text), replacement, len(text))
+		}
+		if strings.Contains(text, `${(@f)"$(`) {
+			text = paddedReplacement(leadingWhitespace(text), `completions=("x")`, len(text))
 		}
 		lines[i] = text + newline
 	}

@@ -394,6 +394,44 @@ query_decrpm() {
 	}
 }
 
+func TestTreeSitterParserBashMasksZshCompletionExpansions(t *testing.T) {
+	entities, language, status := TreeSitterParser{}.ParseWithStatus("completion.zsh", `#compdef base-test
+
+__base-test_complete() {
+    local -ar non_empty_completions=("${@:#(|:*)}")
+    local -ar empty_completions=("${(M)@:#(|:*)}")
+    _describe -V '' non_empty_completions -- empty_completions -P $'\'\''
+}
+
+__base-test_custom_complete() {
+    local -a completions
+    completions=("${(@f)"$("${command_name}" "${@}" "${command_line[@]}")"}")
+    if [[ "${#completions[@]}" -gt 1 ]]; then
+        __base-test_complete "${completions[@]:0:-1}"
+    fi
+}
+
+__base-test_cursor_index_in_current_word() {
+    printf %s "${#${(z)LBUFFER}[-1]}"
+}
+`)
+	if language != "Bash" {
+		t.Fatalf("language = %q", language)
+	}
+	if status.ParseError {
+		t.Fatalf("unexpected parse error: %s", status.Detail)
+	}
+	seen := map[string]Entity{}
+	for _, entity := range entities {
+		seen[entity.Name] = entity
+	}
+	for _, name := range []string{"__base-test_complete", "__base-test_custom_complete", "__base-test_cursor_index_in_current_word"} {
+		if seen[name].Name == "" {
+			t.Fatalf("missing shell function %q in %#v", name, entities)
+		}
+	}
+}
+
 func TestTreeSitterParserJavaScriptAssignmentMethodEntities(t *testing.T) {
 	entities, language := TreeSitterParser{}.Parse("application.js", `var app = exports = module.exports = {};
 
@@ -946,6 +984,8 @@ public class WrappedReaderTests
 
 func TestTreeSitterParserSwiftMasksModernSyntax(t *testing.T) {
 	entities, language, status := TreeSitterParser{}.ParseWithStatus("CommandParser.swift", `struct Runner {
+  @Option() var generateCompletionScript: String
+
   mutating func parse(
     arguments: [String]
   ) async throws(CommandError) -> ParsableCommand {
@@ -954,6 +994,27 @@ func TestTreeSitterParserSwiftMasksModernSyntax(t *testing.T) {
         print(prefix)
       }
     }
+    let suggestion = arguments
+      .filter({
+        $0.synopsisString.editDistance(to: name.synopsisString)
+          < kSimilarityFloor
+      })
+    if !flags.isEmpty
+      || !options.isEmpty
+    {
+      print("complete")
+    }
+    XCTAssert(
+      type(of: command.commandStack[0])
+        == NestedDefaultSubcommandHelp.Type.self)
+    XCTAssert(
+      error.description == """
+        Multiple arguments are named \"--foo\".
+        """
+        || error.description == """
+          Multiple arguments are named \"--bar\".
+          """
+    )
     return command
   }
 }
