@@ -3079,7 +3079,7 @@ func kubernetesResourceReferences(content string) []resourceReference {
 			add(ref.Kind, ref.Name, ref.EvidenceKind, ref.Confidence)
 		}
 	}
-	if kubernetesManifestHasAnyKind(content, "ExternalSecret") {
+	if kubernetesManifestHasAnyKind(content, "ExternalSecret", "ClusterExternalSecret") {
 		for _, ref := range kubernetesExternalSecretTargetReferences(content) {
 			add(ref.Kind, ref.Name, ref.EvidenceKind, ref.Confidence)
 		}

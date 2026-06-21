@@ -112,6 +112,9 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
 go test ./internal/sem -run 'TestKubernetesCustomControllerReferenceDependencies' -count=1
 go test ./...
 go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out bench/results -lock bench/repos.lock.json -languages Go -limit 1 -skip-clone -profile syntax-only -provider-version codex-sealedsecret-resource-refs -min-loc-per-sec 1
+go test ./internal/sem -run 'TestKubernetesCustomControllerReferenceDependencies' -count=1
+go test ./...
+go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out bench/results -lock bench/repos.lock.json -languages Go -limit 1 -skip-clone -profile syntax-only -provider-version codex-clusterexternalsecret-targets -min-loc-per-sec 1
 ```
 
 ## Results
@@ -170,6 +173,12 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
 - Latest local Go/gin syntax-only SealedSecret resource smoke benchmark:
   `bench/results/result-1782001211.json`, 28,618 LOC, 164,746 LOC/s,
   29,016,064 bytes max RSS, 1 parse failure, estimated output 1,902,638 bytes.
+- `ClusterExternalSecret` resources now use the existing External Secrets
+  target parser, so `externalSecretSpec.target.name` emits a target Secret
+  dependency and resolves to exact local `Secret` manifests when present.
+- Latest local Go/gin syntax-only ClusterExternalSecret smoke benchmark:
+  `bench/results/result-1782001370.json`, 28,618 LOC, 165,412 LOC/s,
+  28,262,400 bytes max RSS, 1 parse failure, estimated output 1,902,641 bytes.
 - Nested JS/TS workspace/package `package.json` names and `exports` resolve
   local package imports to file records with `import_resolved` metadata.
 - JS/TS literal CommonJS `require(...)` and literal dynamic `import(...)`

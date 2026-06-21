@@ -2328,6 +2328,23 @@ kind: Secret
 metadata:
   name: api-runtime
 `)
+	writeFile(t, repo, "k8s/cluster-external-secret.yaml", `apiVersion: external-secrets.io/v1beta1
+kind: ClusterExternalSecret
+metadata:
+  name: shared-secrets
+spec:
+  secretStoreRef:
+    name: vault
+    kind: ClusterSecretStore
+  externalSecretSpec:
+    target:
+      name: shared-runtime
+`)
+	writeFile(t, repo, "k8s/cluster-external-secret-target.yaml", `apiVersion: v1
+kind: Secret
+metadata:
+  name: shared-runtime
+`)
 	writeFile(t, repo, "k8s/sealed-secret.yaml", `apiVersion: bitnami.com/v1alpha1
 kind: SealedSecret
 metadata:
@@ -2602,6 +2619,8 @@ metadata:
 		{"Certificate.api-cert", "ClusterIssuer.letsencrypt"},
 		{"ExternalSecret.api-secrets", "ClusterSecretStore.vault"},
 		{"ExternalSecret.api-secrets", "Secret.api-runtime"},
+		{"ClusterExternalSecret.shared-secrets", "ClusterSecretStore.vault"},
+		{"ClusterExternalSecret.shared-secrets", "Secret.shared-runtime"},
 		{"SealedSecret.sealed-api", "Secret.api-sealed-runtime"},
 		{"SealedSecret.worker-sealed-runtime", "Secret.worker-sealed-runtime"},
 		{"CronWorkflow.nightly-report", "WorkflowTemplate.report-template"},
