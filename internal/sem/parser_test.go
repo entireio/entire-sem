@@ -240,6 +240,10 @@ func TestGraphQLSchemaFieldEntities(t *testing.T) {
 type Query {
   user(id: ID!): User!
   viewer: User
+  search(
+    term: String!
+    limit: Int = 10
+  ): [User!]!
 }
 
 extend type Mutation {
@@ -257,7 +261,7 @@ type User {
 	for _, entity := range entities {
 		seen[entity.Name] = entity
 	}
-	for _, name := range []string{"schema", "Query.user", "Query.viewer", "Mutation.createUser", "User.id"} {
+	for _, name := range []string{"schema", "Query.user", "Query.viewer", "Query.search", "Mutation.createUser", "User.id"} {
 		if _, ok := seen[name]; !ok {
 			t.Fatalf("missing GraphQL schema entity %s in %#v", name, entities)
 		}
@@ -267,6 +271,9 @@ type User {
 	}
 	if seen["User.id"].Kind != "graphql_schema_field" || seen["User.id"].Signature != "GraphQL schema user id" {
 		t.Fatalf("unexpected User.id entity: %#v", seen["User.id"])
+	}
+	if seen["Query.search"].Kind != "graphql_schema_field" || seen["Query.search"].Signature != "GraphQL schema query search" {
+		t.Fatalf("unexpected Query.search entity: %#v", seen["Query.search"])
 	}
 }
 

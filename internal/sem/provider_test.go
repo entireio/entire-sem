@@ -6250,6 +6250,10 @@ func TestBuildProviderSnapshotEmitsGraphQLSchemaBoundaries(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "schema.graphql", `type Query {
   user(id: ID!): User!
+  search(
+    term: String!
+    limit: Int = 10
+  ): [User!]!
 }
 
 extend type Mutation {
@@ -6270,6 +6274,7 @@ type User {
 		to   string
 	}{
 		{"Query.user", "query user"},
+		{"Query.search", "query search"},
 		{"Mutation.createUser", "mutation createUser"},
 	} {
 		if !hasRelationByLastSegment(snapshot.Relations, "HANDLES_GRAPHQL", want.from, want.to) {
@@ -6340,6 +6345,10 @@ func TestGraphQLSchemaFieldsLinkToResolverFields(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "schema.graphql", `type Query {
   user(id: ID!): User!
+  search(
+    term: String!
+    limit: Int = 10
+  ): [User!]!
 }
 
 extend type Mutation {
@@ -6353,6 +6362,7 @@ type User {
 	writeFile(t, repo, "src/resolvers.ts", `export const resolvers = {
   Query: {
     user: getUser,
+    search: searchUsers,
   },
   Mutation: {
     createUser: mutationResolvers.createUser,
@@ -6369,6 +6379,7 @@ type User {
 	}
 	for _, want := range [][2]string{
 		{"Query.user", "Query.user"},
+		{"Query.search", "Query.search"},
 		{"Mutation.createUser", "Mutation.createUser"},
 		{"User.id", "User.id"},
 	} {

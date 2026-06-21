@@ -1521,44 +1521,116 @@ func graphqlSchemaOperationRoots(content string) map[string]string {
 
 func graphqlSchemaFields(body string) []graphqlResolverField {
 	var fields []graphqlResolverField
-	offset := 0
-	for _, line := range strings.SplitAfter(body, "\n") {
-		lineStart := offset
-		offset += len(line)
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "...") {
+	for i := 0; i < len(body); i++ {
+		i = skipGraphQLIgnored(body, i)
+		if i >= len(body) {
+			break
+		}
+		if !isGraphQLNameStart(body[i]) {
 			continue
 		}
-		if comment := strings.Index(trimmed, "#"); comment >= 0 {
-			trimmed = strings.TrimSpace(trimmed[:comment])
+		nameStart := i
+		i++
+		for i < len(body) && isGraphQLNamePart(body[i]) {
+			i++
 		}
-		if trimmed == "" || strings.HasPrefix(trimmed, "@") || strings.HasPrefix(trimmed, "\"") {
-			continue
-		}
-		nameEnd := 0
-		for nameEnd < len(trimmed) {
-			ch := trimmed[nameEnd]
-			if ch == '(' || ch == ':' || ch == ' ' || ch == '\t' {
-				break
-			}
-			nameEnd++
-		}
-		name := strings.TrimSpace(trimmed[:nameEnd])
+		name := body[nameStart:i]
 		if !graphqlSchemaFieldNamePattern.MatchString(name) {
 			continue
 		}
-		if !strings.Contains(trimmed[nameEnd:], ":") {
+		cursor := skipGraphQLIgnored(body, i)
+		if cursor < len(body) && body[cursor] == '(' {
+			close := matchingDelimiterOffset(body, cursor, '(', ')')
+			if close < 0 {
+				continue
+			}
+			cursor = skipGraphQLIgnored(body, close+1)
+		}
+		if cursor >= len(body) || body[cursor] != ':' {
+			i = maxInt(i, cursor)
 			continue
 		}
-		leading := len(line) - len(strings.TrimLeft(line, " \t"))
-		start := lineStart + leading
-		fieldLine := strings.TrimRightFunc(line, func(r rune) bool {
-			return r == '\n' || r == '\r'
-		})
-		end := lineStart + len(fieldLine)
-		fields = append(fields, graphqlResolverField{Name: name, Start: start, End: end})
+		end := graphqlSchemaFieldEnd(body, cursor+1)
+		fields = append(fields, graphqlResolverField{Name: name, Start: nameStart, End: end})
+		i = maxInt(i, end-1)
 	}
 	return fields
+}
+
+func skipGraphQLIgnored(value string, index int) int {
+	for index < len(value) {
+		switch {
+		case value[index] == ' ' || value[index] == '\t' || value[index] == '\n' || value[index] == '\r' || value[index] == ',':
+			index++
+		case value[index] == '#':
+			for index < len(value) && value[index] != '\n' && value[index] != '\r' {
+				index++
+			}
+		case strings.HasPrefix(value[index:], `"""`):
+			index += 3
+			if end := strings.Index(value[index:], `"""`); end >= 0 {
+				index += end + 3
+			} else {
+				return len(value)
+			}
+		case value[index] == '"':
+			index++
+			for index < len(value) {
+				if value[index] == '\\' {
+					index += 2
+					continue
+				}
+				if value[index] == '"' {
+					index++
+					break
+				}
+				index++
+			}
+		default:
+			return index
+		}
+	}
+	return index
+}
+
+func graphqlSchemaFieldEnd(body string, start int) int {
+	seenType := false
+	depth := 0
+	for i := start; i < len(body); i++ {
+		switch body[i] {
+		case '[':
+			depth++
+			seenType = true
+		case ']':
+			if depth > 0 {
+				depth--
+			}
+			seenType = true
+		case '#':
+			if seenType && depth == 0 {
+				return i
+			}
+			for i < len(body) && body[i] != '\n' && body[i] != '\r' {
+				i++
+			}
+		case '\n', '\r':
+			if seenType && depth == 0 {
+				return i
+			}
+		case ' ', '\t':
+		default:
+			seenType = true
+		}
+	}
+	return len(body)
+}
+
+func isGraphQLNameStart(ch byte) bool {
+	return (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || ch == '_'
+}
+
+func isGraphQLNamePart(ch byte) bool {
+	return isGraphQLNameStart(ch) || (ch >= '0' && ch <= '9')
 }
 
 func graphqlResolverEntities(path, content string) []Entity {
@@ -1797,6 +1869,44 @@ func matchingBraceOffset(content string, open int) int {
 		case '{':
 			depth++
 		case '}':
+			depth--
+			if depth == 0 {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+func matchingDelimiterOffset(content string, open int, openCh, closeCh byte) int {
+	if open < 0 || open >= len(content) || content[open] != openCh {
+		return -1
+	}
+	depth := 0
+	inString := byte(0)
+	escaped := false
+	for i := open; i < len(content); i++ {
+		ch := content[i]
+		if inString != 0 {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if ch == '\\' {
+				escaped = true
+				continue
+			}
+			if ch == inString {
+				inString = 0
+			}
+			continue
+		}
+		switch ch {
+		case '\'', '"', '`':
+			inString = ch
+		case openCh:
+			depth++
+		case closeCh:
 			depth--
 			if depth == 0 {
 				return i

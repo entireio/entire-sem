@@ -519,8 +519,9 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
   including inline handlers and named/member/wrapped resolver references;
   GraphQL schema files now emit `graphql_schema_field` symbols and
   `HANDLES_GRAPHQL` edges for root `Query`, `Mutation`, and `Subscription`
-  fields in `type` and `extend type` blocks, and matching schema root fields
-  emit exact local `CALLS` edges to matching resolver-map fields. These
+  fields, including multi-line field declarations, in `type` and `extend type`
+  blocks, and matching schema root fields emit exact local `CALLS` edges to
+  matching resolver-map fields. These
   complement existing GraphQL operation-literal detection and remain heuristic
   boundary/linking facts, not full schema validation, type checking, or
   non-root resolver type analysis.
@@ -614,6 +615,10 @@ go run ./cmd/sem-bench -manifest bench/repos.fast.json -cache bench/.cache -out 
     148,890 LOC/s, max RSS 27,967,488 bytes, estimated output 1,902,634
     bytes; run after non-root GraphQL schema/resolver field extraction and
     exact schema-field-to-resolver-map linking.
+  - `bench/results/result-1782002209.json`: Go/gin, syntax-only, 28,618 LOC,
+    163,578 LOC/s, max RSS 28,966,912 bytes, estimated output 1,902,643
+    bytes; run after multi-line GraphQL schema field extraction and exact
+    schema-field-to-resolver-map linking.
   - `bench/results/result-1781971817.json`: Go/gin, syntax-only, 28,618 LOC,
     146,399 LOC/s, max RSS 29,130,752 bytes, estimated output 1,902,634
     bytes; run after Argo Rollouts AnalysisTemplate reference extraction.

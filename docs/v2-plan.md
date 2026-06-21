@@ -402,8 +402,9 @@ Tasks:
   spread at root operation scope when the fragment type is `Query`, `Mutation`,
   or `Subscription`. JS/TS resolver-map
   fields, modular resolver root objects such as `export const Query = { ... }`,
-  and GraphQL schema root fields in `type`/`extend type` `Query`, `Mutation`,
-  and `Subscription` blocks now emit `HANDLES_GRAPHQL`. Resolver fields cover inline
+  and GraphQL schema root fields, including multi-line field declarations, in
+  `type`/`extend type` `Query`, `Mutation`, and `Subscription` blocks now
+  emit `HANDLES_GRAPHQL`. Resolver fields cover inline
   function/arrow handlers, subscription resolver objects, and named/member or
   wrapped resolver references such as `user: getUser`,
   `viewer: userResolvers.viewer`, and `user: withAuth(getUser)`. Matching
