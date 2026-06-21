@@ -143,7 +143,10 @@ func (TreeSitterParser) ParseWithStatus(path, content string) ([]Entity, string,
 		parseSrc = []byte(maskGroovyUnsupportedSyntax(content))
 	}
 	if spec.language == "Kotlin" {
-		parseSrc = []byte(maskKotlinUnsupportedSyntax(content))
+		parseSrc = []byte(maskKotlinUnsupportedSyntax(path, content))
+	}
+	if spec.language == "YAML" {
+		parseSrc = []byte(maskYAMLUnsupportedSyntax(content))
 	}
 	if spec.language == "TypeScript" && !strings.EqualFold(filepath.Ext(path), ".tsx") {
 		parseSrc = []byte(maskTypeScriptUnsupportedSyntax(content))
@@ -381,13 +384,81 @@ var (
 	kotlinMultiDollarString    = regexp.MustCompile(`\$+\s*"`)
 )
 
-func maskKotlinUnsupportedSyntax(content string) string {
+func maskKotlinUnsupportedSyntax(path, content string) string {
 	content = kotlinSuspendLambdaPattern.ReplaceAllStringFunc(content, func(match string) string {
 		return strings.Repeat(" ", len(match)-1) + "{"
 	})
-	return kotlinMultiDollarString.ReplaceAllStringFunc(content, func(match string) string {
+	content = kotlinMultiDollarString.ReplaceAllStringFunc(content, func(match string) string {
 		return strings.Repeat(" ", len(match)-1) + "\""
 	})
+	if strings.EqualFold(filepath.Ext(path), ".kts") {
+		content = maskKotlinGradleOptionValueAssignments(content)
+		content = maskKotlinGradleWhenGetOrElse(content)
+	}
+	return content
+}
+
+func maskYAMLUnsupportedSyntax(content string) string {
+	// Antora playbooks commonly use @PLACEHOLDER@ values before templating.
+	// Bare YAML scalars cannot start with "@", but replacing it in parse-only
+	// input preserves line and column positions while leaving entity extraction
+	// on the original source.
+	return strings.Map(func(r rune) rune {
+		if r == '@' {
+			return 'x'
+		}
+		return r
+	}, content)
+}
+
+func maskKotlinGradleOptionValueAssignments(content string) string {
+	return maskKotlinGradleBlocks(content, ".value =", "maskedGradleOptionValue()")
+}
+
+func maskKotlinGradleWhenGetOrElse(content string) string {
+	return maskKotlinGradleBlocks(content, ".getOrElse(when (", ".getOrElse(\"masked\")")
+}
+
+func maskKotlinGradleBlocks(content, marker, replacement string) string {
+	lines := strings.SplitAfter(content, "\n")
+	for i := 0; i < len(lines); i++ {
+		text, newline := splitLineEnding(lines[i])
+		markerIndex := strings.Index(text, marker)
+		if markerIndex < 0 {
+			continue
+		}
+		indent := leadingWhitespace(text)
+		blankUntil := i
+		balance := 0
+		for j := i; j < len(lines); j++ {
+			lineText, _ := splitLineEnding(lines[j])
+			balance += strings.Count(lineText, "(") - strings.Count(lineText, ")")
+			balance += strings.Count(lineText, "{") - strings.Count(lineText, "}")
+			blankUntil = j
+			if j > i && balance <= 0 {
+				break
+			}
+		}
+		lines[i] = paddedReplacement(indent, replacement, len(text)) + newline
+		for j := i + 1; j <= blankUntil; j++ {
+			lineText, lineNewline := splitLineEnding(lines[j])
+			lines[j] = maskLineText(lineText) + lineNewline
+		}
+		i = blankUntil
+	}
+	return strings.Join(lines, "")
+}
+
+func leadingWhitespace(text string) string {
+	return text[:len(text)-len(strings.TrimLeft(text, " \t"))]
+}
+
+func paddedReplacement(indent, replacement string, width int) string {
+	out := indent + replacement
+	if len(out) >= width {
+		return out[:width]
+	}
+	return out + strings.Repeat(" ", width-len(out))
 }
 
 func typeScriptGenericCallSignatureStarts(trimmed string) bool {

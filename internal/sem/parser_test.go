@@ -588,6 +588,82 @@ func TestTreeSitterParserKotlinMasksMultiDollarStrings(t *testing.T) {
 	}
 }
 
+func TestTreeSitterParserKotlinMasksGradleListOptionAssignment(t *testing.T) {
+	_, language, status := TreeSitterParser{}.ParseWithStatus("documentation.gradle.kts", `tasks.withType<Javadoc>().configureEach {
+    (this as StandardJavadocDocletOptions).apply {
+        addMultilineStringsOption("tag").value = listOf(
+            "apiNote:a:API Note:",
+            "implNote:a:Implementation Note:"
+        )
+        use(true)
+    }
+}
+`)
+	if language != "Kotlin" {
+		t.Fatalf("language = %q", language)
+	}
+	if status.ParseError {
+		t.Fatalf("unexpected parse status: %#v", status)
+	}
+}
+
+func TestTreeSitterParserKotlinMasksGradleOptionValueMapAssignment(t *testing.T) {
+	_, language, status := TreeSitterParser{}.ParseWithStatus("documentation.gradle.kts", `tasks.withType<Javadoc>().configureEach {
+    (this as StandardJavadocDocletOptions).apply {
+        addStringsOption("-module", ",").value = modularProjects.map { it.javaModuleName }
+        use(true)
+    }
+}
+`)
+	if language != "Kotlin" {
+		t.Fatalf("language = %q", language)
+	}
+	if status.ParseError {
+		t.Fatalf("unexpected parse status: %#v", status)
+	}
+}
+
+func TestTreeSitterParserKotlinMasksGradleWhenGetOrElse(t *testing.T) {
+	_, language, status := TreeSitterParser{}.ParseWithStatus("junitbuild.publishing-conventions.gradle.kts", `val jupiterProjects = listOf<Project>()
+
+group = buildParameters.publishing.group
+    .getOrElse(when (project) {
+        in jupiterProjects -> "org.junit.jupiter"
+        else -> "org.junit"
+    })
+`)
+	if language != "Kotlin" {
+		t.Fatalf("language = %q", language)
+	}
+	if status.ParseError {
+		t.Fatalf("unexpected parse status: %#v", status)
+	}
+}
+
+func TestTreeSitterParserYAMLMasksAntoraPlaceholders(t *testing.T) {
+	entities, language, status := TreeSitterParser{}.ParseWithStatus("antora-playbook.yml", `antora:
+  extensions:
+  - '@antora/collector-extension'
+content:
+  sources:
+  - url: @GIT_REPO_ROOT@
+    branches: @GIT_BRANCH_NAME@
+ui:
+  supplemental_files:
+    - path: css/vendor/tabs.css
+      contents: @GIT_REPO_ROOT@/documentation/node_modules/@asciidoctor/tabs/dist/css/tabs.css
+`)
+	if language != "YAML" {
+		t.Fatalf("language = %q", language)
+	}
+	if status.ParseError {
+		t.Fatalf("unexpected parse status: %#v", status)
+	}
+	if len(entities) == 0 {
+		t.Fatalf("expected YAML section entities after masking Antora placeholders")
+	}
+}
+
 func TestTreeSitterParserTypeScriptMasksTypeofDynamicImportTypeArgument(t *testing.T) {
 	_, language, status := TreeSitterParser{}.ParseWithStatus("configureStore.test.ts", `vi.doMock('redux', async (importOriginal) => {
   const redux = await importOriginal<typeof import('redux')>()
