@@ -1915,7 +1915,7 @@ func splitSignatureTypes(language, signature string) (string, string) {
 	switch language {
 	case "Go", "Rust":
 		return params, after
-	case "TypeScript", "JavaScript":
+	case "TypeScript", "JavaScript", "Kotlin":
 		if strings.HasPrefix(after, ":") {
 			after = strings.TrimSpace(strings.TrimPrefix(after, ":"))
 		} else {

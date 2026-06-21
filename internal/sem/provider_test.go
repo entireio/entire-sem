@@ -8865,6 +8865,45 @@ data class User(
 	}
 }
 
+func TestKotlinTypeAndFieldRelations(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "src/User.kt", `package com.acme
+
+data class User(
+  val id: String,
+  var displayName: String,
+)
+
+class Greeter {
+  fun rename(user: User): User {
+    user.displayName = user.id
+    val current = user.displayName
+    return user
+  }
+}
+`)
+
+	snapshot, err := BuildProviderSnapshotWithOptions(t.Context(), repo, "test-version", ProviderSnapshotOptions{Worktree: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []struct {
+		relationType string
+		from         string
+		to           string
+	}{
+		{relationType: "PARAM_TYPE", from: "Greeter.rename", to: "User"},
+		{relationType: "RETURNS_TYPE", from: "Greeter.rename", to: "User"},
+		{relationType: "READS_FIELD", from: "Greeter.rename", to: "User.id"},
+		{relationType: "READS_FIELD", from: "Greeter.rename", to: "User.displayName"},
+		{relationType: "WRITES_FIELD", from: "Greeter.rename", to: "User.displayName"},
+	} {
+		if !hasRelationByLastSegment(snapshot.Relations, want.relationType, want.from, want.to) {
+			t.Fatalf("missing Kotlin %s %s -> %s in %#v", want.relationType, want.from, want.to, snapshot.Relations)
+		}
+	}
+}
+
 func TestCapabilitiesReportRelationSupportPerLanguage(t *testing.T) {
 	caps := Capabilities()
 
