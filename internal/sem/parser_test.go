@@ -817,6 +817,8 @@ TEST(module_test, errors) {
   EXPECT_THROW(throw fmt::format_error("oops"), std::exception);
   EXPECT_NONFATAL_FAILURE(
       EXPECT_THROW_MSG(throw runtime_error("a"), runtime_error, "b"), "");
+  EXPECT_CALL(streambuf, xsputn(data, static_cast<std::streamsize>(n)))
+      .WillOnce(testing::Return(max_streamsize));
 }
 
 GTEST_DISABLE_MSC_WARNINGS_PUSH_(4251 \
@@ -828,6 +830,18 @@ GTEST_DEFINE_bool_(catch_exceptions,
                    " should catch exceptions and treat them as test failures.");
 
 GMOCK_DEFINE_DEFAULT_ACTION_FOR_RETURN_TYPE_(::std::string, "");
+
+GTEST_REPEATER_METHOD_(OnTestProgramStart, UnitTest)
+GTEST_REVERSE_REPEATER_METHOD_(OnEnvironmentsSetUpEnd, UnitTest)
+GTEST_IMPL_FORMAT_C_STRING_AS_POINTER_(const char)
+
+GTEST_ATTRIBUTE_PRINTF_(2, 3)
+static void ColoredPrintf(GTestColor color, const char *fmt, ...) {}
+
+GTEST_INTERNAL_DEPRECATED(
+    "INSTANTIATE_TEST_CASE_P is deprecated, please use "
+    "INSTANTIATE_TEST_SUITE_P")
+constexpr bool InstantiateTestCase_P_IsDeprecated() { return true; }
 `)
 	if language != "C++" {
 		t.Fatalf("language = %q", language)
@@ -865,8 +879,13 @@ enum : unsigned {
   type_mask = 0x00007,
 };
 
+enum : ullong { is_unpacked_bit = 1ULL << 63 };
+
 extern template FMT_API auto thousands_sep_impl<char>(locale_ref)
     -> thousands_sep_result<char>;
+
+template class file_access<file_access_tag, std::filebuf,
+                           &std::filebuf::_Myfile>;
 
 void operator_call(bool value) {
   operator()<bool>(value);
@@ -911,6 +930,11 @@ struct is_std_string_like<T, void_t<decltype(std::declval<T>().find_first_of(
                                  typename T::value_type(), 0))>>
     : std::is_convertible<decltype(std::declval<T>().data()),
                           const typename T::value_type*> {};
+
+template <size_t... Is>
+static auto check(index_sequence<Is...>) -> decltype(all_true(
+    index_sequence<Is...>{},
+    integer_sequence<bool, (Is >= 0)...>{}));
 
 template <bool IS_CONSTEXPR, typename T, typename Ptr = const T*>
 FMT_CONSTEXPR auto find(Ptr first, Ptr last, T value, Ptr& out) -> bool {

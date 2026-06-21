@@ -524,8 +524,10 @@ func maskCPlusPlusUnsupportedSyntax(content string) string {
 			} else if strings.HasPrefix(trimmed, "void_t<decltype(") {
 				lines[i] = paddedReplacement(leadingWhitespace(text), "void>", len(text)) + newline
 			} else if strings.Contains(text, "-> decltype(") && balancedCallEnd(text, strings.Index(text, "-> decltype(")+len("-> decltype")) < 0 {
+				startLine := i
+				startText := text
+				startNewline := newline
 				marker := strings.Index(text, "-> decltype(")
-				lines[i] = text[:marker] + sameLengthReplacement("-> void", len(text)-marker) + newline
 				balance := strings.Count(text[marker:], "(") - strings.Count(text[marker:], ")")
 				for balance > 0 && i+1 < len(lines) {
 					i++
@@ -533,6 +535,11 @@ func maskCPlusPlusUnsupportedSyntax(content string) string {
 					balance += strings.Count(text, "(") - strings.Count(text, ")")
 					lines[i] = maskLineText(text) + newline
 				}
+				replacement := "-> void"
+				if !cPlusPlusNextNonEmptyLineStarts(lines, i+1, "{") {
+					replacement = "-> void;"
+				}
+				lines[startLine] = startText[:marker] + sameLengthReplacement(replacement, len(startText)-marker) + startNewline
 			} else if cPlusPlusMultilineTestMacroStart(trimmed) {
 				lines[i] = paddedReplacement(leadingWhitespace(text), "void test_macro()", len(text)) + newline
 				balance := strings.Count(text, "(") - strings.Count(text, ")")
@@ -572,6 +579,17 @@ func maskCPlusPlusUnsupportedSyntax(content string) string {
 				if statementMacro {
 					i = maskCPlusPlusStreamingMacroContinuations(lines, i)
 				}
+			} else if cPlusPlusMultilineAnnotationMacroStart(trimmed) {
+				balance := 0
+				for {
+					balance += strings.Count(text, "(") - strings.Count(text, ")")
+					lines[i] = maskLineText(text) + newline
+					if (balance <= 0 && strings.Contains(text, ")")) || i+1 >= len(lines) {
+						break
+					}
+					i++
+					text, newline = splitLineEnding(lines[i])
+				}
 			} else if masked, ok := maskCPlusPlusTestMacroDefinition(text); ok {
 				lines[i] = masked + newline
 			} else if masked, ok := maskCPlusPlusDoctestControlMacro(text); ok {
@@ -605,6 +623,15 @@ func maskCPlusPlusUnsupportedSyntax(content string) string {
 					i++
 					text, newline = splitLineEnding(lines[i])
 					lines[i] = maskLineText(text) + newline
+				}
+			} else if strings.HasPrefix(trimmed, "template class ") {
+				for {
+					lines[i] = maskLineText(text) + newline
+					if strings.Contains(text, ";") || i+1 >= len(lines) {
+						break
+					}
+					i++
+					text, newline = splitLineEnding(lines[i])
 				}
 			} else if strings.HasPrefix(trimmed, "FMT_PRAGMA_") {
 				lines[i] = maskLineText(text) + newline
@@ -659,7 +686,7 @@ func maskCPlusPlusUnsupportedSyntax(content string) string {
 
 var (
 	cPlusPlusAnnotationMacroPattern               = regexp.MustCompile(`\b(?:FMT_(?:API|FUNC|EXPORT|INLINE(?:_VARIABLE)?|CONSTEXPR(?:20|_STRING)?|CONSTEVAL|ALWAYS_INLINE|NODISCARD|NORETURN|DEPRECATED|MAYBE_UNUSED|NO_UNIQUE_ADDRESS|LIFETIMEBOUND|BUILTIN)|JSON_(?:HEDLEY_[A-Z0-9_]+|EXPLICIT|INLINE_VARIABLE)|DOCTEST_(?:INTERFACE|CONSTEXPR|NOEXCEPT|INLINE|ATTRIBUTE_[A-Z0-9_]+)|GTEST_API_|GMOCK_API_|GTEST_NO_INLINE_|__stdcall|CALLBACK|WINAPI)\b`)
-	cPlusPlusAnnotationFunctionLikeMacroPattern   = regexp.MustCompile(`\b(?:GTEST_API_|GMOCK_API_|GTEST_DISABLE_MSC_WARNINGS_PUSH_|GTEST_DISABLE_MSC_WARNINGS_POP_|GTEST_ATTRIBUTE_UNUSED_|DOCTEST_MSVC_SUPPRESS_WARNING|DOCTEST_CLANG_SUPPRESS_WARNING|DOCTEST_GCC_SUPPRESS_WARNING)\s*\(`)
+	cPlusPlusAnnotationFunctionLikeMacroPattern   = regexp.MustCompile(`\b(?:GTEST_API_|GMOCK_API_|GTEST_DISABLE_MSC_WARNINGS_PUSH_|GTEST_DISABLE_MSC_WARNINGS_POP_|GTEST_ATTRIBUTE_[A-Za-z0-9_]+|GTEST_INTERNAL_DEPRECATED|DOCTEST_MSVC_SUPPRESS_WARNING|DOCTEST_CLANG_SUPPRESS_WARNING|DOCTEST_GCC_SUPPRESS_WARNING)\s*\(`)
 	cPlusPlusTestMacroPattern                     = regexp.MustCompile(`^(\s*)(?:TEST|TEST_F|TEST_P|TYPED_TEST|TYPED_TEST_P|TEST_CASE(?:_[A-Z0-9_]+)*|TEMPLATE_TEST_CASE(?:_[A-Z0-9_]+)*|SCENARIO|GIVEN|WHEN|THEN)\s*\(`)
 	cPlusPlusDoctestControlMacroPattern           = regexp.MustCompile(`^(\s*)(?:SECTION|SUBCASE|AND_WHEN|AND_THEN)\s*\(.*\)\s*`)
 	cPlusPlusStatementMacroLinePattern            = regexp.MustCompile(`^(?:CAPTURE|INFO|WARN|FAIL|SUCCEED|ADD_FAILURE(?:_AT)?|EXPECT(?:_[A-Z0-9_]+)?|ASSERT(?:_[A-Z0-9_]+)?|CHECK(?:_[A-Z0-9_]+)?|REQUIRE(?:_[A-Z0-9_]+)?|STATIC_REQUIRE(?:_[A-Z0-9_]+)?|JSON_(?:ASSERT|THROW|DIAGNOSTIC_IGNORE)|GTEST_(?:DEFINE|DISABLE|ALLOW|SUPPRESS)[A-Za-z0-9_]*|GMOCK_[A-Za-z0-9_]+)\s*\(`)
@@ -678,7 +705,7 @@ var (
 	cPlusPlusEmptyBraceDefaultPattern             = regexp.MustCompile(`=\s*\{\}`)
 	cPlusPlusTemplatePointerDefaultPattern        = regexp.MustCompile(`>\s*\*\s*=\s*nullptr\s*>`)
 	cPlusPlusUnsignedCastPattern                  = regexp.MustCompile(`\bunsigned\(([^)\n]+)\)`)
-	cPlusPlusAnonymousEnumPattern                 = regexp.MustCompile(`\benum\s*:\s*unsigned\b`)
+	cPlusPlusAnonymousEnumPattern                 = regexp.MustCompile(`\benum\s*:\s*[A-Za-z_][A-Za-z0-9_:]*\b`)
 	cPlusPlusExplicitOperatorCallPattern          = regexp.MustCompile(`operator\(\)<[^>\n]+>\(`)
 	cPlusPlusNoArgGTestMacroLinePattern           = regexp.MustCompile(`^GTEST_[A-Z0-9_]+_\(\)\s*;?\s*(?://.*)?$`)
 )
@@ -694,6 +721,12 @@ func cPlusPlusBlankMacroLine(trimmed string) bool {
 	case strings.HasPrefix(trimmed, "MOCK_METHOD("):
 		return true
 	case strings.HasPrefix(trimmed, "GMOCK_DECLARE_KIND_("):
+		return true
+	case strings.HasPrefix(trimmed, "GTEST_REPEATER_METHOD_("):
+		return true
+	case strings.HasPrefix(trimmed, "GTEST_REVERSE_REPEATER_METHOD_("):
+		return true
+	case strings.HasPrefix(trimmed, "GTEST_IMPL_FORMAT_C_STRING_AS_POINTER_("):
 		return true
 	case strings.HasPrefix(trimmed, "VISIT_TYPE("):
 		return true
@@ -728,6 +761,23 @@ func cPlusPlusMultilineBlankMacroStart(trimmed string) bool {
 		cPlusPlusStatementMacroLinePattern.MatchString(trimmed)
 }
 
+func cPlusPlusMultilineAnnotationMacroStart(trimmed string) bool {
+	return strings.HasPrefix(trimmed, "GTEST_INTERNAL_DEPRECATED(") ||
+		strings.HasPrefix(trimmed, "GTEST_ATTRIBUTE_")
+}
+
+func cPlusPlusNextNonEmptyLineStarts(lines []string, start int, prefix string) bool {
+	for i := start; i < len(lines); i++ {
+		text, _ := splitLineEnding(lines[i])
+		trimmed := strings.TrimSpace(text)
+		if trimmed == "" {
+			continue
+		}
+		return strings.HasPrefix(trimmed, prefix)
+	}
+	return false
+}
+
 func cPlusPlusMultilineTestMacroStart(trimmed string) bool {
 	return (strings.HasPrefix(trimmed, "TEST_CASE_TEMPLATE") && !strings.HasPrefix(trimmed, "TEST_CASE_TEMPLATE_INVOKE")) ||
 		strings.HasPrefix(trimmed, "TEMPLATE_TEST_CASE")
@@ -741,7 +791,8 @@ func cPlusPlusMultilineControlMacroStart(trimmed string) bool {
 func maskCPlusPlusStreamingMacroContinuations(lines []string, i int) int {
 	for i+1 < len(lines) {
 		text, newline := splitLineEnding(lines[i+1])
-		if !strings.HasPrefix(strings.TrimSpace(text), "<<") {
+		trimmed := strings.TrimSpace(text)
+		if !strings.HasPrefix(trimmed, "<<") && !strings.HasPrefix(trimmed, ".") {
 			return i
 		}
 		i++
