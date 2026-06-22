@@ -37,7 +37,7 @@ by a handful of giant repositories and can take 1.5-3 hours.
 | `bench/repos.fast.json`  | Fast manifest: 3 repos per language (subset of full).  |
 | `bench/repos.lock.json`  | Commit pins for reproducibility (covers both tiers).   |
 | `bench/.cache/`          | Cloned repositories (gitignored).                      |
-| `bench/results/`         | JSON reports, one per run (committable for trends).    |
+| `bench/results/`         | JSON reports, one per run (gitignored, local-only).    |
 | `internal/bench`         | Measurement core (unit-tested, no network).            |
 | `cmd/sem-bench`          | CLI driver (clone + measure + report).                 |
 
