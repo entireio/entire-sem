@@ -125,3 +125,22 @@ func TestPostgresUnparseableStatementsMaskedWithoutDroppingEntities(t *testing.T
 		t.Errorf("after_tbl dropped by unmasked PostgreSQL statement: %+v", entities)
 	}
 }
+
+// Additional PostgreSQL DDL the SQL grammar cannot parse (foreign-data/event-
+// trigger families, ALTER TEXT SEARCH, generic ALTER OPERATOR) must be masked
+// without dropping surrounding real entities.
+func TestPostgresForeignAndOperatorDDLMasked(t *testing.T) {
+	src := "CREATE TABLE before_tbl (id int);\n" +
+		"CREATE FOREIGN DATA WRAPPER dblink_fdw VALIDATOR dblink_fdw_validator;\n" +
+		"CREATE EVENT TRIGGER t ON ddl_command_start EXECUTE FUNCTION f();\n" +
+		"ALTER TEXT SEARCH DICTIONARY intdict (MAXLEN = 8);\n" +
+		"ALTER OPERATOR >= (citext, citext) SET (RESTRICT = scalargesel);\n" +
+		"CREATE TABLE after_tbl (id int);\n"
+	entities, _, status := TreeSitterParser{}.ParseWithStatus("ddl.sql", src)
+	if status.ParseError {
+		t.Fatalf("unexpected parse error after masking: %s", status.Detail)
+	}
+	if countEntity(entities, "table", "before_tbl") != 1 || countEntity(entities, "table", "after_tbl") != 1 {
+		t.Fatalf("surrounding tables dropped by unmasked DDL: %#v", entities)
+	}
+}

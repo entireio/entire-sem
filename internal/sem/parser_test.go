@@ -2584,3 +2584,35 @@ func TestTreeSitterParserCMasksExportAndAttributeMacros(t *testing.T) {
 		t.Fatalf("real_function not extracted (macro cascade not contained): %#v", entities)
 	}
 }
+
+func TestTreeSitterParserCMasksCatalogStructMacros(t *testing.T) {
+	// PostgreSQL system-catalog headers wrap a valid C struct body in
+	// BEGIN_CATALOG_STRUCT / CATALOG(name,oid,...) BKI_... { ... } macros that
+	// break the grammar and cascade onto the field declarations. Masking the
+	// macro scaffolding must let the struct and a following real function parse.
+	src := "BEGIN_CATALOG_STRUCT\n" +
+		"CATALOG(pg_authid,1260,AuthIdRelationId) BKI_SHARED_RELATION BKI_ROWTYPE_OID(2842,X)\n" +
+		"{\n" +
+		"\tOid oid;\n" +
+		"\tbool rolsuper;\n" +
+		"\tint32 rolconnlimit BKI_DEFAULT(-1);\n" +
+		"} FormData_pg_authid;\n" +
+		"END_CATALOG_STRUCT\n\n" +
+		"int role_count(int n)\n{\n\treturn n + 1;\n}\n"
+	entities, language, status := TreeSitterParser{}.ParseWithStatus("pg_authid.h", src)
+	if language != "C" {
+		t.Fatalf("language = %q", language)
+	}
+	if status.ParseError {
+		t.Fatalf("unexpected parse error after masking catalog macros: %s", status.Detail)
+	}
+	found := false
+	for _, e := range entities {
+		if e.Name == "role_count" && (e.Kind == "function" || e.Kind == "method") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("real function after catalog struct not extracted: %#v", entities)
+	}
+}

@@ -826,10 +826,15 @@ var (
 	swiftPropertyWrapperPrefixPattern               = regexp.MustCompile(`^(\s*)@[A-Za-z_][A-Za-z0-9_]*(?:\([^)]*\))?\s+(?:var|let)\s+`)
 	swiftLeadingOperatorContinuationLinePattern     = regexp.MustCompile(`^\s*(?:<|>|<=|>=|==|!=|&&|\|\|)\s+`)
 	swiftComputedStringPropertyStartPattern         = regexp.MustCompile(`^((?:(?:private|fileprivate|internal|public)\s+)?)var\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(String|\[String\])\s*\{$`)
-	cControlIteratorMacroPattern                    = regexp.MustCompile(`^(?:(?:TAILQ|STAILQ|LIST|SLIST|RB|SPLAY)_(?:FOREACH|FOREACH_SAFE|FOREACH_REVERSE|FOREACH_REVERSE_SAFE)|(?:foreach|foreach_ptr|foreach_delete_current|forboth|for_both_cell|forthree|for_fourth_cell|for_each_from|dlist_foreach(?:_modify)?|slist_foreach(?:_modify)?|hash_seq_search|SGITITERATE))\s*\(`)
+	cControlIteratorMacroPattern                    = regexp.MustCompile(`^(?:(?:TAILQ|STAILQ|LIST|SLIST|RB|SPLAY)_(?:FOREACH|FOREACH_SAFE|FOREACH_REVERSE|FOREACH_REVERSE_SAFE)|(?:foreach|foreach_ptr|foreach_node|foreach_oid|foreach_int|foreach_xid|foreach_delete_current|forboth|for_both_cell|forthree|for_fourth_cell|for_each_from|dlist_foreach(?:_modify)?|dclist_foreach(?:_modify)?|slist_foreach(?:_modify)?|hash_seq_search|SGITITERATE))\s*\(`)
 	cGenerateMacroPattern                           = regexp.MustCompile(`^(?:TAILQ|STAILQ|LIST|SLIST|RB|SPLAY)_(?:HEAD|ENTRY|PROTOTYPE|PROTOTYPE_STATIC|GENERATE|GENERATE_STATIC)\s*\(`)
 	cEnumMacroPattern                               = regexp.MustCompile(`^[A-Z][A-Z0-9_]*_KEYS\s*\(`)
-	cFileScopeStatementMacroPattern                 = regexp.MustCompile(`^(?:PG_MODULE_MAGIC(?:_EXT)?|PG_FUNCTION_INFO_V1|PGDLLEXPORT|PG_KEYWORD|PG_FUNCTION_ARGS|PG_USED_FOR_ASSERTS_ONLY)\s*\(`)
+	cFileScopeStatementMacroPattern                 = regexp.MustCompile(`^(?:PG_MODULE_MAGIC(?:_EXT)?|PG_FUNCTION_INFO_V1|PGDLLEXPORT|PG_KEYWORD|PG_FUNCTION_ARGS|PG_USED_FOR_ASSERTS_ONLY|DECLARE_[A-Z][A-Z0-9_]*|MAKE_SYSCACHE)\s*\(`)
+	// PostgreSQL system-catalog header macros: the `CATALOG(name,oid,...) BKI_...`
+	// struct opener (the `{` follows on the next line) and BKI_* field/struct
+	// annotations. BEGIN/END_CATALOG_STRUCT markers are handled as bare lines.
+	cCatalogStructPattern = regexp.MustCompile(`^CATALOG\s*\(`)
+	cBKIMacroPattern      = regexp.MustCompile(`\bBKI_[A-Z0-9_]*(?:\s*\([^)\n]*\))?`)
 	cStringMacroPattern                             = regexp.MustCompile(`\b[A-Z][A-Z0-9_]*_FEATURE\s*\([^)\n]*\)`)
 	cAnnotationMacroPattern                         = regexp.MustCompile(`\b(?:printflike|__dead|__packed|__unused|__maybe_unused|__attribute__|pg_attribute_\w+)\s*\([^)\n]*(?:\)[^)\n]*)?\)`)
 	// Bare (parenless) C qualifier/attribute macros that prefix or annotate
@@ -862,6 +867,17 @@ func maskCUnsupportedSyntax(content string) string {
 		}
 		if cPreprocessorSkipping(preprocessorSkipStack) {
 			lines[i] = maskLineText(text) + newline
+			continue
+		}
+		if trimmed == "BEGIN_CATALOG_STRUCT" || trimmed == "END_CATALOG_STRUCT" {
+			lines[i] = maskLineText(text) + newline
+			continue
+		}
+		if cCatalogStructPattern.MatchString(trimmed) {
+			// `CATALOG(name,oid,...) BKI_... ` opens a system-catalog struct whose
+			// `{` is on the next line; replace the whole macro line with a plain
+			// struct opener so the (valid C) field body parses.
+			lines[i] = paddedReplacement(leadingWhitespace(text), "struct c_catalog", len(text)) + newline
 			continue
 		}
 		if cFileScopeStatementMacroPattern.MatchString(trimmed) {
@@ -925,6 +941,7 @@ func maskCUnsupportedSyntax(content string) string {
 		text = maskCStringMacros(text)
 		text = maskCAnnotationMacros(text)
 		text = maskCTypeMacros(text)
+		text = cBKIMacroPattern.ReplaceAllStringFunc(text, func(m string) string { return strings.Repeat(" ", len(m)) })
 		text = replaceAllSameLength(text, ", >)", ", 0)")
 		text = replaceAllSameLength(text, ", <)", ", 0)")
 		lines[i] = text + newline
@@ -3191,6 +3208,9 @@ var postgresAlterExtensionPattern = regexp.MustCompile(`(?is)\balter\s+extension
 // and COMMENT ON for non-table objects (access method, operator, type, ...).
 var postgresExplainOptionsPattern = regexp.MustCompile(`(?i)\bexplain\s*\([^)]*\)`)
 var postgresAlterOperatorPattern = regexp.MustCompile(`(?is)\balter\s+operator\s+(?:family|class)\b[^;]*;`)
+var postgresAlterOperatorGenericPattern = regexp.MustCompile(`(?is)\balter\s+operator\s+[^\s(]+\s*\([^)]*\)[^;]*;`)
+var postgresForeignAndTriggerDDLPattern = regexp.MustCompile(`(?is)\b(?:create|alter|drop)\s+(?:foreign\s+data\s+wrapper|server|user\s+mapping|event\s+trigger|publication|subscription)\b[^;]*;`)
+var postgresAlterTextSearchPattern = regexp.MustCompile(`(?is)\balter\s+text\s+search\s+(?:configuration|dictionary|parser|template)\b[^;]*;`)
 var postgresCommentOnObjectPattern = regexp.MustCompile(`(?is)\bcomment\s+on\s+(?:access\s+method|operator(?:\s+(?:family|class))?|aggregate|type|domain|collation|text\s+search\s+\w+|transform|extension|cast|function|procedure|language|server|publication|subscription)\b[^;]*;`)
 
 func maskPostgresUnsupportedSyntax(content string) string {
@@ -3254,6 +3274,15 @@ func maskPostgresUnsupportedSyntax(content string) string {
 		maskBytesPreservingNewlines(masked, loc[0], loc[1])
 	}
 	for _, loc := range postgresAlterOperatorPattern.FindAllStringIndex(content, -1) {
+		maskBytesPreservingNewlines(masked, loc[0], loc[1])
+	}
+	for _, loc := range postgresAlterOperatorGenericPattern.FindAllStringIndex(content, -1) {
+		maskBytesPreservingNewlines(masked, loc[0], loc[1])
+	}
+	for _, loc := range postgresForeignAndTriggerDDLPattern.FindAllStringIndex(content, -1) {
+		maskBytesPreservingNewlines(masked, loc[0], loc[1])
+	}
+	for _, loc := range postgresAlterTextSearchPattern.FindAllStringIndex(content, -1) {
 		maskBytesPreservingNewlines(masked, loc[0], loc[1])
 	}
 	for _, loc := range postgresCommentOnObjectPattern.FindAllStringIndex(content, -1) {
