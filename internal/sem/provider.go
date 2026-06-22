@@ -5783,6 +5783,37 @@ func openSource(ctx context.Context, repo string, useHead bool, ignoreFiles, inc
 	return paths, read, nil, nil
 }
 
+// bundledRuntimeDirNames are directory basenames of third-party C/C++ runtime,
+// libc, libc++, and sanitizer source trees that projects vendor to build
+// against (e.g. Zig's lib/libc and lib/libcxx). They are matched only when
+// nested (not the repository's own top-level directory) so a project that *is*
+// one of these (e.g. the LLVM libcxx repo) is not excluded.
+var bundledRuntimeDirNames = map[string]struct{}{
+	"libc": {}, "libcxx": {}, "libcxxabi": {}, "libunwind": {}, "libtsan": {},
+	"libubsan": {}, "libasan": {}, "compiler-rt": {}, "musl": {}, "glibc": {},
+	"mingw": {}, "mingw-w64": {}, "wasi-libc": {},
+}
+
+// isVendoredScanDir reports whether a directory is vendored/generated and should
+// be skipped during the working-tree walk. It covers the universally-vendored
+// and generated directory names plus nested bundled C/C++ runtime trees.
+func isVendoredScanDir(rel, name string) bool {
+	switch name {
+	case ".git", "node_modules", "vendor", ".next", "dist", "build",
+		"third_party", "third-party", "thirdparty", "3rdparty", "external",
+		"deps", "Pods", "Carthage":
+		return true
+	}
+	// Nested bundled-runtime trees: require a parent segment so the project's own
+	// top-level directory of the same name is preserved.
+	if strings.Contains(rel, "/") {
+		if _, ok := bundledRuntimeDirNames[name]; ok {
+			return true
+		}
+	}
+	return false
+}
+
 func workingTreeFiles(repo string, ignores ignoreMatcher) ([]string, error) {
 	var paths []string
 	err := filepath.WalkDir(repo, func(path string, entry fs.DirEntry, err error) error {
@@ -5791,16 +5822,15 @@ func workingTreeFiles(repo string, ignores ignoreMatcher) ([]string, error) {
 		}
 		name := entry.Name()
 		if entry.IsDir() {
-			switch name {
-			case ".git", "node_modules", "vendor", ".next", "dist", "build":
-				return filepath.SkipDir
-			}
 			if path != repo {
 				rel, err := filepath.Rel(repo, path)
 				if err != nil {
 					return err
 				}
 				rel = filepath.ToSlash(rel)
+				if isVendoredScanDir(rel, name) {
+					return filepath.SkipDir
+				}
 				if ignores.Ignored(rel, true) && !ignores.MayIncludeDescendant(rel) {
 					return filepath.SkipDir
 				}

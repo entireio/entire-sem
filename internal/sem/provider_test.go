@@ -10192,3 +10192,37 @@ fn caller() -> TokenStream {
 		t.Fatalf("macro-template token treated as a call to local serialize_field: %#v", snapshot.Relations)
 	}
 }
+
+func TestIsVendoredScanDir(t *testing.T) {
+	cases := []struct {
+		rel, name string
+		want      bool
+	}{
+		// Nested bundled C/C++ runtime trees (Zig) are excluded.
+		{"lib/libc", "libc", true},
+		{"lib/libcxx", "libcxx", true},
+		{"lib/libcxx/src", "src", false},
+		{"lib/libcxxabi", "libcxxabi", true},
+		{"lib/libunwind", "libunwind", true},
+		// A project's own top-level dir of the same name is preserved.
+		{"libcxx", "libcxx", false},
+		{"libc", "libc", false},
+		// Zig's own Zig-language compiler_rt (underscore) is kept; only the
+		// hyphenated LLVM compiler-rt is treated as vendored.
+		{"lib/compiler_rt", "compiler_rt", false},
+		// Universally vendored/generated directories at any depth.
+		{"test/thirdparty", "thirdparty", true},
+		{"a/b/third_party", "third_party", true},
+		{"node_modules", "node_modules", true},
+		{"vendor", "vendor", true},
+		// Normal source directories are kept.
+		{"src", "src", false},
+		{"lib/std", "std", false},
+		{"include", "include", false},
+	}
+	for _, c := range cases {
+		if got := isVendoredScanDir(c.rel, c.name); got != c.want {
+			t.Errorf("isVendoredScanDir(%q, %q) = %v, want %v", c.rel, c.name, got, c.want)
+		}
+	}
+}
