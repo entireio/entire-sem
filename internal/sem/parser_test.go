@@ -2648,3 +2648,30 @@ func TestTreeSitterParserCPlusPlusMasksNamespaceAndAnnotationMacros(t *testing.T
 		t.Fatalf("class/method not extracted inside namespace macro: %#v", entities)
 	}
 }
+
+func TestTreeSitterParserOCamlInterfaceValSignatures(t *testing.T) {
+	// .mli interface files use `val NAME : type` signatures the implementation
+	// grammar cannot parse. Masking rewrites top-level vals to `let NAME = ()`
+	// so they parse and NAME is still extracted; single- and multi-line type
+	// signatures are both handled.
+	src := "(** doc *)\n\n" +
+		"val fundecl : Mach.fundecl -> Mach.fundecl\n\n" +
+		"val instrument_initialiser\n" +
+		"   : Cmm.expression\n" +
+		"  -> (unit -> Debuginfo.t)\n" +
+		"  -> Cmm.expression\n"
+	entities, language, status := TreeSitterParser{}.ParseWithStatus("afl.mli", src)
+	if language != "OCaml" {
+		t.Fatalf("language = %q", language)
+	}
+	if status.ParseError {
+		t.Fatalf("unexpected parse error after masking .mli signatures: %s", status.Detail)
+	}
+	names := map[string]bool{}
+	for _, e := range entities {
+		names[e.Name] = true
+	}
+	if !names["fundecl"] || !names["instrument_initialiser"] {
+		t.Fatalf("val names not extracted from .mli: %#v", entities)
+	}
+}

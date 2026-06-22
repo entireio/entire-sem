@@ -170,6 +170,9 @@ func (TreeSitterParser) ParseWithStatus(path, content string) ([]Entity, string,
 	if spec.language == "Swift" {
 		parseSrc = []byte(maskSwiftUnsupportedSyntax(content))
 	}
+	if spec.language == "OCaml" && strings.EqualFold(filepath.Ext(path), ".mli") {
+		parseSrc = []byte(maskOCamlInterfaceSyntax(content))
+	}
 	if spec.language == "YAML" {
 		parseSrc = []byte(maskYAMLUnsupportedSyntax(content))
 	}
@@ -601,6 +604,46 @@ func cSharpMaskPrimaryConstructorClass(text string) string {
 	}
 	replacement := "class " + matches[1] + " {}"
 	return paddedReplacement(leadingWhitespace(text), replacement, len(text))
+}
+
+var ocamlValSignaturePattern = regexp.MustCompile(`^(\s*)val\s+(\([^)\n]*\)|[A-Za-z_][\w']*)\b`)
+var ocamlSigOpenWord = regexp.MustCompile(`\b(?:sig|object)\b`)
+var ocamlSigCloseWord = regexp.MustCompile(`\bend\b`)
+
+// maskOCamlInterfaceSyntax rewrites OCaml .mli interface signatures into forms
+// the implementation grammar accepts. The package ships only the .ml grammar,
+// so top-level `val NAME : <type>` signatures (which have no implementation)
+// raise parse errors. Rewrite each to `let NAME = ()` (preserving NAME for
+// symbol extraction) and blank the type, including `:`/`->`/`|` continuation
+// lines. Only top-level vals are rewritten: inside `sig`/`object ... end`
+// blocks `let` is invalid, so those are left untouched (not made worse).
+func maskOCamlInterfaceSyntax(content string) string {
+	lines := strings.SplitAfter(content, "\n")
+	depth := 0
+	for i := 0; i < len(lines); i++ {
+		text, newline := splitLineEnding(lines[i])
+		if depth == 0 {
+			if m := ocamlValSignaturePattern.FindStringSubmatch(text); m != nil {
+				lines[i] = paddedReplacement(m[1], "let "+m[2]+" = ()", len(text)) + newline
+				for i+1 < len(lines) {
+					nextText, nextNewline := splitLineEnding(lines[i+1])
+					t := strings.TrimSpace(nextText)
+					if t == "" || !(strings.HasPrefix(t, ":") || strings.HasPrefix(t, "->") || strings.HasPrefix(t, "|")) {
+						break
+					}
+					lines[i+1] = maskLineText(nextText) + nextNewline
+					i++
+				}
+				continue
+			}
+		}
+		trimmed := strings.TrimSpace(text)
+		depth += len(ocamlSigOpenWord.FindAllString(trimmed, -1)) - len(ocamlSigCloseWord.FindAllString(trimmed, -1))
+		if depth < 0 {
+			depth = 0
+		}
+	}
+	return strings.Join(lines, "")
 }
 
 func maskSwiftUnsupportedSyntax(content string) string {
