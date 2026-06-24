@@ -247,8 +247,11 @@ checkpoint context at the entity level instead of stopping at "this file changed
 - expose the same parser through local-only provider commands that emit
   JSON/NDJSON snapshot, symbol, and relation records
 
-The implementation does not copy or vendor Ataraxy Labs code. The parser dependency is
-`github.com/smacker/go-tree-sitter`, which is MIT-licensed.
+The implementation does not copy or vendor Ataraxy Labs code. The runtime parser
+dependency is `github.com/smacker/go-tree-sitter`, which is MIT-licensed. This
+repository additionally vendors three tree-sitter grammars as source, each under
+its own upstream MIT license: Dart (`internal/sem/grammars/dart/`), PostgreSQL
+(`internal/sem/pgsql/`), and Zsh (`internal/sem/zsh/`).
 
 ## Current Limits
 

@@ -111,7 +111,7 @@ func FileCochanges(ctx context.Context, repo string, maxCommits int) ([]FileCoch
 	if maxCommits <= 0 {
 		maxCommits = 256
 	}
-	out, err := run(ctx, repo, "git", "log", "--name-only", "--pretty=format:--entire-sem-commit--", "-n", strconv.Itoa(maxCommits), "--")
+	out, err := run(ctx, repo, "git", "-c", "core.quotePath=false", "log", "--name-only", "--pretty=format:--entire-sem-commit--", "-n", strconv.Itoa(maxCommits), "--")
 	if err != nil {
 		return nil, err
 	}
