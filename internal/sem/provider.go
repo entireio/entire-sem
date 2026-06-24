@@ -1387,6 +1387,33 @@ func resolveCallTargets(name string, from SymbolRecord, candidates, sameFile []S
 		return imported
 	}
 
+	// Same-package resolution: in Go every file in a directory is the same
+	// package, so a bare call resolves within that package even when the name is
+	// not globally unique. Strict uniqueness-within-directory (function symbols
+	// only) keeps this high-precision while recovering cross-file same-package
+	// calls that the globally-unique gate below would otherwise drop.
+	if from.Language == "Go" {
+		fromDir := filepath.ToSlash(filepath.Dir(from.FilePath))
+		var samePkg []SymbolRecord
+		for _, to := range candidates {
+			if to.ID == from.ID || to.Kind != "function" {
+				continue
+			}
+			if filepath.ToSlash(filepath.Dir(to.FilePath)) == fromDir {
+				samePkg = append(samePkg, to)
+			}
+		}
+		if len(samePkg) == 1 {
+			return []resolvedCallTarget{{
+				SymbolRecord: samePkg[0],
+				Confidence:   0.80,
+				Reason:       "direct call expression resolved to same-package symbol",
+				Resolution:   "package",
+				Scope:        "module",
+			}}
+		}
+	}
+
 	var remaining []SymbolRecord
 	for _, to := range candidates {
 		if to.ID != from.ID && to.Kind != "field" {
@@ -2507,6 +2534,7 @@ func receiverCallRelations(from SymbolRecord, block string, methodsByContainer m
 		delete(paramTypes, name)
 	}
 	var relations []RelationRecord
+	methodResolved := map[string]bool{}
 	for _, call := range calls {
 		method, confidence, reason, resolution, scope, ok := receiverQualifiedMethodTarget(from, call, symbolsByShortName[call.Method], returnTypesBySymbolNameAndFile)
 		if !ok {
@@ -2531,6 +2559,7 @@ func receiverCallRelations(from SymbolRecord, block string, methodsByContainer m
 			}},
 			WarningCodes: []string{},
 		})
+		methodResolved[call.Receiver+"."+call.Method] = true
 	}
 	for _, call := range calls {
 		var targetID string
@@ -2580,6 +2609,48 @@ func receiverCallRelations(from SymbolRecord, block string, methodsByContainer m
 			Reason:        reason,
 			RelationScope: scope,
 			Resolution:    "type_inferred",
+			TargetKind:    "symbol",
+			Evidence: []Evidence{{
+				Kind:      "call_site",
+				FilePath:  from.FilePath,
+				StartLine: from.StartLine,
+				EndLine:   from.EndLine,
+				Detail:    call.Receiver + "." + call.Method,
+			}},
+			WarningCodes: []string{},
+		})
+		methodResolved[call.Receiver+"."+call.Method] = true
+	}
+	// Globally-unique method-name fallback: when receiver-type resolution did not
+	// resolve a receiver.method() call and exactly one method with this short name
+	// exists in the workspace, resolve to it. This is conflict-free — a unique
+	// method name means type-based and name-based resolution agree — and it is the
+	// same "unique name" heuristic the comparison baseline (CBM) uses.
+	for _, call := range calls {
+		if call.Receiver == "this" || call.Receiver == "self" {
+			continue
+		}
+		if methodResolved[call.Receiver+"."+call.Method] {
+			continue
+		}
+		m, ok := uniqueMethodByShortName(symbolsByShortName[call.Method])
+		if !ok || m.ID == from.ID {
+			continue
+		}
+		methodResolved[call.Receiver+"."+call.Method] = true
+		scope := "file"
+		if m.FilePath != from.FilePath {
+			scope = "module"
+		}
+		relations = append(relations, RelationRecord{
+			RecordType:    "relation",
+			FromID:        from.ID,
+			ToID:          m.ID,
+			Type:          "CALLS",
+			Confidence:    0.6,
+			Reason:        "method call matched globally unique method name",
+			RelationScope: scope,
+			Resolution:    "name_only",
 			TargetKind:    "symbol",
 			Evidence: []Evidence{{
 				Kind:      "call_site",
@@ -2863,6 +2934,22 @@ func receiverQualifiedMethodTarget(from SymbolRecord, call receiverCall, candida
 		return target, 0.78, "receiver call overload resolved from nested argument return type", "type_inferred", scope, true
 	}
 	return SymbolRecord{}, 0, "", "", "", false
+}
+
+// uniqueMethodByShortName returns the sole method whose short name matches, if
+// exactly one method (across the workspace) carries that name. Used as a
+// last-resort receiver.method() resolver when the receiver type is unknown.
+func uniqueMethodByShortName(candidates []SymbolRecord) (SymbolRecord, bool) {
+	var methods []SymbolRecord
+	for _, c := range candidates {
+		if c.Kind == "method" {
+			methods = append(methods, c)
+		}
+	}
+	if len(methods) == 1 {
+		return methods[0], true
+	}
+	return SymbolRecord{}, false
 }
 
 func receiverQualifiedOverloadByArgReturnType(from SymbolRecord, call receiverCall, candidates []SymbolRecord, returnTypesBySymbolNameAndFile map[string]map[string][]string) (SymbolRecord, bool) {
