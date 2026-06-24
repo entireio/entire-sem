@@ -2144,7 +2144,7 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 				}
 			}
 			if spec.callResolution == "full" {
-				for _, r := range receiverCallRelations(from, block, methodsByContainer, symbolsByShortName, returnTypesBySymbolNameAndFile) {
+				for _, r := range receiverCallRelations(from, block, methodsByContainer, symbolsByShortName, returnTypesBySymbolNameAndFile, importsByName) {
 					emit(r)
 				}
 				for _, r := range importedReceiverCallRelations(from, block, importsByName, symbolsByShortName) {
@@ -2503,7 +2503,7 @@ func buildTypeRelation(repoKey string, anchor SymbolRecord, super, relation stri
 // type. These calls are otherwise dropped (a name preceded by '.'/'->' is not a
 // plain call), so this is purely additive. Type containers are skipped as
 // callers — calls live in methods/functions, not in the class declaration.
-func receiverCallRelations(from SymbolRecord, block string, methodsByContainer map[string]map[string]SymbolRecord, symbolsByShortName map[string][]SymbolRecord, returnTypesBySymbolNameAndFile map[string]map[string][]string) []RelationRecord {
+func receiverCallRelations(from SymbolRecord, block string, methodsByContainer map[string]map[string]SymbolRecord, symbolsByShortName map[string][]SymbolRecord, returnTypesBySymbolNameAndFile map[string]map[string][]string, importsByName map[string][]string) []RelationRecord {
 	if typeLikeKind(from.Kind) {
 		return nil
 	}
@@ -2631,6 +2631,19 @@ func receiverCallRelations(from SymbolRecord, block string, methodsByContainer m
 			continue
 		}
 		if methodResolved[call.Receiver+"."+call.Method] {
+			continue
+		}
+		// Restrict to Go (the only language this tier is validated on) and skip
+		// imported-package selectors like json.Marshal(): there the receiver is a
+		// package, not a variable, and the call is external — without this guard
+		// the fallback would emit a spurious local edge to any same-named method.
+		// (A receiver whose type is known but whose method isn't found directly is
+		// left to fire: in compiling code that is an embedded method, which the
+		// unique-name match resolves correctly.)
+		if from.Language != "Go" {
+			continue
+		}
+		if len(importsByName[call.Receiver]) > 0 {
 			continue
 		}
 		m, ok := uniqueMethodByShortName(symbolsByShortName[call.Method])

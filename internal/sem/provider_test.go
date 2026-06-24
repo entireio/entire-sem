@@ -6381,6 +6381,37 @@ public class LauncherDiscoveryRequestBuilder {
 	}
 }
 
+func TestUniqueMethodFallbackSkipsImportedPackageCall(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "use.go", `package pkg
+
+import "encoding/json"
+
+func Encode(v any) ([]byte, error) {
+	return json.Marshal(v)
+}
+`)
+	writeFile(t, repo, "codec.go", `package pkg
+
+type Codec struct{}
+
+func (c Codec) Marshal() []byte { return nil }
+`)
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// json.Marshal() is an imported-package call; the globally-unique
+	// method-name fallback must NOT resolve it to the local Codec.Marshal method.
+	for _, r := range snapshot.Relations {
+		if r.Type == "CALLS" && strings.Contains(r.FromID, ":Encode") &&
+			strings.Contains(r.ToID, "method:Marshal") {
+			t.Fatalf("spurious local method edge for imported json.Marshal call: %s -> %s (%s)",
+				r.FromID, r.ToID, r.Reason)
+		}
+	}
+}
+
 func TestBuildProviderSnapshotEmitsImportedExternalCalls(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "trim.go", `package api
