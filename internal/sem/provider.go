@@ -2528,6 +2528,7 @@ func receiverCallRelations(from SymbolRecord, block string, methodsByContainer m
 			varTypes[name] = typeName
 		}
 	}
+	importedReceiverVars := importedReceiverVarTypes(from.Signature, block, importsByName)
 	deepReturnedCallSuffixes := receiverDeepChainSuffixes(deepChainedReturnCalls, returnedDeepChainCalls)
 	paramTypes := parameterVarTypes(from.Signature)
 	for name := range localTypes {
@@ -2637,14 +2638,29 @@ func receiverCallRelations(from SymbolRecord, block string, methodsByContainer m
 		// imported-package selectors like json.Marshal(): there the receiver is a
 		// package, not a variable, and the call is external — without this guard
 		// the fallback would emit a spurious local edge to any same-named method.
-		// (A receiver whose type is known but whose method isn't found directly is
-		// left to fire: in compiling code that is an embedded method, which the
-		// unique-name match resolves correctly.)
 		if from.Language != "Go" {
 			continue
 		}
 		if len(importsByName[call.Receiver]) > 0 {
 			continue
+		}
+		// Skip receivers that are values of an external/imported type: there the
+		// call targets that package's method, not a same-named local one. Two
+		// signals catch this. (1) The receiver is bound to a package-qualified
+		// type (`buf *bytes.Buffer`) — its bare type name is never captured as a
+		// local symbol, so it is detected straight from the import qualifier.
+		// (2) The receiver's bare type is known but resolves to no local type-like
+		// symbol (e.g. a dot-imported type). The fallback is thus left to fire
+		// only when the receiver's type is local (an unresolved method on a local
+		// type is an embedded method, which the unique-name match resolves
+		// correctly) or entirely unknown.
+		if _, external := importedReceiverVars[call.Receiver]; external {
+			continue
+		}
+		if typeName, known := varTypes[call.Receiver]; known {
+			if _, localType := firstTypeLikeNamed(symbolsByShortName[typeName], typeName); !localType {
+				continue
+			}
 		}
 		m, ok := uniqueMethodByShortName(symbolsByShortName[call.Method])
 		if !ok || m.ID == from.ID {
@@ -2660,7 +2676,7 @@ func receiverCallRelations(from SymbolRecord, block string, methodsByContainer m
 			FromID:        from.ID,
 			ToID:          m.ID,
 			Type:          "CALLS",
-			Confidence:    0.6,
+			Confidence:    0.68,
 			Reason:        "method call matched globally unique method name",
 			RelationScope: scope,
 			Resolution:    "name_only",

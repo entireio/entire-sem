@@ -6405,8 +6405,40 @@ func (c Codec) Marshal() []byte { return nil }
 	// method-name fallback must NOT resolve it to the local Codec.Marshal method.
 	for _, r := range snapshot.Relations {
 		if r.Type == "CALLS" && strings.Contains(r.FromID, ":Encode") &&
-			strings.Contains(r.ToID, "method:Marshal") {
+			strings.Contains(r.ToID, "method:Codec.Marshal") {
 			t.Fatalf("spurious local method edge for imported json.Marshal call: %s -> %s (%s)",
+				r.FromID, r.ToID, r.Reason)
+		}
+	}
+}
+
+func TestUniqueMethodFallbackSkipsExternalTypedReceiver(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "use.go", `package pkg
+
+import "bytes"
+
+func Encode(buf *bytes.Buffer) {
+	buf.Marshal()
+}
+`)
+	writeFile(t, repo, "codec.go", `package pkg
+
+type Codec struct{}
+
+func (c Codec) Marshal() string { return "" }
+`)
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// buf is a value of an external type (*bytes.Buffer); the globally-unique
+	// method-name fallback must NOT resolve buf.Marshal() to the local
+	// Codec.Marshal method just because the name is locally unique.
+	for _, r := range snapshot.Relations {
+		if r.Type == "CALLS" && strings.Contains(r.FromID, ":Encode") &&
+			strings.Contains(r.ToID, "method:Codec.Marshal") {
+			t.Fatalf("spurious local method edge for external-typed receiver buf.Marshal(): %s -> %s (%s)",
 				r.FromID, r.ToID, r.Reason)
 		}
 	}

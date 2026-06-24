@@ -2752,3 +2752,41 @@ func isTypeName(name string) bool {
 	}
 	return true
 }
+
+var (
+	// `buf *bytes.Buffer`, `r []pkg.Type` — a name bound to a package-qualified type.
+	qualifiedTypedDeclRe = regexp.MustCompile(`\b([A-Za-z_]\w*)\s+[*&\[\]]*([a-z]\w*)\.[A-Z]\w*`)
+	// `c := svc.New(...)`, `c = &pkg.Thing{...}` — a name bound to a package value.
+	qualifiedAssignRe = regexp.MustCompile(`\b([A-Za-z_]\w*)\s*:?=\s*&?([a-z]\w*)\.`)
+)
+
+// importedReceiverVarTypes maps each local variable or parameter whose declared
+// type (or assigned value) is package-qualified — e.g. `buf *bytes.Buffer` or
+// `c := svc.New()` — to that package qualifier, keeping only qualifiers that are
+// imports of the file. Package-qualified types are never captured as local
+// symbols, so this is how receiver-call resolution recognises a value of an
+// external type even when its bare type name was never resolved.
+func importedReceiverVarTypes(signature, block string, importsByName map[string][]string) map[string]string {
+	out := map[string]string{}
+	add := func(matches [][]string) {
+		for _, m := range matches {
+			if len(m) != 3 {
+				continue
+			}
+			name, pkg := m[1], m[2]
+			if _, exists := out[name]; exists {
+				continue
+			}
+			if len(importsByName[pkg]) > 0 {
+				out[name] = pkg
+			}
+		}
+	}
+	stripped := stripCodeLiteralsAndComments(block)
+	add(qualifiedTypedDeclRe.FindAllStringSubmatch(signature, -1))
+	add(qualifiedTypedDeclRe.FindAllStringSubmatch(stripped, -1))
+	add(qualifiedAssignRe.FindAllStringSubmatch(stripped, -1))
+	delete(out, "this")
+	delete(out, "self")
+	return out
+}
