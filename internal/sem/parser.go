@@ -13,7 +13,6 @@ import (
 
 	sitter "github.com/smacker/go-tree-sitter"
 	"github.com/smacker/go-tree-sitter/bash"
-	dart "github.com/suhaanthayyil/entire-sem/internal/sem/grammars/dart"
 	"github.com/smacker/go-tree-sitter/c"
 	"github.com/smacker/go-tree-sitter/cpp"
 	"github.com/smacker/go-tree-sitter/csharp"
@@ -37,6 +36,7 @@ import (
 	treesittertsx "github.com/smacker/go-tree-sitter/typescript/tsx"
 	treesitterts "github.com/smacker/go-tree-sitter/typescript/typescript"
 	treesitteryaml "github.com/smacker/go-tree-sitter/yaml"
+	dart "github.com/suhaanthayyil/entire-sem/internal/sem/grammars/dart"
 	"github.com/suhaanthayyil/entire-sem/internal/sem/pgsql"
 	"github.com/suhaanthayyil/entire-sem/internal/sem/zsh"
 )
@@ -906,10 +906,10 @@ var (
 	// PostgreSQL system-catalog header macros: the `CATALOG(name,oid,...) BKI_...`
 	// struct opener (the `{` follows on the next line) and BKI_* field/struct
 	// annotations. BEGIN/END_CATALOG_STRUCT markers are handled as bare lines.
-	cCatalogStructPattern = regexp.MustCompile(`^CATALOG\s*\(`)
-	cBKIMacroPattern      = regexp.MustCompile(`\bBKI_[A-Z0-9_]*(?:\s*\([^)\n]*\))?`)
-	cStringMacroPattern                             = regexp.MustCompile(`\b[A-Z][A-Z0-9_]*_FEATURE\s*\([^)\n]*\)`)
-	cAnnotationMacroPattern                         = regexp.MustCompile(`\b(?:printflike|__dead|__packed|__unused|__maybe_unused|__attribute__|pg_attribute_\w+)\s*\([^)\n]*(?:\)[^)\n]*)?\)`)
+	cCatalogStructPattern   = regexp.MustCompile(`^CATALOG\s*\(`)
+	cBKIMacroPattern        = regexp.MustCompile(`\bBKI_[A-Z0-9_]*(?:\s*\([^)\n]*\))?`)
+	cStringMacroPattern     = regexp.MustCompile(`\b[A-Z][A-Z0-9_]*_FEATURE\s*\([^)\n]*\)`)
+	cAnnotationMacroPattern = regexp.MustCompile(`\b(?:printflike|__dead|__packed|__unused|__maybe_unused|__attribute__|pg_attribute_\w+)\s*\([^)\n]*(?:\)[^)\n]*)?\)`)
 	// Bare (parenless) C qualifier/attribute macros that prefix or annotate
 	// declarations and break the C grammar. `\w*DLL(IMPORT|EXPORT)` generalizes
 	// across C runtimes (PostgreSQL PGDLLIMPORT, Julia JL_DLLEXPORT, ...); the
@@ -926,8 +926,8 @@ var (
 	// Julia annotation macros (JL_NOTSAFEPOINT, JL_GLOBALLY_ROOTED, ...) annotate
 	// declarations and break the C/C++ grammar; mask them (with any args).
 	jlAnnotationMacroPattern = regexp.MustCompile(`\bJL_[A-Z][A-Z0-9_]*\b(?:\s*\([^)\n]*\))?`)
-	cTypeMacroPattern                               = regexp.MustCompile(`\b(?:TAILQ|STAILQ|LIST|SLIST|RB|SPLAY)_(?:HEAD|ENTRY)\s*\([^)\n]*\)`)
-	cHeadInitializerPattern                         = regexp.MustCompile(`\b(?:(?:TAILQ|STAILQ|LIST|SLIST)_(?:HEAD_)?INITIALIZER|RB_INITIALIZER|SPLAY_INITIALIZER)\s*\([^)\n]*\)`)
+	cTypeMacroPattern        = regexp.MustCompile(`\b(?:TAILQ|STAILQ|LIST|SLIST|RB|SPLAY)_(?:HEAD|ENTRY)\s*\([^)\n]*\)`)
+	cHeadInitializerPattern  = regexp.MustCompile(`\b(?:(?:TAILQ|STAILQ|LIST|SLIST)_(?:HEAD_)?INITIALIZER|RB_INITIALIZER|SPLAY_INITIALIZER)\s*\([^)\n]*\)`)
 )
 
 func maskCUnsupportedSyntax(content string) string {
@@ -3309,6 +3309,7 @@ var postgresIndexMethodPattern = regexp.MustCompile(`(?i)\s+using\s+[a-z0-9_]+\b
 var postgresCreateFunctionPattern = regexp.MustCompile(`(?is)\bcreate\s+(?:or\s+replace\s+)?(?:function|procedure)\b.*?\bas\s+\$[a-z0-9_]*\$.*?\$[a-z0-9_]*\$(?:\s+language\b[^;]*)?;`)
 var postgresCreateExternalFunctionPattern = regexp.MustCompile(`(?is)\bcreate\s+(?:or\s+replace\s+)?(?:function|procedure)\b.*?\bas\s+'[^']+'(?:\s*,\s*'[^']+')?(?:\s+language\b[^;]*)?;`)
 var postgresCreateDomainCastPattern = regexp.MustCompile(`(?is)\bcreate\s+(?:domain|cast)\b[^;]*;`)
+
 // Extension-template placeholders like @extschema@ / @extschema:cube@ in .sql.in
 // files are not valid SQL scalars; replace each with a same-width identifier so
 // the surrounding statement parses (e.g. `AS @extschema:cube@.cube`).
