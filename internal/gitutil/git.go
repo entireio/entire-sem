@@ -111,7 +111,15 @@ func FileCochanges(ctx context.Context, repo string, maxCommits int) ([]FileCoch
 	if maxCommits <= 0 {
 		maxCommits = 256
 	}
-	out, err := run(ctx, repo, "git", "-c", "core.quotePath=false", "log", "--name-only", "--pretty=format:--entire-sem-commit--", "-n", strconv.Itoa(maxCommits), "--")
+	// -z makes git emit raw, NUL-terminated pathnames with no quoting at all,
+	// matching the file keys produced by ListFiles (`ls-tree -z`). A plain
+	// --name-only (even with core.quotePath=false) still C-quotes paths
+	// containing '"', '\', tabs, or newlines, which would never match those
+	// keys. The per-commit marker is emitted via --pretty=format; under -z each
+	// commit's output is either the marker alone (no files, e.g. a merge) or
+	// "<marker>\n<first file>" followed by NUL-separated paths.
+	const marker = "--entire-sem-commit--"
+	out, err := run(ctx, repo, "git", "log", "-z", "--name-only", "--pretty=format:"+marker, "-n", strconv.Itoa(maxCommits), "--")
 	if err != nil {
 		return nil, err
 	}
@@ -125,9 +133,6 @@ func FileCochanges(ctx context.Context, repo string, maxCommits int) ([]FileCoch
 		sort.Strings(commitFiles)
 		uniq := commitFiles[:0]
 		for _, path := range commitFiles {
-			if path == "" || strings.HasPrefix(path, "--") {
-				continue
-			}
 			if len(uniq) == 0 || uniq[len(uniq)-1] != path {
 				uniq = append(uniq, path)
 			}
@@ -139,14 +144,20 @@ func FileCochanges(ctx context.Context, repo string, maxCommits int) ([]FileCoch
 		}
 		commitFiles = nil
 	}
-	for _, line := range strings.Split(out, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "--entire-sem-commit--" {
+	for _, tok := range strings.Split(out, "\x00") {
+		if tok == marker {
 			flush()
 			continue
 		}
-		if line != "" {
-			commitFiles = append(commitFiles, line)
+		if first, ok := strings.CutPrefix(tok, marker+"\n"); ok {
+			flush()
+			if first != "" {
+				commitFiles = append(commitFiles, first)
+			}
+			continue
+		}
+		if tok != "" {
+			commitFiles = append(commitFiles, tok)
 		}
 	}
 	flush()
