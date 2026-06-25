@@ -2144,7 +2144,7 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 				}
 			}
 			if spec.callResolution == "full" {
-				for _, r := range receiverCallRelations(from, block, methodsByContainer, symbolsByShortName, returnTypesBySymbolNameAndFile, importsByName) {
+				for _, r := range receiverCallRelations(from, block, methodsByContainer, symbolsByShortName, returnTypesBySymbolNameAndFile, importsByName, manifestImports.goModule) {
 					emit(r)
 				}
 				for _, r := range importedReceiverCallRelations(from, block, importsByName, symbolsByShortName) {
@@ -2503,7 +2503,7 @@ func buildTypeRelation(repoKey string, anchor SymbolRecord, super, relation stri
 // type. These calls are otherwise dropped (a name preceded by '.'/'->' is not a
 // plain call), so this is purely additive. Type containers are skipped as
 // callers — calls live in methods/functions, not in the class declaration.
-func receiverCallRelations(from SymbolRecord, block string, methodsByContainer map[string]map[string]SymbolRecord, symbolsByShortName map[string][]SymbolRecord, returnTypesBySymbolNameAndFile map[string]map[string][]string, importsByName map[string][]string) []RelationRecord {
+func receiverCallRelations(from SymbolRecord, block string, methodsByContainer map[string]map[string]SymbolRecord, symbolsByShortName map[string][]SymbolRecord, returnTypesBySymbolNameAndFile map[string]map[string][]string, importsByName map[string][]string, goModule string) []RelationRecord {
 	if typeLikeKind(from.Kind) {
 		return nil
 	}
@@ -2528,7 +2528,7 @@ func receiverCallRelations(from SymbolRecord, block string, methodsByContainer m
 			varTypes[name] = typeName
 		}
 	}
-	importedReceiverVars := importedReceiverVarTypes(from.Signature, block, importsByName)
+	importedReceiverVars := importedReceiverVarTypes(from.Signature, block, importsByName, goModule)
 	deepReturnedCallSuffixes := receiverDeepChainSuffixes(deepChainedReturnCalls, returnedDeepChainCalls)
 	paramTypes := parameterVarTypes(from.Signature)
 	for name := range localTypes {
@@ -2644,23 +2644,14 @@ func receiverCallRelations(from SymbolRecord, block string, methodsByContainer m
 		if len(importsByName[call.Receiver]) > 0 {
 			continue
 		}
-		// Skip receivers that are values of an external/imported type: there the
-		// call targets that package's method, not a same-named local one. Two
-		// signals catch this. (1) The receiver is bound to a package-qualified
-		// type (`buf *bytes.Buffer`) — its bare type name is never captured as a
-		// local symbol, so it is detected straight from the import qualifier.
-		// (2) The receiver's bare type is known but resolves to no local type-like
-		// symbol (e.g. a dot-imported type). The fallback is thus left to fire
-		// only when the receiver's type is local (an unresolved method on a local
-		// type is an embedded method, which the unique-name match resolves
-		// correctly) or entirely unknown.
+		// Skip receivers that are values of an external/imported type: the call
+		// targets that package's method, not a same-named local one. The receiver
+		// is detected from a package-qualified binding (`buf *bytes.Buffer`,
+		// `w := json.NewEncoder()`) whose import path is external to this module
+		// (importedReceiverVarTypes excludes in-module packages). The fallback
+		// still fires for local-typed and fully-unknown receivers.
 		if _, external := importedReceiverVars[call.Receiver]; external {
 			continue
-		}
-		if typeName, known := varTypes[call.Receiver]; known {
-			if _, localType := firstTypeLikeNamed(symbolsByShortName[typeName], typeName); !localType {
-				continue
-			}
 		}
 		m, ok := uniqueMethodByShortName(symbolsByShortName[call.Method])
 		if !ok || m.ID == from.ID {

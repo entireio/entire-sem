@@ -2766,7 +2766,7 @@ var (
 // imports of the file. Package-qualified types are never captured as local
 // symbols, so this is how receiver-call resolution recognises a value of an
 // external type even when its bare type name was never resolved.
-func importedReceiverVarTypes(signature, block string, importsByName map[string][]string) map[string]string {
+func importedReceiverVarTypes(signature, block string, importsByName map[string][]string, goModule string) map[string]string {
 	out := map[string]string{}
 	add := func(matches [][]string) {
 		for _, m := range matches {
@@ -2777,9 +2777,19 @@ func importedReceiverVarTypes(signature, block string, importsByName map[string]
 			if _, exists := out[name]; exists {
 				continue
 			}
-			if len(importsByName[pkg]) > 0 {
-				out[name] = pkg
+			paths := importsByName[pkg]
+			if len(paths) == 0 {
+				continue
 			}
+			// A receiver qualified by an in-module package (the repo's own
+			// module path — e.g. a sibling package imported from examples/) is
+			// NOT external: its methods are local symbols, so the unique-method
+			// fallback should still resolve them. Only genuinely external
+			// receivers (stdlib/third-party) are recorded for suppression.
+			if importPathsInModule(paths, goModule) {
+				continue
+			}
+			out[name] = pkg
 		}
 	}
 	stripped := stripCodeLiteralsAndComments(block)
@@ -2789,4 +2799,19 @@ func importedReceiverVarTypes(signature, block string, importsByName map[string]
 	delete(out, "this")
 	delete(out, "self")
 	return out
+}
+
+// importPathsInModule reports whether any resolved import path belongs to the
+// repo's own Go module (equal to the module path or nested under it). Such a
+// qualifier names an in-module package, not an external dependency.
+func importPathsInModule(paths []string, goModule string) bool {
+	if goModule == "" {
+		return false
+	}
+	for _, p := range paths {
+		if p == goModule || strings.HasPrefix(p, goModule+"/") {
+			return true
+		}
+	}
+	return false
 }

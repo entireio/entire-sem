@@ -6444,6 +6444,79 @@ func (c Codec) Marshal() string { return "" }
 	}
 }
 
+func TestUniqueMethodFallbackResolvesInModuleQualifiedReceiver(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "go.mod", "module example.com/app\n\ngo 1.21\n")
+	writeFile(t, repo, "conn.go", `package app
+
+type Conn struct{}
+
+func (c *Conn) WriteMessage() error { return nil }
+`)
+	writeFile(t, repo, "examples/client/main.go", `package main
+
+import "example.com/app"
+
+func run(ws *app.Conn) {
+	ws.WriteMessage()
+}
+`)
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// ws is qualified by the repo's OWN package (example.com/app), so Conn is an
+	// in-module type and ws.WriteMessage() must resolve to the local
+	// Conn.WriteMessage — the external-receiver guard must not suppress it.
+	found := false
+	for _, r := range snapshot.Relations {
+		if r.Type == "CALLS" && strings.Contains(r.FromID, ":run") &&
+			strings.Contains(r.ToID, "method:Conn.WriteMessage") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("in-module qualified receiver ws *app.Conn: expected ws.WriteMessage() -> Conn.WriteMessage edge, got none")
+	}
+}
+
+func TestUniqueMethodFallbackResolvesFunctionReturnedReceiver(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "go.mod", "module example.com/parse\n\ngo 1.21\n")
+	writeFile(t, repo, "parse.go", `package parse
+
+type Result struct{}
+
+func (r Result) ForEach() {}
+
+func Parse(s string) Result { return Result{} }
+`)
+	writeFile(t, repo, "use.go", `package parse
+
+func walk(s string) {
+	res := Parse(s)
+	res.ForEach()
+}
+`)
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// res := Parse(s) makes naive type inference record res's "type" as the
+	// function name Parse (not its return type Result); the fallback must still
+	// resolve res.ForEach() to the unique local Result.ForEach.
+	found := false
+	for _, r := range snapshot.Relations {
+		if r.Type == "CALLS" && strings.Contains(r.FromID, ":walk") &&
+			strings.Contains(r.ToID, "method:Result.ForEach") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("function-returned receiver res := Parse(): expected res.ForEach() -> Result.ForEach edge, got none")
+	}
+}
+
 func TestBuildProviderSnapshotEmitsImportedExternalCalls(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "trim.go", `package api
