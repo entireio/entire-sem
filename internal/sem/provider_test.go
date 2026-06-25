@@ -12,6 +12,19 @@ import (
 	"testing"
 )
 
+func TestLanguageTiersClassifiesSemanticAndInventory(t *testing.T) {
+	tiers := languageTiers(map[string]struct{}{"Go": {}, "Zig": {}})
+	if tiers["Go"] != "semantic" {
+		t.Fatalf("Go tier = %q, want semantic", tiers["Go"])
+	}
+	if tiers["Zig"] != "inventory-only" {
+		t.Fatalf("Zig tier = %q, want inventory-only", tiers["Zig"])
+	}
+	if languageTiers(nil) != nil {
+		t.Fatalf("nil languageSet should yield nil tiers, got %#v", languageTiers(nil))
+	}
+}
+
 func TestBuildProviderSnapshotEmitsContractRecords(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "auth.py", `import json
@@ -47,6 +60,9 @@ export function handleRoute() {
 	}
 	if snapshot.Header.Stats.CompletenessLevel != "ok" {
 		t.Fatalf("completeness = %q", snapshot.Header.Stats.CompletenessLevel)
+	}
+	if snapshot.Header.LanguageTiers["Python"] != "semantic" || snapshot.Header.LanguageTiers["TypeScript"] != "semantic" {
+		t.Fatalf("language_tiers = %#v", snapshot.Header.LanguageTiers)
 	}
 	if len(snapshot.Files) != 2 {
 		t.Fatalf("files = %#v", snapshot.Files)
