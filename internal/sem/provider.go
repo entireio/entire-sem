@@ -38,6 +38,7 @@ var relationTypes = []string{
 	"CONTAINS",
 	"IMPORTS",
 	"CALLS",
+	"CONSTRUCTS",
 	"ASYNC_CALLS",
 	"EXTENDS",
 	"INHERITS",
@@ -389,7 +390,7 @@ func resolveProfile(p Profile) profileSpec {
 	case ProfileSyntaxOnly:
 		return profileSpec{name: ProfileSyntaxOnly, relations: relationTypeSet("DEFINES", "CONTAINS"), includeEvidence: false, callResolution: "none"}
 	case ProfileFast:
-		return profileSpec{name: ProfileFast, relations: relationTypeSet("DEFINES", "CONTAINS", "IMPORTS", "CALLS", "HANDLES_ROUTE", "HANDLES_TOOL", "CONFIGURES", "RESOURCE_DEPENDS_ON"), includeEvidence: false, callResolution: "shallow"}
+		return profileSpec{name: ProfileFast, relations: relationTypeSet("DEFINES", "CONTAINS", "IMPORTS", "CALLS", "CONSTRUCTS", "HANDLES_ROUTE", "HANDLES_TOOL", "CONFIGURES", "RESOURCE_DEPENDS_ON"), includeEvidence: false, callResolution: "shallow"}
 	default:
 		return profileSpec{name: ProfileFull, relations: relationTypeSet(relationTypes...), includeEvidence: true, callResolution: "full"}
 	}
@@ -2050,11 +2051,17 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 					}
 					targets := resolveCallTargets(name, from, symbolsByShortName[name], currentFileSymbols, importsByName)
 					for _, to := range targets {
+						// Call to a type (class/struct/...) is a constructor/conversion, not a
+						// callable->callable call: keep it as CONSTRUCTS for agents, out of CALLS.
+						relType := "CALLS"
+						if typeLikeKind(to.Kind) {
+							relType = "CONSTRUCTS"
+						}
 						emit(RelationRecord{
 							RecordType:    "relation",
 							FromID:        from.ID,
 							ToID:          to.ID,
-							Type:          "CALLS",
+							Type:          relType,
 							Confidence:    to.Confidence,
 							Reason:        to.Reason,
 							RelationScope: to.Scope,
@@ -2084,6 +2091,9 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 						continue
 					}
 					for _, to := range resolveCallTargets(name, from, symbolsByShortName[name], currentFileSymbols, importsByName) {
+						if typeLikeKind(to.Kind) {
+							continue // construction, not an async call
+						}
 						emit(RelationRecord{
 							RecordType:    "relation",
 							FromID:        from.ID,
@@ -2282,11 +2292,15 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 				}
 				for _, name := range sortedKeysOf(callLikeIdentifiers(topLevel)) {
 					for _, to := range resolveCallTargets(name, fileSource, symbolsByShortName[name], currentFileSymbols, importsByName) {
+						relType := "CALLS"
+						if typeLikeKind(to.Kind) {
+							relType = "CONSTRUCTS"
+						}
 						emit(RelationRecord{
 							RecordType:    "relation",
 							FromID:        fileSource.ID,
 							ToID:          to.ID,
-							Type:          "CALLS",
+							Type:          relType,
 							Confidence:    minFloat(to.Confidence, 0.8),
 							Reason:        "top-level call expression resolved to symbol",
 							RelationScope: to.Scope,
