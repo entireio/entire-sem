@@ -118,14 +118,18 @@ type ProviderRecord struct {
 }
 
 type SnapshotHeader struct {
-	SchemaVersion    string             `json:"schema_version"`
-	Provider         string             `json:"provider"`
-	ProviderVersion  string             `json:"provider_version"`
-	RepoRoot         string             `json:"repo_root"`
-	RepoKey          string             `json:"repo_key"`
-	Commit           string             `json:"commit"`
-	Tree             string             `json:"tree"`
-	Languages        []string           `json:"languages"`
+	SchemaVersion   string   `json:"schema_version"`
+	Provider        string   `json:"provider"`
+	ProviderVersion string   `json:"provider_version"`
+	RepoRoot        string   `json:"repo_root"`
+	RepoKey         string   `json:"repo_key"`
+	Commit          string   `json:"commit"`
+	Tree            string   `json:"tree"`
+	Languages       []string `json:"languages"`
+	// LanguageTiers classifies each language present in this snapshot as
+	// "semantic" (grammar-backed extraction) or "inventory-only" (file
+	// discovery + basic symbols), so a consumer can scope trust per language.
+	LanguageTiers    map[string]string  `json:"language_tiers,omitempty"`
 	Capabilities     []string           `json:"capabilities"`
 	SchemaFeatures   []string           `json:"schema_features"`
 	LanguageVersions map[string]string  `json:"language_versions,omitempty"`
@@ -469,6 +473,30 @@ func supportsSemanticExtraction(spec languageSpec) bool {
 	return spec.language == "SQL"
 }
 
+// languageTiers classifies the languages present in a snapshot as "semantic"
+// (grammar-backed extraction) or "inventory-only" (file discovery + basic
+// symbols). It reuses the authoritative capabilities classification so the
+// tier reported per-repo matches `capabilities --json`, without duplicating
+// the semantic/inventory split.
+func languageTiers(languageSet map[string]struct{}) map[string]string {
+	if len(languageSet) == 0 {
+		return nil
+	}
+	semantic := make(map[string]struct{})
+	for _, language := range Capabilities().SemanticLanguages {
+		semantic[language] = struct{}{}
+	}
+	tiers := make(map[string]string, len(languageSet))
+	for language := range languageSet {
+		if _, ok := semantic[language]; ok {
+			tiers[language] = "semantic"
+		} else {
+			tiers[language] = "inventory-only"
+		}
+	}
+	return tiers
+}
+
 // relationSupportByLanguage reports which relation types the provider can
 // extract for each supported language. DEFINES, CONTAINS, and CALLS are
 // produced structurally from parsed entities for every language; IMPORTS is
@@ -630,6 +658,7 @@ func BuildProviderSnapshotWithOptions(ctx context.Context, repo, providerVersion
 		return ProviderSnapshot{}, err
 	}
 	snapshot.Header.Languages = summary.Languages
+	snapshot.Header.LanguageTiers = summary.LanguageTiers
 	snapshot.Header.Warnings = summary.Warnings
 	snapshot.Header.PartialFailures = summary.PartialFailures
 	snapshot.Header.Stats = summary.Stats
@@ -934,6 +963,7 @@ func StreamSnapshot(ctx context.Context, repo, providerVersion string, options P
 	return emit(SnapshotSummary{
 		RecordType:      "summary",
 		Languages:       sortedKeys(languageSet),
+		LanguageTiers:   languageTiers(languageSet),
 		Warnings:        warnings,
 		PartialFailures: failures,
 		Stats: ProviderStats{
@@ -1106,6 +1136,7 @@ func relationDedupKey(r RelationRecord) uint64 {
 type SnapshotSummary struct {
 	RecordType      string             `json:"record_type"`
 	Languages       []string           `json:"languages"`
+	LanguageTiers   map[string]string  `json:"language_tiers,omitempty"`
 	Warnings        []ProviderWarning  `json:"warnings"`
 	PartialFailures []PartialFailure   `json:"partial_failures"`
 	Stats           ProviderStats      `json:"stats"`
