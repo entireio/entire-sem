@@ -2826,6 +2826,13 @@ func minInt(a, b int) int {
 }
 
 func walkEntities(node *sitter.Node, src []byte, language, scope string, entities *[]Entity) {
+	walkEntitiesScoped(node, src, language, scope, false, entities)
+}
+
+// walkEntitiesScoped tracks whether the current node is inside a function body
+// (inFunc), so a callable defined there is marked Entity.Local — a nested/closure
+// def that call resolution must not name-match across scopes.
+func walkEntitiesScoped(node *sitter.Node, src []byte, language, scope string, inFunc bool, entities *[]Entity) {
 	if !validNode(node) {
 		return
 	}
@@ -2837,14 +2844,21 @@ func walkEntities(node *sitter.Node, src []byte, language, scope string, entitie
 	}
 	entity, ok := entityFromNode(node, src, language, scope)
 	childScope := scope
+	childInFunc := inFunc
 	if ok {
+		if inFunc && (entity.Kind == "function" || entity.Kind == "method") {
+			entity.Local = true // nested inside another function
+		}
 		*entities = append(*entities, entity)
 		if scopesChildren(entity.Kind) {
 			childScope = entity.Name
 		}
+		if entity.Kind == "function" || entity.Kind == "method" {
+			childInFunc = true // descendants of this callable are function-local
+		}
 	}
 	for i := 0; i < int(node.NamedChildCount()); i++ {
-		walkEntities(node.NamedChild(i), src, language, childScope, entities)
+		walkEntitiesScoped(node.NamedChild(i), src, language, childScope, childInFunc, entities)
 	}
 }
 

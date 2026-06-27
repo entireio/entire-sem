@@ -226,6 +226,10 @@ type SymbolRecord struct {
 	BodyHash        string `json:"body_hash"`
 	Language        string `json:"language"`
 	ContainerID     string `json:"container_id,omitempty"`
+	// Local: a callable defined inside another function (nested/closure). Only
+	// callable within its enclosing function, so it is excluded from cross-scope
+	// name-match call resolution. Not serialized (internal to resolution).
+	Local bool `json:"-"`
 }
 
 type RelationRecord struct {
@@ -1286,6 +1290,7 @@ func entitySymbols(repoKey, path, language string, entities []Entity) []SymbolRe
 			BodyHash:        entity.BodyHash,
 			Language:        language,
 			ContainerID:     containerID,
+			Local:           entity.Local,
 		}
 		symbols = append(symbols, symbol)
 		byName[qualified] = id
@@ -1381,10 +1386,39 @@ func routeBoundarySource(path, language string, fileSymbols []SymbolRecord) rout
 	return routeSource{StartLine: 1, EndLine: 1}
 }
 
+// localReachable enforces lexical nesting in name-match call resolution: a
+// function-local (nested/closure) callable is only reachable from within its
+// enclosing function — i.e. when `from` lexically contains it in the same file.
+// Non-local callables are always reachable. This kills the dominant cross-scope
+// false edges (e.g. every decorator factory's nested `decorator`/`new_func`
+// name-matching each other) without a full scope resolver.
+func localReachable(from, to SymbolRecord) bool {
+	if !to.Local {
+		return true
+	}
+	return to.FilePath == from.FilePath && from.StartLine <= to.StartLine && to.StartLine <= from.EndLine
+}
+
+// implicitReceiverLanguage reports whether a bare `name()` call can mean
+// `this.name()` (an implicit-receiver method call). In such languages a bare
+// call legitimately targets a method, so it must not be excluded from name-match
+// resolution; in Go/Python/JS/TS a method call always carries an explicit
+// receiver and is handled by receiverCallRelations instead.
+func implicitReceiverLanguage(lang string) bool {
+	switch lang {
+	case "Java", "C#", "C++", "Kotlin", "Scala", "Ruby":
+		return true
+	}
+	return false
+}
+
 func resolveCallTargets(name string, from SymbolRecord, candidates, sameFile []SymbolRecord, importsByName map[string][]string) []resolvedCallTarget {
 	var local []resolvedCallTarget
 	for _, to := range sameFile {
-		if to.ID == from.ID || to.Name != name || to.Kind == "field" {
+		// A bare `name()` call resolves to a function, not a class method (methods
+		// require a receiver and are resolved by receiverCallRelations) — matching
+		// a same-named method here is a false edge.
+		if to.ID == from.ID || to.Name != name || to.Kind == "field" || (to.Kind == "method" && !implicitReceiverLanguage(from.Language)) || !localReachable(from, to) {
 			continue
 		}
 		local = append(local, resolvedCallTarget{
@@ -1395,13 +1429,26 @@ func resolveCallTargets(name string, from SymbolRecord, candidates, sameFile []S
 			Scope:        "file",
 		})
 	}
-	if len(local) > 0 {
+	if len(local) == 1 {
 		return local
+	}
+	if len(local) > 1 {
+		// Ambiguous bare name with multiple same-file definitions: emit the
+		// lexically nearest one (closest declaration line to the call site) rather
+		// than fanning out an edge to every candidate. A single best guess keeps
+		// recall while cutting the over-emission that dominates the false edges.
+		best := local[0]
+		for _, c := range local[1:] {
+			if absInt(c.StartLine-from.StartLine) < absInt(best.StartLine-from.StartLine) {
+				best = c
+			}
+		}
+		return []resolvedCallTarget{best}
 	}
 
 	var imported []resolvedCallTarget
 	for _, to := range candidates {
-		if to.ID == from.ID || to.Kind == "field" {
+		if to.ID == from.ID || to.Kind == "field" || (to.Kind == "method" && !implicitReceiverLanguage(from.Language)) || !localReachable(from, to) {
 			continue
 		}
 		if importedNameMatchesFile(importsByName[name], from.FilePath, to.FilePath) {
@@ -1427,7 +1474,7 @@ func resolveCallTargets(name string, from SymbolRecord, candidates, sameFile []S
 		fromDir := filepath.ToSlash(filepath.Dir(from.FilePath))
 		var samePkg []SymbolRecord
 		for _, to := range candidates {
-			if to.ID == from.ID || to.Kind != "function" {
+			if to.ID == from.ID || to.Kind != "function" || !localReachable(from, to) {
 				continue
 			}
 			if filepath.ToSlash(filepath.Dir(to.FilePath)) == fromDir {
@@ -1447,7 +1494,7 @@ func resolveCallTargets(name string, from SymbolRecord, candidates, sameFile []S
 
 	var remaining []SymbolRecord
 	for _, to := range candidates {
-		if to.ID != from.ID && to.Kind != "field" {
+		if to.ID != from.ID && to.Kind != "field" && (to.Kind != "method" || implicitReceiverLanguage(from.Language)) && localReachable(from, to) {
 			remaining = append(remaining, to)
 		}
 	}
@@ -13095,4 +13142,11 @@ func unsupportedLanguageHint(path string) string {
 	default:
 		return ""
 	}
+}
+
+func absInt(x int) int {
+	if x < 0 {
+		return -x
+	}
+	return x
 }

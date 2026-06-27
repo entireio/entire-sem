@@ -10,6 +10,10 @@ type Entity struct {
 	EndLine     int    `json:"end_line"`
 	BodyHash    string `json:"body_hash"`
 	Fingerprint string `json:"fingerprint"`
+	// Local marks a callable defined inside another function (a nested/closure
+	// def). It is still a real symbol, but it is only callable from within its
+	// enclosing function, so call resolution must not name-match it across scopes.
+	Local bool `json:"-"`
 }
 
 type EntityChange struct {
