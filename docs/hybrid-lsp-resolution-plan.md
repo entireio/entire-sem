@@ -101,40 +101,65 @@ versions (provenance/reproducibility, like brain-bench's tool stamp).
   affordable.
 - **Determinism.** Pin server versions; record them in the header.
 
-## Validation — brain-bench is already the harness
+## Independent ground truth (the precondition that makes the eval clean)
 
-Add an `entire-sem-hybrid` system alongside `entire-sem` / `cbm` / `naive`, and
-measure across all four languages. Expected: hybrid (a) closes the Rust
-call-graph cell, (b) lifts TS/Python `change-impact`, (c) reaches CBM (itself a
-hybrid-LSP tool). The existing cost block quantifies the **accuracy-vs-latency
-tradeoff** — the whole point of keeping the heuristic path as default.
+brain-bench's premise is a **tool-independent oracle: the compiler**. As long as
+the oracle is the language's *authoritative batch compiler analysis* and the
+tools (entire-sem heuristic, CBM, the new hybrid) are separate, the comparison is
+sound — including for the hybrid path. Three of four oracles already satisfy this;
+one doesn't, and fixing it is part of this plan (Phase 0).
 
-### ⚠️ Methodology caveat — oracle/LSP shared engine
-brain-bench's compiler oracles and the candidate LSP servers sometimes share an
-engine, which makes a naive F1 comparison meaningless:
+**The actual problem is the Rust oracle, and it's a pre-existing bug, not an LSP
+issue.** The Rust oracle is currently *rust-analyzer* — an IDE engine, not the
+compiler. That already violates "tool-independent oracle" (any rust-analyzer-based
+tool, including CBM's LSP, scores against itself), and it would make a
+rust-analyzer hybrid trivially circular. **Fix: make the Rust oracle compiler-grade
+— driven by rustc, reading the resolved call graph from MIR.** MIR is post-macro-
+expansion and post-monomorphization, so it is both *independent of every IDE
+engine* and *strictly more complete* (it captures exactly the macro-hidden and
+generic/trait-dispatch calls that rust-analyzer and entire-sem approximate). That
+single change turns Rust from the circular case into the cleanest one.
 
-- **Rust**: the oracle *is* rust-analyzer. A rust-analyzer-backed hybrid path would
-  score ≈1.0 against itself — not a real result.
-- **Go**: oracle `go/types` vs `gopls` (also `go/types`) — near-identical.
-- **TypeScript**: oracle ts-morph vs tsserver — both the TS compiler; very close.
-- **Python**: oracle `jedi` vs `pyright` — *different* engines, so this one is a
-  fair, informative comparison.
+**The other three are already compiler ground truth, distinct from their IDE
+LSPs:**
+- **Python** — oracle `jedi`, LSP `pyright`: different engines entirely. Fully
+  independent.
+- **Go** — oracle is `go/types` resolution computed in `cmd/oracle`; the LSP is
+  `gopls`. Same type checker, but the oracle is the compiler's authoritative
+  resolution and gopls is a separate tool that re-derives a call graph and *can
+  diverge* — that divergence is exactly what we measure, not a tautology.
+- **TypeScript** — oracle is the tsc compiler API (`getResolvedSignature`), LSP is
+  `tsserver`'s call-hierarchy provider: the same type checker via two different
+  code paths that demonstrably disagree on edge cases. Not self-referential.
 
-Implications for evaluation: where the LSP and the oracle share an engine, do
-**not** report hybrid-vs-oracle F1 as a win. Instead measure the **heuristic→hybrid
-delta and its cost**, and/or evaluate the hybrid path against a *different* oracle
-than its own engine (e.g. score a gopls-hybrid against the `go/types` oracle is
-near-tautological, so pair engines deliberately). This caveat is itself a finding:
-the LSP path's real value is *coverage of the type/macro-dependent calls the
-heuristic misses* — measure that directly (recall on the heuristic's miss set),
-not a self-referential F1.
+So after Phase 0 the rule is simply: **the oracle is the compiler; every tool
+(heuristic, CBM, hybrid) is measured against it, none of them IS it.** No caveat.
+
+## Validation — brain-bench is the harness
+
+With independent oracles in place, add an `entire-sem-hybrid` system alongside
+`entire-sem` / `cbm` / `naive` and measure across all four languages directly.
+Expected: hybrid (a) closes the Rust call-graph cell against the *MIR* oracle
+(genuine, since MIR ≠ rust-analyzer), (b) lifts TS/Python `change-impact`, (c)
+reaches/matches CBM (itself a hybrid-LSP tool, now also measured against
+independent ground truth). The existing cost block quantifies the
+**accuracy-vs-latency tradeoff** — the whole reason the heuristic path stays the
+default. Secondary metric: **coverage of the heuristic's miss set** (what fraction
+of the edges the heuristic misses does the LSP recover), which isolates the LSP's
+contribution regardless of absolute F1.
 
 ## Phasing
 
-1. **Spike (Rust).** Go LSP client + rust-analyzer resolver; wire `ProfileHybrid`
-   for Rust only. Validate the merge + provenance on `repos-rust` (mind the
-   shared-engine caveat — judge by *coverage of the heuristic's miss set* + cost,
-   not F1-vs-its-own-oracle).
+0. **Compiler-grade, independent Rust oracle (brain-bench).** Replace the
+   rust-analyzer Rust oracle with a rustc/MIR-driven one (resolved call graph from
+   MIR: post-macro, post-monomorphization). Rebaseline `results-rust`. This alone
+   fixes the benchmark's tool-independence for Rust — *before* any hybrid work, so
+   the later comparison is clean. (Bonus: it likely *raises* the truth-edge count,
+   re-grounding all the Rust numbers, including the existing entire-sem/CBM ones.)
+1. **Spike (Rust hybrid).** Go LSP client (port of brain-bench's proven
+   rust-analyzer call-hierarchy client) + resolver; wire `ProfileHybrid` for Rust
+   only. Measure against the new MIR oracle — a genuine comparison (MIR ≠
+   rust-analyzer).
 2. **Generalize.** Server registry + gopls / tsserver / pyright; per-language
    availability + staging.
 3. **Merge, provenance, profile, header stamp.** `hybrid` + `lsp-only` modes;
@@ -142,8 +167,7 @@ not a self-referential F1.
 4. **Caching + perf hardening.** Content-hash cache; session reuse; bounded
    readiness/requests.
 5. **brain-bench `entire-sem-hybrid` system.** Full four-language measurement +
-   the accuracy/latency tradeoff writeup; for Python (distinct engines) a clean
-   hybrid-vs-CBM number.
+   the accuracy/latency tradeoff writeup, all against independent oracles.
 
 ## Non-goals
 - Replacing or weakening the heuristic path (it stays the default and the fallback).
