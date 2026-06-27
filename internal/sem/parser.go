@@ -2869,6 +2869,26 @@ func fieldEntities(node *sitter.Node, src []byte, language, scope string) ([]Ent
 	default:
 		return nil, false
 	}
+	// A TS/JS class field initialised with a function value
+	// (`method = (x) => …` / `static create = function () {…}`) is a callable
+	// member, not data: it is called like a method and must be a call target and
+	// part of the method inventory. Classify it as a method, named like one.
+	switch node.Type() {
+	case "public_field_definition", "field_definition":
+		if functionLikeValue(node.ChildByFieldName("value")) {
+			if names := fieldDeclNames(node, src); len(names) == 1 {
+				return []Entity{{
+					Kind:        "method",
+					Name:        qualify(scope, names[0]),
+					Signature:   signatureFromNode(node, src),
+					StartLine:   int(node.StartPoint().Row) + 1,
+					EndLine:     int(node.EndPoint().Row) + 1,
+					BodyHash:    hash(normalize(node.Content(src))),
+					Fingerprint: hash(normalize(signatureFromNode(node, src))),
+				}}, true
+			}
+		}
+	}
 	typeText := fieldTypeText(node, src)
 	names := fieldDeclNames(node, src)
 	if len(names) == 0 {

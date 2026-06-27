@@ -2653,23 +2653,30 @@ func receiverCallRelations(from SymbolRecord, block string, methodsByContainer m
 			confidence = 0.9
 			reason = "method call on this/self resolved to the enclosing type"
 		default:
-			typeName, ok := varTypes[call.Receiver]
-			if !ok {
+			if typeName, ok := varTypes[call.Receiver]; ok {
+				if _, ok := paramTypes[call.Receiver]; ok {
+					confidence = 0.83
+					reason = "method call resolved via typed parameter receiver"
+				}
+				if _, ok := factoryTypes[call.Receiver]; ok {
+					confidence = 0.77
+					reason = "method call resolved via assigned returned receiver type"
+				}
+				sym, ok := firstTypeLikeNamedPreferFile(symbolsByShortName[typeName], typeName, from.FilePath)
+				if !ok {
+					continue
+				}
+				targetID = sym.ID
+			} else if cls, ok := firstTypeLikeNamedPreferFile(symbolsByShortName[call.Receiver], call.Receiver, from.FilePath); ok {
+				// ClassName.method(): the receiver is itself a type name, not a
+				// variable, so this is a static (class-qualified) call and the
+				// target is that class's own method.
+				confidence = 0.82
+				reason = "static method call resolved to the named type"
+				targetID = cls.ID
+			} else {
 				continue
 			}
-			if _, ok := paramTypes[call.Receiver]; ok {
-				confidence = 0.83
-				reason = "method call resolved via typed parameter receiver"
-			}
-			if _, ok := factoryTypes[call.Receiver]; ok {
-				confidence = 0.77
-				reason = "method call resolved via assigned returned receiver type"
-			}
-			sym, ok := firstTypeLikeNamed(symbolsByShortName[typeName], typeName)
-			if !ok {
-				continue
-			}
-			targetID = sym.ID
 		}
 		method, inherited, ok := lookupMethodUpChain(targetID, call.Method, methodsByContainer, superContainerByID)
 		if !ok || method.ID == from.ID {
@@ -5803,6 +5810,20 @@ func firstTypeLikeNamed(records []SymbolRecord, name string) (SymbolRecord, bool
 		}
 	}
 	return SymbolRecord{}, false
+}
+
+// firstTypeLikeNamedPreferFile resolves a type name to a symbol, preferring a
+// declaration in the given file before falling back to the first global match.
+// Same-file preference matters when a repo vendors a mirror copy of its sources
+// (e.g. a Deno build alongside src/): without it a class-qualified call could
+// bind to the twin in the wrong file.
+func firstTypeLikeNamedPreferFile(records []SymbolRecord, name, file string) (SymbolRecord, bool) {
+	for _, symbol := range records {
+		if symbol.Name == name && symbol.FilePath == file && typeLikeKind(symbol.Kind) {
+			return symbol, true
+		}
+	}
+	return firstTypeLikeNamed(records, name)
 }
 
 func typeRelationReason(relation, resolution string) string {
