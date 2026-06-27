@@ -2857,9 +2857,34 @@ func walkEntitiesScoped(node *sitter.Node, src []byte, language, scope string, i
 			childInFunc = true // descendants of this callable are function-local
 		}
 	}
+	// A Rust `impl Foo {}` / `impl Trait for Foo {}` block is not a symbol itself,
+	// but it scopes its functions to the implementing type: without this they'd be
+	// bare top-level functions with no container, so self./typed-receiver call
+	// resolution can't find them. Scope descendants to the concrete type.
+	if node.Type() == "impl_item" {
+		if t := rustImplTypeName(node, src); t != "" {
+			childScope = t
+		}
+	}
 	for i := 0; i < int(node.NamedChildCount()); i++ {
 		walkEntitiesScoped(node.NamedChild(i), src, language, childScope, childInFunc, entities)
 	}
+}
+
+// rustImplTypeName returns the implementing type of a Rust impl block (the `type`
+// field; for `impl Trait for Foo` that is Foo), so methods inside scope under it.
+func rustImplTypeName(node *sitter.Node, src []byte) string {
+	t := node.ChildByFieldName("type")
+	if !validNode(t) {
+		return ""
+	}
+	if t.Type() == "type_identifier" {
+		return strings.TrimSpace(t.Content(src))
+	}
+	if id := firstDescendantOfType(t, "type_identifier"); validNode(id) {
+		return strings.TrimSpace(id.Content(src))
+	}
+	return ""
 }
 
 // fieldEntities extracts struct/class field declarations as field symbols, one

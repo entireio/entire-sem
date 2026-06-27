@@ -2666,7 +2666,10 @@ func parameterVarTypes(signature string) map[string]string {
 		return out
 	}
 	params := strings.Split(stripGenerics(signature[start+1:end]), ",")
-	colonParamRe := regexp.MustCompile(`^\s*\$?([A-Za-z_][A-Za-z0-9_]*)\??\s*:\s*\??([A-Z][A-Za-z0-9_]*)\b`)
+	// After `name:`, skip Rust reference / lifetime / mut prefixes (`&`, `&mut`,
+	// `&'a`) before the type, so `bytes: &mut Bytes` registers bytes -> Bytes.
+	// Harmless for the other colon-style languages (they have no such prefix).
+	colonParamRe := regexp.MustCompile(`^\s*\$?([A-Za-z_][A-Za-z0-9_]*)\??\s*:\s*(?:&\s*)*(?:'[A-Za-z_]\w*\s+)?(?:mut\s+)?\??([A-Z][A-Za-z0-9_]*)\b`)
 	typeFirstParamRe := regexp.MustCompile(`^\s*(?:final\s+)?(?:[*&]\s*)?([A-Z][A-Za-z0-9_]*)\s+\$?([A-Za-z_][A-Za-z0-9_]*)\b`)
 	nameFirstParamRe := regexp.MustCompile(`^\s*\$?([A-Za-z_][A-Za-z0-9_]*)\s+(?:[*&]\s*)?([A-Z][A-Za-z0-9_]*)\b`)
 	for _, param := range params {
