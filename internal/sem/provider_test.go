@@ -10451,4 +10451,16 @@ func TestResolveCallTargetsPrefersTraitDeclarationOverImplFanout(t *testing.T) {
 	if got := resolveCallTargets("read_u16", from, nil, plain, nil, kindByID); len(got) != 2 {
 		t.Fatalf("expected 2 targets when no declaration exists, got %d", len(got))
 	}
+
+	// Cross-file dispatch: the trait declaration lives in another file (not in
+	// sameFile) and the name is not globally unique. Must still resolve to the
+	// trait decl — the cross-file gap the LSP diff surfaced on byteorder.
+	xfImplOther := SymbolRecord{ID: "repo:Rust:src/io.rs:method:Other.read_u16", Name: "read_u16",
+		FilePath: "src/io.rs", Language: "Rust", Kind: "method",
+		ContainerID: "repo:Rust:src/io.rs:struct:Other"}
+	kindByID["repo:Rust:src/io.rs:struct:Other"] = "struct"
+	crossFileCands := []SymbolRecord{traitDecl, implBig, xfImplOther}
+	if got := resolveCallTargets("read_u16", from, crossFileCands, nil, nil, kindByID); len(got) != 1 || got[0].ID != traitDecl.ID {
+		t.Fatalf("cross-file: expected trait declaration %q, got %+v", traitDecl.ID, got)
+	}
 }

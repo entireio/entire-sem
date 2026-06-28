@@ -1471,6 +1471,29 @@ func resolveCallTargets(name string, from SymbolRecord, candidates, sameFile []S
 			Scope:        "workspace",
 		}}
 	}
+	// Cross-file trait/interface dispatch: a non-unique name that resolves to
+	// exactly one trait/interface declaration in the workspace goes to that
+	// declaration (e.g. a ReadBytesExt default method calling ByteOrder::read_u16
+	// across files). Same principle as the same-file overload narrowing above,
+	// applied workspace-wide; this is the cross-file gap the LSP diff surfaced.
+	if len(remaining) > 1 {
+		var decls []resolvedCallTarget
+		for _, to := range remaining {
+			switch kindByID[to.ContainerID] {
+			case "trait", "interface":
+				decls = append(decls, resolvedCallTarget{
+					SymbolRecord: to,
+					Confidence:   0.66,
+					Reason:       "direct call expression resolved to unique trait/interface declaration",
+					Resolution:   "name_only",
+					Scope:        "workspace",
+				})
+			}
+		}
+		if len(decls) == 1 {
+			return decls
+		}
+	}
 	if cFamilyOverloadResolutionEnabled(from.Language) {
 		if overloads, ok := sameFileOverloadSet(remaining); ok {
 			out := make([]resolvedCallTarget, 0, len(overloads))
