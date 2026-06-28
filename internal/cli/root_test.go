@@ -299,6 +299,36 @@ func TestProviderCommandsAcceptIncludeFile(t *testing.T) {
 	}
 }
 
+func TestSnapshotSkipsTrackedVendoredDependencies(t *testing.T) {
+	repo := t.TempDir()
+	git(t, repo, "init")
+	git(t, repo, "config", "user.name", "Entire Sem Test")
+	git(t, repo, "config", "user.email", "sem@example.com")
+	write(t, repo, "src/app.ts", "export function app() { return true }\n")
+	write(t, repo, "node_modules/pkg/index.ts", "export function vendored() { return false }\n")
+	write(t, repo, "apps/web/package-lock.json", `{"packages":{"node_modules/noisy":{"version":"1.0.0"}}}`)
+	git(t, repo, "add", ".")
+	git(t, repo, "commit", "-m", "initial")
+
+	var out bytes.Buffer
+	err := Run(t.Context(), Options{Version: "0.1.0", Env: EntireEnv{RepoRoot: repo}, Stdout: &out}, []string{
+		"snapshot",
+		"--repo", repo,
+		"--format", "ndjson",
+		"--no-network",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := out.String()
+	if !strings.Contains(text, "src/app.ts") || !strings.Contains(text, "app") {
+		t.Fatalf("snapshot output missing app source:\n%s", text)
+	}
+	if strings.Contains(text, "node_modules") || strings.Contains(text, "vendored") || strings.Contains(text, "package-lock") {
+		t.Fatalf("snapshot output included tracked dependency:\n%s", text)
+	}
+}
+
 func TestAnalyzeJSONCommand(t *testing.T) {
 	repo := t.TempDir()
 	git(t, repo, "init")

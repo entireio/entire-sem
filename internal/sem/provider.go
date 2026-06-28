@@ -5878,6 +5878,7 @@ func openSource(ctx context.Context, repo string, useHead bool, ignoreFiles, inc
 		if err != nil {
 			return nil, nil, nil, err
 		}
+		paths = filterVendoredPaths(paths)
 		batch, err := gitutil.NewBatchFileReader(ctx, repo, "HEAD")
 		if err != nil {
 			return nil, nil, nil, err
@@ -5952,6 +5953,16 @@ func isVendoredScanDir(rel, name string) bool {
 	return false
 }
 
+func isVendoredScanFile(rel, name string) bool {
+	switch name {
+	case "package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml",
+		"bun.lock", "bun.lockb", "poetry.lock", "Pipfile.lock", "composer.lock",
+		"Gemfile.lock", "Cargo.lock":
+		return true
+	}
+	return strings.HasSuffix(rel, ".map")
+}
+
 func workingTreeFiles(repo string, ignores ignoreMatcher) ([]string, error) {
 	var paths []string
 	err := filepath.WalkDir(repo, func(path string, entry fs.DirEntry, err error) error {
@@ -5983,6 +5994,9 @@ func workingTreeFiles(repo string, ignores ignoreMatcher) ([]string, error) {
 			return err
 		}
 		rel = filepath.ToSlash(rel)
+		if isVendoredScanFile(rel, name) {
+			return nil
+		}
 		if ignores.Ignored(rel, false) {
 			return nil
 		}
@@ -5991,6 +6005,35 @@ func workingTreeFiles(repo string, ignores ignoreMatcher) ([]string, error) {
 	})
 	sort.Strings(paths)
 	return paths, err
+}
+
+func filterVendoredPaths(paths []string) []string {
+	filtered := paths[:0]
+	for _, rel := range paths {
+		if vendoredPath(rel) {
+			continue
+		}
+		filtered = append(filtered, rel)
+	}
+	return filtered
+}
+
+func vendoredPath(rel string) bool {
+	rel = filepath.ToSlash(rel)
+	parts := strings.Split(rel, "/")
+	if len(parts) == 0 {
+		return false
+	}
+	if isVendoredScanFile(rel, parts[len(parts)-1]) {
+		return true
+	}
+	for i, part := range parts[:len(parts)-1] {
+		dirRel := strings.Join(parts[:i+1], "/")
+		if isVendoredScanDir(dirRel, part) {
+			return true
+		}
+	}
+	return false
 }
 
 func firstError(errs ...error) error {
