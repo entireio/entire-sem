@@ -10414,3 +10414,41 @@ class Widget {
 		t.Fatalf("Dart method not extracted: %#v", kinds)
 	}
 }
+
+func TestResolveCallTargetsPrefersTraitDeclarationOverImplFanout(t *testing.T) {
+	// A generic/trait-dispatched call (e.g. Rust ByteOrder::read_u16) resolves in
+	// the compiler call graph to the trait method *declaration*, not to every
+	// same-named impl. When a same-file overload set contains exactly one
+	// trait/interface-declared candidate, resolveCallTargets must return only it.
+	from := SymbolRecord{ID: "repo:Rust:src/lib.rs:method:Reader.read", Name: "read",
+		FilePath: "src/lib.rs", Language: "Rust"}
+	traitDecl := SymbolRecord{ID: "repo:Rust:src/lib.rs:method:ByteOrder.read_u16", Name: "read_u16",
+		FilePath: "src/lib.rs", Language: "Rust", Kind: "method",
+		ContainerID: "repo:Rust:src/lib.rs:trait:ByteOrder"}
+	implBig := SymbolRecord{ID: "repo:Rust:src/lib.rs:method:BigEndian.read_u16", Name: "read_u16",
+		FilePath: "src/lib.rs", Language: "Rust", Kind: "method",
+		ContainerID: "repo:Rust:src/lib.rs:struct:BigEndian"}
+	implLittle := SymbolRecord{ID: "repo:Rust:src/lib.rs:method:LittleEndian.read_u16", Name: "read_u16",
+		FilePath: "src/lib.rs", Language: "Rust", Kind: "method",
+		ContainerID: "repo:Rust:src/lib.rs:struct:LittleEndian"}
+	sameFile := []SymbolRecord{traitDecl, implBig, implLittle}
+	kindByID := map[string]string{
+		"repo:Rust:src/lib.rs:trait:ByteOrder":     "trait",
+		"repo:Rust:src/lib.rs:struct:BigEndian":    "struct",
+		"repo:Rust:src/lib.rs:struct:LittleEndian": "struct",
+	}
+
+	got := resolveCallTargets("read_u16", from, nil, sameFile, nil, kindByID)
+	if len(got) != 1 {
+		t.Fatalf("expected 1 disambiguated target, got %d: %+v", len(got), got)
+	}
+	if got[0].ID != traitDecl.ID {
+		t.Fatalf("expected trait declaration %q, got %q", traitDecl.ID, got[0].ID)
+	}
+
+	// No trait/interface candidate => unchanged fan-out (no spurious narrowing).
+	plain := []SymbolRecord{implBig, implLittle}
+	if got := resolveCallTargets("read_u16", from, nil, plain, nil, kindByID); len(got) != 2 {
+		t.Fatalf("expected 2 targets when no declaration exists, got %d", len(got))
+	}
+}

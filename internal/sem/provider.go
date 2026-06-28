@@ -1381,7 +1381,7 @@ func routeBoundarySource(path, language string, fileSymbols []SymbolRecord) rout
 	return routeSource{StartLine: 1, EndLine: 1}
 }
 
-func resolveCallTargets(name string, from SymbolRecord, candidates, sameFile []SymbolRecord, importsByName map[string][]string) []resolvedCallTarget {
+func resolveCallTargets(name string, from SymbolRecord, candidates, sameFile []SymbolRecord, importsByName map[string][]string, kindByID map[string]string) []resolvedCallTarget {
 	var local []resolvedCallTarget
 	for _, to := range sameFile {
 		if to.ID == from.ID || to.Name != name || to.Kind == "field" {
@@ -1394,6 +1394,17 @@ func resolveCallTargets(name string, from SymbolRecord, candidates, sameFile []S
 			Resolution:   "exact",
 			Scope:        "file",
 		})
+	}
+	// Disambiguate same-file fan-out: when one name resolves to several same-file
+	// definitions (e.g. a trait method declaration plus its impls, as with Rust's
+	// ByteOrder::read_u16), a generic/trait-dispatched call resolves to the trait
+	// (or interface) *declaration*, not every implementation. If exactly one
+	// candidate is declared in a trait/interface, prefer it; emitting the whole
+	// overload set is the dominant false-positive source on trait-heavy code.
+	if len(local) > 1 {
+		if narrowed := preferDeclarationTarget(local, kindByID); narrowed != nil {
+			return narrowed
+		}
 	}
 	if len(local) > 0 {
 		return local
@@ -1480,6 +1491,27 @@ func resolveCallTargets(name string, from SymbolRecord, candidates, sameFile []S
 
 func cFamilyOverloadResolutionEnabled(language string) bool {
 	return language == "C" || language == "C++"
+}
+
+// preferDeclarationTarget narrows an ambiguous same-name overload set to the
+// single candidate declared in a trait or interface, if exactly one exists. A
+// call dispatched over a trait/interface resolves to that declaration in the
+// compiler's call graph (the impls are reached through it), so emitting only the
+// declaration matches ground truth and drops the impl-fan-out false positives.
+// Returns nil when the heuristic does not apply (no unique trait/interface
+// declaration), leaving the caller's existing behavior unchanged.
+func preferDeclarationTarget(targets []resolvedCallTarget, kindByID map[string]string) []resolvedCallTarget {
+	var decls []resolvedCallTarget
+	for _, t := range targets {
+		switch kindByID[t.ContainerID] {
+		case "trait", "interface":
+			decls = append(decls, t)
+		}
+	}
+	if len(decls) != 1 {
+		return nil
+	}
+	return decls
 }
 
 func sameFileOverloadSet(candidates []SymbolRecord) ([]SymbolRecord, bool) {
@@ -1637,6 +1669,7 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 	needsGlobalSymbolsByFile := needsGlobalSymbolsByShortName
 	symbolsByShortName := map[string][]SymbolRecord{}
 	symbolsByFile := map[string][]SymbolRecord{}
+	kindByID := map[string]string{} // symbol ID -> kind, for container-kind lookups
 	childNamesByContainer := map[string]map[string]bool{}
 	methodsByContainer := map[string]map[string]SymbolRecord{}
 	fieldsByContainer := map[string]map[string]SymbolRecord{}
@@ -1732,6 +1765,7 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 			}
 			if needsGlobalSymbolsByShortName {
 				symbolsByShortName[symbol.Name] = append(symbolsByShortName[symbol.Name], symbol)
+				kindByID[symbol.ID] = symbol.Kind
 			}
 			if needsGlobalSymbolsByFile {
 				symbolsByFile[symbol.FilePath] = append(symbolsByFile[symbol.FilePath], symbol)
@@ -1970,7 +2004,7 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 					if childNamesByContainer[from.ID][name] {
 						continue
 					}
-					targets := resolveCallTargets(name, from, symbolsByShortName[name], currentFileSymbols, importsByName)
+					targets := resolveCallTargets(name, from, symbolsByShortName[name], currentFileSymbols, importsByName, kindByID)
 					for _, to := range targets {
 						emit(RelationRecord{
 							RecordType:    "relation",
@@ -2005,7 +2039,7 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 					if name == from.Name {
 						continue
 					}
-					for _, to := range resolveCallTargets(name, from, symbolsByShortName[name], currentFileSymbols, importsByName) {
+					for _, to := range resolveCallTargets(name, from, symbolsByShortName[name], currentFileSymbols, importsByName, kindByID) {
 						emit(RelationRecord{
 							RecordType:    "relation",
 							FromID:        from.ID,
@@ -2033,7 +2067,7 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 					if flow.Name == from.Name {
 						continue
 					}
-					for _, to := range resolveCallTargets(flow.Name, from, symbolsByShortName[flow.Name], currentFileSymbols, importsByName) {
+					for _, to := range resolveCallTargets(flow.Name, from, symbolsByShortName[flow.Name], currentFileSymbols, importsByName, kindByID) {
 						if flow.Direction == "caller_to_callee" && to.Resolution == "name_only" {
 							continue
 						}
@@ -2203,7 +2237,7 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 					Language: file.Language,
 				}
 				for _, name := range sortedKeysOf(callLikeIdentifiers(topLevel)) {
-					for _, to := range resolveCallTargets(name, fileSource, symbolsByShortName[name], currentFileSymbols, importsByName) {
+					for _, to := range resolveCallTargets(name, fileSource, symbolsByShortName[name], currentFileSymbols, importsByName, kindByID) {
 						emit(RelationRecord{
 							RecordType:    "relation",
 							FromID:        fileSource.ID,
