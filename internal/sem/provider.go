@@ -1949,6 +1949,34 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 	}
 	manifestImports := buildManifestImportResolver(files, readContent)
 
+	// Package-level vars of package-qualified types, keyed by directory. A Go
+	// package spans every file in a directory and a var is commonly declared in
+	// one file but called in another, so this must be built before the per-file
+	// loop. Used to resolve method calls on such vars to the right imported type.
+	pkgVarTypesByDir := map[string]map[string]pkgQualType{}
+	if needsReceiverCalls {
+		for _, file := range files {
+			if file.Language != "Go" {
+				continue
+			}
+			content, ok := readContent(file.Path)
+			if !ok {
+				continue
+			}
+			vars := collectPackageVarTypes(content)
+			if len(vars) == 0 {
+				continue
+			}
+			dir := filepath.ToSlash(filepath.Dir(file.Path))
+			if pkgVarTypesByDir[dir] == nil {
+				pkgVarTypesByDir[dir] = map[string]pkgQualType{}
+			}
+			for n, qt := range vars {
+				pkgVarTypesByDir[dir][n] = qt
+			}
+		}
+	}
+
 	for _, file := range files {
 		if shouldStop != nil && shouldStop() {
 			return
@@ -2290,7 +2318,7 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 				}
 			}
 			if spec.callResolution == "full" {
-				for _, r := range receiverCallRelations(from, block, methodsByContainer, superContainerByID, symbolsByShortName, returnTypesBySymbolNameAndFile, importsByName, manifestImports.goModule) {
+				for _, r := range receiverCallRelations(from, block, methodsByContainer, superContainerByID, symbolsByShortName, returnTypesBySymbolNameAndFile, importsByName, manifestImports.goModule, pkgVarTypesByDir[filepath.ToSlash(filepath.Dir(file.Path))]) {
 					emit(r)
 				}
 				for _, r := range importedReceiverCallRelations(from, block, importsByName, symbolsByShortName) {
@@ -2669,7 +2697,65 @@ func lookupMethodUpChain(start, name string, methodsByContainer map[string]map[s
 	return SymbolRecord{}, false, false
 }
 
-func receiverCallRelations(from SymbolRecord, block string, methodsByContainer map[string]map[string]SymbolRecord, superContainerByID map[string]string, symbolsByShortName map[string][]SymbolRecord, returnTypesBySymbolNameAndFile map[string]map[string][]string, importsByName map[string][]string, goModule string) []RelationRecord {
+// pkgQualType is a package-qualified type reference (alias.TypeName), used to
+// resolve method calls on package-level vars whose bare type name is ambiguous
+// across packages (e.g. zerolog's `enc = json.Encoder{}` where both internal/json
+// and internal/cbor define an Encoder with the same methods).
+type pkgQualType struct {
+	alias    string
+	typeName string
+}
+
+// pkgQualVarRe matches a package-level composite-literal var assignment:
+//
+//	enc = json.Encoder{...}   /   var enc = &json.Encoder{...}
+var pkgQualVarRe = regexp.MustCompile(`^[ \t]*(?:var\s+)?([A-Za-z_]\w*)\s*=\s*&?([a-z]\w[\w]*)\.([A-Z]\w*)\s*\{`)
+
+// collectPackageVarTypes scans a Go file's package-level (brace-depth 0)
+// declarations for package-qualified composite literals and returns
+// name -> {alias, type}. Brace depth skips function bodies; the legacy
+// `var ( ... )` block uses parens, so its entries stay at depth 0.
+func collectPackageVarTypes(content string) map[string]pkgQualType {
+	stripped := stripCodeLiteralsAndComments(content)
+	out := map[string]pkgQualType{}
+	depth := 0
+	for _, line := range strings.Split(stripped, "\n") {
+		if depth == 0 {
+			if m := pkgQualVarRe.FindStringSubmatch(line); m != nil {
+				out[m[1]] = pkgQualType{alias: m[2], typeName: m[3]}
+			}
+		}
+		depth += strings.Count(line, "{") - strings.Count(line, "}")
+		if depth < 0 {
+			depth = 0
+		}
+	}
+	return out
+}
+
+// resolveQualifiedType picks the type-like symbol for a package-qualified
+// reference by the Go convention that a package's import alias equals its
+// directory basename (json.Encoder -> the Encoder in .../json/). Requires a
+// unique match so an ambiguous alias resolves to nothing rather than wrongly.
+func resolveQualifiedType(qt pkgQualType, symbolsByShortName map[string][]SymbolRecord) (SymbolRecord, bool) {
+	var match SymbolRecord
+	found := 0
+	for _, cand := range symbolsByShortName[qt.typeName] {
+		if !typeLikeKind(cand.Kind) {
+			continue
+		}
+		if filepath.Base(filepath.Dir(filepath.ToSlash(cand.FilePath))) == qt.alias {
+			match = cand
+			found++
+		}
+	}
+	if found == 1 {
+		return match, true
+	}
+	return SymbolRecord{}, false
+}
+
+func receiverCallRelations(from SymbolRecord, block string, methodsByContainer map[string]map[string]SymbolRecord, superContainerByID map[string]string, symbolsByShortName map[string][]SymbolRecord, returnTypesBySymbolNameAndFile map[string]map[string][]string, importsByName map[string][]string, goModule string, pkgVarTypes map[string]pkgQualType) []RelationRecord {
 	if typeLikeKind(from.Kind) {
 		return nil
 	}
@@ -2762,6 +2848,17 @@ func receiverCallRelations(from SymbolRecord, block string, methodsByContainer m
 				confidence = 0.82
 				reason = "static method call resolved to the named type"
 				targetID = cls.ID
+			} else if qt, ok := pkgVarTypes[call.Receiver]; ok {
+				// Package-level var of a package-qualified type (alias.Type). Resolve
+				// the specific imported type so an ambiguous bare name (Encoder in
+				// both json and cbor) maps to the right one.
+				sym, ok := resolveQualifiedType(qt, symbolsByShortName)
+				if !ok {
+					continue
+				}
+				targetID = sym.ID
+				confidence = 0.78
+				reason = "method call on package var resolved via qualified imported type"
 			} else {
 				continue
 			}
