@@ -777,6 +777,12 @@ func StreamSnapshot(ctx context.Context, repo, providerVersion string, options P
 			continue
 		}
 		language := langSpec.language
+		// Skip Go files the default build excludes (build-tag / _GOOS_GOARCH), so
+		// the snapshot matches what the compiler compiles and alternate-tag files
+		// don't poison cross-file type inference.
+		if language == "Go" && !goFileMatchesDefaultBuild(path, content) {
+			continue
+		}
 		file := FileRecord{
 			RecordType: "file",
 			ID:         fileID(sc.key, path),
