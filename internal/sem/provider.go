@@ -1024,13 +1024,28 @@ func topLevelBlockFromLines(lines []string, symbols []SymbolRecord) string {
 
 var jsDeclarationOnlyCallSignaturePattern = regexp.MustCompile(`^\s*(?:export\s+)?(?:(?:public|private|protected|readonly|static|abstract|override|declare|async)\s+)*[A-Za-z_$][A-Za-z0-9_$]*\s*(?:<[^>{}\n]*>)?\([^{};]*\)\s*:\s*[^{};]+;?\s*$`)
 
+// pythonEllipsisStubSignaturePattern matches a declaration-only Python def whose
+// body is `...` on the same line (`def describe(x: int) -> str: ...`). These are
+// @typing.overload / Protocol stubs: they are intentionally not emitted as
+// symbols, so their lines survive top-level masking, and the bare `def f(`
+// token would otherwise be mis-scanned as a call to `f`. The real
+// implementation (a `def f(...):` with a body on following lines) is part of an
+// emitted symbol and is already masked, so it is not matched here.
+var pythonEllipsisStubSignaturePattern = regexp.MustCompile(`^\s*(?:async\s+)?def\s+[A-Za-z_][A-Za-z0-9_]*\s*\([^{}]*\)\s*(?:->[^:]+)?:\s*\.\.\.\s*$`)
+
 func stripDeclarationOnlyCallSignatures(language, content string) string {
-	if language != "JavaScript" && language != "TypeScript" {
+	var pattern *regexp.Regexp
+	switch language {
+	case "JavaScript", "TypeScript":
+		pattern = jsDeclarationOnlyCallSignaturePattern
+	case "Python":
+		pattern = pythonEllipsisStubSignaturePattern
+	default:
 		return content
 	}
 	lines := strings.Split(content, "\n")
 	for i, line := range lines {
-		if jsDeclarationOnlyCallSignaturePattern.MatchString(line) {
+		if pattern.MatchString(line) {
 			lines[i] = ""
 		}
 	}
@@ -1413,13 +1428,19 @@ func implicitReceiverLanguage(lang string) bool {
 	return false
 }
 
-func resolveCallTargets(name string, from SymbolRecord, candidates, sameFile []SymbolRecord, importsByName map[string][]string) []resolvedCallTarget {
+// allowMethodTargets relaxes the "a bare name() never resolves to a method"
+// rule. It must stay false for CALLS resolution (a receiver-less call is a
+// function, not a class method), but the DATA_FLOWS argument-forward path
+// resolves the *called* symbol of `obj.method(arg)` — which legitimately is a
+// method — so it passes true. Folding that distinction into one resolver kept
+// the data-flow path from silently dropping the `arg -> method` flow.
+func resolveCallTargets(name string, from SymbolRecord, candidates, sameFile []SymbolRecord, importsByName map[string][]string, allowMethodTargets bool) []resolvedCallTarget {
 	var local []resolvedCallTarget
 	for _, to := range sameFile {
 		// A bare `name()` call resolves to a function, not a class method (methods
 		// require a receiver and are resolved by receiverCallRelations) — matching
 		// a same-named method here is a false edge.
-		if to.ID == from.ID || to.Name != name || to.Kind == "field" || (to.Kind == "method" && !implicitReceiverLanguage(from.Language)) || !localReachable(from, to) {
+		if to.ID == from.ID || to.Name != name || to.Kind == "field" || (to.Kind == "method" && !implicitReceiverLanguage(from.Language) && !allowMethodTargets) || !localReachable(from, to) {
 			continue
 		}
 		local = append(local, resolvedCallTarget{
@@ -1449,7 +1470,7 @@ func resolveCallTargets(name string, from SymbolRecord, candidates, sameFile []S
 
 	var imported []resolvedCallTarget
 	for _, to := range candidates {
-		if to.ID == from.ID || to.Kind == "field" || (to.Kind == "method" && !implicitReceiverLanguage(from.Language)) || !localReachable(from, to) {
+		if to.ID == from.ID || to.Kind == "field" || (to.Kind == "method" && !implicitReceiverLanguage(from.Language) && !allowMethodTargets) || !localReachable(from, to) {
 			continue
 		}
 		if importedNameMatchesFile(importsByName[name], from.FilePath, to.FilePath) {
@@ -1495,7 +1516,7 @@ func resolveCallTargets(name string, from SymbolRecord, candidates, sameFile []S
 
 	var remaining []SymbolRecord
 	for _, to := range candidates {
-		if to.ID != from.ID && to.Kind != "field" && (to.Kind != "method" || implicitReceiverLanguage(from.Language)) && localReachable(from, to) {
+		if to.ID != from.ID && to.Kind != "field" && (to.Kind != "method" || implicitReceiverLanguage(from.Language) || allowMethodTargets) && localReachable(from, to) {
 			remaining = append(remaining, to)
 		}
 	}
@@ -2049,7 +2070,7 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 					if childNamesByContainer[from.ID][name] {
 						continue
 					}
-					targets := resolveCallTargets(name, from, symbolsByShortName[name], currentFileSymbols, importsByName)
+					targets := resolveCallTargets(name, from, symbolsByShortName[name], currentFileSymbols, importsByName, false)
 					for _, to := range targets {
 						// Call to a type (class/struct/...) is a constructor/conversion, not a
 						// callable->callable call: keep it as CONSTRUCTS for agents, out of CALLS.
@@ -2090,7 +2111,7 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 					if name == from.Name {
 						continue
 					}
-					for _, to := range resolveCallTargets(name, from, symbolsByShortName[name], currentFileSymbols, importsByName) {
+					for _, to := range resolveCallTargets(name, from, symbolsByShortName[name], currentFileSymbols, importsByName, false) {
 						if typeLikeKind(to.Kind) {
 							continue // construction, not an async call
 						}
@@ -2121,7 +2142,7 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 					if flow.Name == from.Name {
 						continue
 					}
-					for _, to := range resolveCallTargets(flow.Name, from, symbolsByShortName[flow.Name], currentFileSymbols, importsByName) {
+					for _, to := range resolveCallTargets(flow.Name, from, symbolsByShortName[flow.Name], currentFileSymbols, importsByName, true) {
 						if flow.Direction == "caller_to_callee" && to.Resolution == "name_only" {
 							continue
 						}
@@ -2291,7 +2312,7 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 					Language: file.Language,
 				}
 				for _, name := range sortedKeysOf(callLikeIdentifiers(topLevel)) {
-					for _, to := range resolveCallTargets(name, fileSource, symbolsByShortName[name], currentFileSymbols, importsByName) {
+					for _, to := range resolveCallTargets(name, fileSource, symbolsByShortName[name], currentFileSymbols, importsByName, false) {
 						relType := "CALLS"
 						if typeLikeKind(to.Kind) {
 							relType = "CONSTRUCTS"
