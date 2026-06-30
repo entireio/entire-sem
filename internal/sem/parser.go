@@ -3564,7 +3564,7 @@ func maskPostgresUnsupportedSyntax(content string) string {
 	for _, loc := range postgresVectorOperatorClassPattern.FindAllStringIndex(content, -1) {
 		maskBytesPreservingNewlines(masked, loc[0], loc[1])
 	}
-	lower := strings.ToLower(content)
+	lower := asciiLowerString(content)
 	offset := 0
 	for {
 		rel := strings.Index(lower[offset:], "create policy")
@@ -3626,7 +3626,7 @@ func maskBytesPreservingNewlines(src []byte, start, end int) {
 }
 
 func maskPostgresCheckConstraints(masked []byte, content string) {
-	lower := strings.ToLower(content)
+	lower := asciiLowerString(content)
 	offset := 0
 	for {
 		rel := strings.Index(lower[offset:], "check")
@@ -3683,8 +3683,31 @@ func maskPostgresCheckConstraints(masked []byte, content string) {
 	}
 }
 
+// asciiLowerString lowercases only ASCII A-Z, byte for byte, leaving every other
+// byte (including multi-byte UTF-8 sequences) untouched. Unlike strings.ToLower,
+// the result has exactly the same byte length as the input, so byte offsets from
+// a keyword search on the lowered copy stay valid when applied back to the
+// original content. SQL keywords are ASCII, so this finds the same matches —
+// strings.ToLower can grow the byte length (e.g. 'İ' -> "i̇"), which made these
+// offsets run past the end of content and panic on large SQL files.
+func asciiLowerString(s string) string {
+	var b []byte
+	for i := 0; i < len(s); i++ {
+		if c := s[i]; c >= 'A' && c <= 'Z' {
+			if b == nil {
+				b = []byte(s)
+			}
+			b[i] = c + ('a' - 'A')
+		}
+	}
+	if b == nil {
+		return s
+	}
+	return string(b)
+}
+
 func maskPostgresTableConstraints(masked []byte, content string) {
-	lower := strings.ToLower(content)
+	lower := asciiLowerString(content)
 	for _, keyword := range []string{"primary key", "foreign key", "unique", "constraint"} {
 		offset := 0
 		for {
@@ -3790,7 +3813,7 @@ func postgresFunctionEntities(src []byte) []Entity {
 
 func postgresPolicyEntities(src []byte) []Entity {
 	content := string(src)
-	lower := strings.ToLower(content)
+	lower := asciiLowerString(content)
 	var entities []Entity
 	offset := 0
 	for {
@@ -4513,7 +4536,7 @@ func sqlIdentifierContent(node *sitter.Node, src []byte) string {
 
 func sqlStatementEntity(node *sitter.Node, src []byte) (string, string, bool) {
 	content := strings.TrimSpace(node.Content(src))
-	lower := strings.ToLower(content)
+	lower := asciiLowerString(content)
 	if !strings.HasPrefix(lower, "create ") {
 		return "", "", false
 	}
@@ -4524,7 +4547,7 @@ func sqlStatementEntity(node *sitter.Node, src []byte) (string, string, bool) {
 }
 
 func matchSQLCreateFunctionName(content string) string {
-	lower := strings.ToLower(content)
+	lower := asciiLowerString(content)
 	idx := strings.Index(lower, "function")
 	if idx < 0 {
 		return ""
@@ -4544,7 +4567,7 @@ func matchSQLCreateFunctionName(content string) string {
 }
 
 func matchSQLCreatePolicyName(content string) string {
-	lower := strings.ToLower(content)
+	lower := asciiLowerString(content)
 	idx := strings.Index(lower, "create policy")
 	if idx < 0 {
 		return ""
