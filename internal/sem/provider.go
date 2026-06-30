@@ -813,6 +813,28 @@ func StreamSnapshot(ctx context.Context, repo, providerVersion string, options P
 			})
 			continue
 		}
+		// Skip minified/bundled files (e.g. site assets like main.js / *.min.js):
+		// their thousands of single-letter symbols in one file form a near-complete
+		// same-file call graph (the dominant relation-count + time blow-up on repos
+		// that vendor web assets), and they are not meaningful source to analyze.
+		if longestLineLen(content) > maxMinifiedLineLen {
+			languageSet[language] = struct{}{}
+			if err := emit(file); err != nil {
+				return err
+			}
+			files = append(files, file)
+			lc := completenessLangs[language]
+			lc.Files++
+			completenessLangs[language] = lc
+			failures = append(failures, PartialFailure{
+				Code:                 "E_MINIFIED",
+				Severity:             "warning",
+				FilePath:             path,
+				EffectOnCompleteness: "file record emitted but symbol parsing skipped",
+				Detail:               "file appears minified/bundled (very long lines); not analyzed as source",
+			})
+			continue
+		}
 		entities, language, parseStatus := parseWithProfile(parser, spec, langSpec, path, content)
 		if language == "" {
 			failures = append(failures, PartialFailure{
