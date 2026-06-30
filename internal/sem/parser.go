@@ -183,7 +183,23 @@ func (TreeSitterParser) ParseWithStatus(path, content string) ([]Entity, string,
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), treeSitterParseTimeout)
 	defer cancel()
-	root, err := sitter.ParseCtx(ctx, parseSrc, spec.grammar)
+	// Own the parser and tree explicitly and free their native (cgo) memory on
+	// return. sitter.ParseCtx leaves the C parser and tree to be reclaimed by Go
+	// finalizers, but the Go heap stays small while parsing, so GC — and thus those
+	// finalizers — runs only every couple of minutes. Re-parse-heavy passes on large
+	// repos then pile up thousands of tree-sitter trees off-heap (12+ GB RSS on
+	// microsoft/TypeScript) even though the live Go heap is well under 1 GB.
+	parser := sitter.NewParser()
+	defer parser.Close()
+	parser.SetLanguage(spec.grammar)
+	tree, err := parser.ParseCtx(ctx, nil, parseSrc)
+	if tree != nil {
+		defer tree.Close()
+	}
+	var root *sitter.Node
+	if tree != nil {
+		root = tree.RootNode()
+	}
 	if err != nil || root == nil || root.IsNull() {
 		detail := "tree-sitter parse failed"
 		code := "E_PARSE_ERROR"
