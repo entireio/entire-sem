@@ -8486,6 +8486,13 @@ func (resolver manifestImportResolver) resolveRustImport(importingPath, spec str
 
 func (resolver manifestImportResolver) resolveRustModulePath(module string) (string, bool) {
 	module = strings.Trim(module, ":")
+	// No indexed modules (e.g. a Cargo workspace where crates live under
+	// <crate>/src/ rather than ./src/, so rustModuleKeysForPath matched nothing):
+	// resolution can never succeed, so skip the O(depth^2) alias-expansion walk
+	// that would otherwise run — and fail — for every import on large repos.
+	if len(resolver.rustModules) == 0 {
+		return "", false
+	}
 	seen := map[string]bool{}
 	for module != "" {
 		if path, ok := resolver.rustModules[module]; ok {
