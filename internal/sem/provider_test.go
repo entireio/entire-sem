@@ -9213,7 +9213,7 @@ func TestCapabilitiesAdvertiseExpandedLanguageSet(t *testing.T) {
 			t.Fatalf("capabilities missing language %q in %#v", want, caps.SupportedLanguages)
 		}
 	}
-	for _, want := range []string{"TypeScript", "Python", "JavaScript", "Java", "C++", "C", "C#", "Go", "PHP", "Rust", "Kotlin", "Ruby", "Swift", "SQL", "Bash", "Zsh", "Dart"} {
+	for _, want := range []string{"TypeScript", "Python", "JavaScript", "Java", "C++", "C", "C#", "Go", "PHP", "Rust", "Kotlin", "Ruby", "Swift", "SQL", "Bash", "Zsh", "Dart", "Clojure", "ClojureScript"} {
 		if !semanticSeen[want] {
 			t.Fatalf("capabilities should classify %q as semantic, got semantic=%#v inventory=%#v", want, caps.SemanticLanguages, caps.InventoryOnlyLanguages)
 		}
@@ -10412,5 +10412,80 @@ class Widget {
 	}
 	if kinds["Widget.build"] == "" && kinds["build"] == "" {
 		t.Fatalf("Dart method not extracted: %#v", kinds)
+	}
+}
+
+func TestClojureSemanticExtraction(t *testing.T) {
+	// Clojure was promoted from inventory to the semantic tier (vendored
+	// grammar). tree-sitter-clojure only produces generic list_lit nodes, so
+	// def-forms are recognized by list-head inspection, including namespaced
+	// heads such as `mu/defn` (a common def-macro idiom).
+	repo := t.TempDir()
+	writeFile(t, repo, "src/app/core.clj", `(ns app.core)
+
+(def config {:port 8080})
+
+(defonce state (atom nil))
+
+(defn- helper [n]
+  (inc n))
+
+(defn ^:private process-item
+  "Docstring is skipped."
+  [item]
+  (helper item))
+
+(mu/defn instrumented :- :int
+  [x :- :int]
+  (inc x))
+
+(defmacro with-thing [& body]
+  body)
+
+(defmulti area :shape)
+
+(defmethod area :circle [c]
+  (* 3.14 (:radius c) (:radius c)))
+
+(defprotocol Renderer
+  (render [this]))
+
+(defrecord Card [title]
+  Renderer
+  (render [this] title))
+
+(deftype Box [w h])
+
+(definterface IThing
+  (doThing []))
+`)
+	writeFile(t, repo, "src/app/shared.cljc", "(defn shared-fn [x] x)\n")
+	snapshot, err := BuildProviderSnapshotWithOptions(t.Context(), repo, "test-version", ProviderSnapshotOptions{Worktree: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	kinds := map[string]string{}
+	for _, s := range snapshot.Symbols {
+		if s.Language == "Clojure" {
+			kinds[s.Name] = s.Kind
+		}
+	}
+	for name, want := range map[string]string{
+		"config":       "variable",
+		"state":        "variable",
+		"helper":       "function",
+		"process-item": "function",
+		"instrumented": "function",
+		"with-thing":   "function",
+		"area":         "function",
+		"Renderer":     "interface",
+		"Card":         "class",
+		"Box":          "class",
+		"IThing":       "interface",
+		"shared-fn":    "function",
+	} {
+		if kinds[name] != want {
+			t.Fatalf("Clojure symbol %q: want kind %q, got %q (all: %#v)", name, want, kinds[name], kinds)
+		}
 	}
 }

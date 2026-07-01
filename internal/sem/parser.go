@@ -36,6 +36,7 @@ import (
 	treesittertsx "github.com/smacker/go-tree-sitter/typescript/tsx"
 	treesitterts "github.com/smacker/go-tree-sitter/typescript/typescript"
 	treesitteryaml "github.com/smacker/go-tree-sitter/yaml"
+	clojure "github.com/suhaanthayyil/entire-sem/internal/sem/grammars/clojure"
 	dart "github.com/suhaanthayyil/entire-sem/internal/sem/grammars/dart"
 	"github.com/suhaanthayyil/entire-sem/internal/sem/pgsql"
 	"github.com/suhaanthayyil/entire-sem/internal/sem/zsh"
@@ -52,6 +53,9 @@ var treeSitterLanguages = map[string]languageSpec{
 	".c":          {language: "C", grammar: c.GetLanguage()},
 	".cc":         {language: "C++", grammar: cpp.GetLanguage()},
 	".cpp":        {language: "C++", grammar: cpp.GetLanguage()},
+	".clj":        {language: "Clojure", grammar: clojure.GetLanguage()},
+	".cljc":       {language: "Clojure", grammar: clojure.GetLanguage()},
+	".cljs":       {language: "ClojureScript", grammar: clojure.GetLanguage()},
 	".cs":         {language: "C#", grammar: csharp.GetLanguage()},
 	".cue":        {language: "CUE", grammar: cue.GetLanguage()},
 	".cxx":        {language: "C++", grammar: cpp.GetLanguage()},
@@ -3348,6 +3352,14 @@ func entityFromNode(node *sitter.Node, src []byte, language, scope string) (Enti
 		if !ok {
 			return Entity{}, false
 		}
+	case "list_lit":
+		// Clojure def-forms. tree-sitter-clojure has no semantic node types
+		// (defn is just a list), so extract by list-head inspection. Gated to
+		// Clojure/ClojureScript so no other grammar's node types are affected.
+		if language != "Clojure" && language != "ClojureScript" {
+			return Entity{}, false
+		}
+		return clojureListEntity(node, src)
 	case "variable_declarator":
 		value := node.ChildByFieldName("value")
 		if functionLikeValue(value) {
@@ -4961,6 +4973,107 @@ func elixirCallEntity(node *sitter.Node, src []byte, scope string) (string, stri
 		}
 	}
 	return "", "", false
+}
+
+// clojureDefKinds maps a Clojure def-form head symbol (its final segment, so
+// namespaced heads like `mu/defn` or `methodical/defmulti` match too — a
+// common idiom for instrumented/extended def macros) to the symbol kind.
+var clojureDefKinds = map[string]string{
+	"defn":         "function",
+	"defn-":        "function",
+	"defmacro":     "function",
+	"defmulti":     "function",
+	"defmethod":    "function",
+	"def":          "variable",
+	"defonce":      "variable",
+	"defrecord":    "class",
+	"deftype":      "class",
+	"defprotocol":  "interface",
+	"definterface": "interface",
+}
+
+// clojureListEntity extracts a symbol from a Clojure `(defX name ...)` list.
+// tree-sitter-clojure parses every form as a generic list_lit, so the def-form
+// is recognized by inspecting the list head: the head symbol's final segment
+// (after any namespace qualifier) must be a known def macro, and the symbol
+// name is the next symbol value in the list (metadata attaches to the sym_lit
+// node itself in this grammar, and docstrings follow the name, so neither
+// interferes).
+func clojureListEntity(node *sitter.Node, src []byte) (Entity, bool) {
+	values := clojureListValues(node)
+	if len(values) < 2 {
+		return Entity{}, false
+	}
+	head := values[0]
+	if head.Type() != "sym_lit" {
+		return Entity{}, false
+	}
+	kind, ok := clojureDefKinds[clojureSymName(head, src)]
+	if !ok {
+		return Entity{}, false
+	}
+	nameNode := values[1]
+	if nameNode.Type() != "sym_lit" {
+		return Entity{}, false
+	}
+	name := clojureSymName(nameNode, src)
+	if name == "" {
+		return Entity{}, false
+	}
+	// The header — through the params vector when one directly follows the
+	// name — is the signature; the whole form would collapse a large function
+	// body into one line.
+	sigEnd := nameNode.EndByte()
+	if len(values) > 2 && values[2].Type() == "vec_lit" {
+		sigEnd = values[2].EndByte()
+	}
+	signature := node.Content(src)
+	if int(sigEnd) > int(node.StartByte()) && int(sigEnd) <= len(src) {
+		signature = string(src[node.StartByte():sigEnd])
+	}
+	signature = strings.Join(strings.Fields(signature), " ")
+
+	block := node.Content(src)
+	return Entity{
+		Kind:        kind,
+		Name:        name,
+		Signature:   signature,
+		StartLine:   int(node.StartPoint().Row) + 1,
+		EndLine:     int(node.EndPoint().Row) + 1,
+		BodyHash:    hash(normalize(block)),
+		Fingerprint: hash(normalize(entityFingerprintSource(Entity{Name: name, Signature: signature}, block))),
+	}, true
+}
+
+// clojureListValues returns the value children of a list_lit, skipping
+// comments, discard expressions (#_), and metadata attached to the list.
+func clojureListValues(node *sitter.Node) []*sitter.Node {
+	var values []*sitter.Node
+	for i := 0; i < int(node.NamedChildCount()); i++ {
+		child := node.NamedChild(i)
+		if !validNode(child) {
+			continue
+		}
+		switch child.Type() {
+		case "comment", "dis_expr", "meta_lit", "old_meta_lit":
+			continue
+		}
+		values = append(values, child)
+	}
+	return values
+}
+
+// clojureSymName returns a symbol's name without its namespace qualifier
+// (`mu/defn` -> `defn`, `clojure.core/def` -> `def`).
+func clojureSymName(node *sitter.Node, src []byte) string {
+	if name := node.ChildByFieldName("name"); validNode(name) {
+		return strings.TrimSpace(name.Content(src))
+	}
+	text := strings.TrimSpace(node.Content(src))
+	if idx := strings.LastIndex(text, "/"); idx >= 0 && idx+1 < len(text) {
+		return text[idx+1:]
+	}
+	return text
 }
 
 func hclBlockName(node *sitter.Node, src []byte) string {
