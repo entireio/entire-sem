@@ -13,12 +13,15 @@ import (
 )
 
 func TestLanguageTiersClassifiesSemanticAndInventory(t *testing.T) {
-	tiers := languageTiers(map[string]struct{}{"Go": {}, "Zig": {}})
+	tiers := languageTiers(map[string]struct{}{"Go": {}, "Zig": {}, "Bicep": {}})
 	if tiers["Go"] != "semantic" {
 		t.Fatalf("Go tier = %q, want semantic", tiers["Go"])
 	}
-	if tiers["Zig"] != "inventory-only" {
-		t.Fatalf("Zig tier = %q, want inventory-only", tiers["Zig"])
+	if tiers["Zig"] != "semantic" {
+		t.Fatalf("Zig tier = %q, want semantic", tiers["Zig"])
+	}
+	if tiers["Bicep"] != "inventory-only" {
+		t.Fatalf("Bicep tier = %q, want inventory-only", tiers["Bicep"])
 	}
 	if languageTiers(nil) != nil {
 		t.Fatalf("nil languageSet should yield nil tiers, got %#v", languageTiers(nil))
@@ -9213,12 +9216,12 @@ func TestCapabilitiesAdvertiseExpandedLanguageSet(t *testing.T) {
 			t.Fatalf("capabilities missing language %q in %#v", want, caps.SupportedLanguages)
 		}
 	}
-	for _, want := range []string{"TypeScript", "Python", "JavaScript", "Java", "C++", "C", "C#", "Go", "PHP", "Rust", "Kotlin", "Ruby", "Swift", "SQL", "Bash", "Zsh", "Dart"} {
+	for _, want := range []string{"TypeScript", "Python", "JavaScript", "Java", "C++", "C", "C#", "Go", "PHP", "Rust", "Kotlin", "Ruby", "Swift", "SQL", "Bash", "Zsh", "Dart", "Zig"} {
 		if !semanticSeen[want] {
 			t.Fatalf("capabilities should classify %q as semantic, got semantic=%#v inventory=%#v", want, caps.SemanticLanguages, caps.InventoryOnlyLanguages)
 		}
 	}
-	for _, want := range []string{"Zig", "Bicep", "Solidity", "Nix", "Blade"} {
+	for _, want := range []string{"Bicep", "Solidity", "Nix", "Blade"} {
 		if !inventorySeen[want] {
 			t.Fatalf("capabilities should classify %q as inventory-only, got semantic=%#v inventory=%#v", want, caps.SemanticLanguages, caps.InventoryOnlyLanguages)
 		}
@@ -9384,7 +9387,7 @@ func TestCapabilitiesReportRelationSupportPerLanguage(t *testing.T) {
 			t.Fatalf("language %q should support CALLS: %#v", language, caps.RelationSupportByLanguage[language])
 		}
 	}
-	for _, language := range []string{"Zig", "Bicep", "Dockerfile", "YAML", "Kustomize"} {
+	for _, language := range []string{"Bicep", "Dockerfile", "YAML", "Kustomize"} {
 		if contains(caps.RelationSupportByLanguage[language], "CALLS") {
 			t.Fatalf("inventory/config language %q should not advertise CALLS: %#v", language, caps.RelationSupportByLanguage[language])
 		}
@@ -10412,5 +10415,65 @@ class Widget {
 	}
 	if kinds["Widget.build"] == "" && kinds["build"] == "" {
 		t.Fatalf("Dart method not extracted: %#v", kinds)
+	}
+}
+
+func TestZigSemanticExtraction(t *testing.T) {
+	// Zig was promoted from inventory to the semantic tier (vendored grammar);
+	// it must now extract functions and const-bound struct/enum/union types.
+	repo := t.TempDir()
+	writeFile(t, repo, "src/app.zig", `pub fn add(a: i32, b: i32) i32 {
+    return a + b;
+}
+
+const Point = struct {
+    x: i32,
+    y: i32,
+
+    pub fn norm(self: Point) i32 {
+        return add(self.x, self.y);
+    }
+};
+
+pub const Mode = enum { fast, slow };
+
+const Value = union(enum) {
+    int: i64,
+    float: f64,
+};
+
+test "add works" {
+    _ = add(1, 2);
+}
+`)
+	snapshot, err := BuildProviderSnapshotWithOptions(t.Context(), repo, "test-version", ProviderSnapshotOptions{Worktree: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	kinds := map[string]string{}
+	for _, s := range snapshot.Symbols {
+		if s.Language == "Zig" {
+			kinds[s.Name] = s.Kind
+		}
+	}
+	if kinds["add"] != "function" {
+		t.Fatalf("Zig top-level fn not extracted: %#v", kinds)
+	}
+	if kinds["Point"] != "struct" {
+		t.Fatalf("Zig struct const not extracted: %#v", kinds)
+	}
+	if kinds["Mode"] != "enum" {
+		t.Fatalf("Zig enum const not extracted: %#v", kinds)
+	}
+	if kinds["Value"] != "type" {
+		t.Fatalf("Zig union const not extracted: %#v", kinds)
+	}
+	if kinds["Point.norm"] == "" && kinds["norm"] == "" {
+		t.Fatalf("Zig container fn not extracted: %#v", kinds)
+	}
+	for name, kind := range kinds {
+		if strings.Contains(name, "add works") || kind == "" {
+			t.Fatalf("Zig test declaration should be skipped: %#v", kinds)
+		}
 	}
 }
