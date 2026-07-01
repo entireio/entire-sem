@@ -196,3 +196,23 @@ func TestAsciiLowerStringPreservesByteLength(t *testing.T) {
 		t.Errorf("ASCII not lowercased / non-ASCII altered: %q", asciiLowerString("CREATE Policy İ"))
 	}
 }
+
+// Declarative partitioning the pgsql grammar rejects: `PARTITION BY {RANGE|LIST|
+// HASH} (...)` trails a column list, and `PARTITION OF parent FOR VALUES ...`
+// replaces the column list. Both used to leave tree-sitter error nodes and drop
+// the table (postgres .sql failures). The masks blank/substitute the partition
+// clause while the real table symbol is still extracted from the original bytes.
+func TestPostgresDeclarativePartitioningParses(t *testing.T) {
+	src := "CREATE TABLE measurement (city_id int, logdate date) PARTITION BY RANGE (logdate);\n" +
+		"CREATE TABLE measurement_y2026 PARTITION OF measurement FOR VALUES FROM ('2026-01-01') TO ('2027-01-01');\n" +
+		"CREATE TABLE after_tbl (id int);\n"
+	entities, _, status := TreeSitterParser{}.ParseWithStatus("schema.sql", src)
+	if status.ParseError {
+		t.Fatalf("unexpected parse error on partitioned tables: %s", status.Detail)
+	}
+	for _, name := range []string{"measurement", "measurement_y2026", "after_tbl"} {
+		if countEntity(entities, "table", name) != 1 {
+			t.Errorf("table %s missing/duplicated (partition clause not masked): %+v", name, entities)
+		}
+	}
+}

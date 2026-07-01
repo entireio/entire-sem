@@ -3425,6 +3425,15 @@ var postgresCreateFunctionPattern = regexp.MustCompile(`(?is)\bcreate\s+(?:or\s+
 var postgresCreateExternalFunctionPattern = regexp.MustCompile(`(?is)\bcreate\s+(?:or\s+replace\s+)?(?:function|procedure)\b.*?\bas\s+'[^']+'(?:\s*,\s*'[^']+')?(?:\s+language\b[^;]*)?;`)
 var postgresCreateDomainCastPattern = regexp.MustCompile(`(?is)\bcreate\s+(?:domain|cast)\b[^;]*;`)
 
+// Declarative partitioning the grammar rejects. `PARTITION BY {RANGE|LIST|HASH}
+// (...)` trails a normal column list, so blanking it to the statement end leaves
+// a valid `CREATE TABLE t (...)`. `PARTITION OF parent FOR VALUES ...` replaces
+// the column list entirely, so a bare `CREATE TABLE t` would be left with no body;
+// substitute a dummy body so the statement still parses (the real table symbol is
+// still extracted from the original bytes).
+var postgresPartitionByPattern = regexp.MustCompile(`(?is)\s+partition\s+by\b[^;]*`)
+var postgresPartitionOfPattern = regexp.MustCompile(`(?is)\s+partition\s+of\b[^;]*`)
+
 // Extension-template placeholders like @extschema@ / @extschema:cube@ in .sql.in
 // files are not valid SQL scalars; replace each with a same-width identifier so
 // the surrounding statement parses (e.g. `AS @extschema:cube@.cube`).
@@ -3568,6 +3577,12 @@ func maskPostgresUnsupportedSyntax(content string) string {
 		maskBytesPreservingNewlines(masked, loc[0], loc[1])
 	}
 	for _, loc := range postgresOnDeleteUpdatePattern.FindAllStringIndex(content, -1) {
+		maskBytesPreservingNewlines(masked, loc[0], loc[1])
+	}
+	for _, loc := range postgresPartitionOfPattern.FindAllStringIndex(content, -1) {
+		replaceRangePreservingNewlines(masked, loc[0], loc[1], " (partition_dummy int)")
+	}
+	for _, loc := range postgresPartitionByPattern.FindAllStringIndex(content, -1) {
 		maskBytesPreservingNewlines(masked, loc[0], loc[1])
 	}
 	maskPostgresTableConstraints(masked, content)
