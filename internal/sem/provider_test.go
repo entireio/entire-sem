@@ -9207,6 +9207,7 @@ func TestCapabilitiesAdvertiseExpandedLanguageSet(t *testing.T) {
 		"Dart",
 		"R",
 		"Julia",
+		"Objective-C",
 		"Erlang",
 		"Haskell",
 		"Perl",
@@ -9221,7 +9222,7 @@ func TestCapabilitiesAdvertiseExpandedLanguageSet(t *testing.T) {
 			t.Fatalf("capabilities missing language %q in %#v", want, caps.SupportedLanguages)
 		}
 	}
-	for _, want := range []string{"TypeScript", "Python", "JavaScript", "Java", "C++", "C", "C#", "Go", "PHP", "Rust", "Kotlin", "Ruby", "Swift", "SQL", "Bash", "Zsh", "Dart", "R", "Julia", "Clojure", "ClojureScript", "Zig", "Perl", "Haskell", "Erlang"} {
+	for _, want := range []string{"TypeScript", "Python", "JavaScript", "Java", "C++", "C", "C#", "Go", "PHP", "Rust", "Kotlin", "Ruby", "Swift", "SQL", "Bash", "Zsh", "Dart", "R", "Julia", "Clojure", "ClojureScript", "Zig", "Perl", "Haskell", "Erlang", "Objective-C"} {
 		if !semanticSeen[want] {
 			t.Fatalf("capabilities should classify %q as semantic, got semantic=%#v inventory=%#v", want, caps.SemanticLanguages, caps.InventoryOnlyLanguages)
 		}
@@ -9231,7 +9232,7 @@ func TestCapabilitiesAdvertiseExpandedLanguageSet(t *testing.T) {
 			t.Fatalf("capabilities should classify %q as inventory-only, got semantic=%#v inventory=%#v", want, caps.SemanticLanguages, caps.InventoryOnlyLanguages)
 		}
 	}
-	for _, want := range []string{".go", ".py", ".ts", ".rs", ".swift", ".proto", ".dart", ".r", ".jl", ".zig", ".bicep", ".graphql", ".pl", ".pm", ".hs", ".erl", ".hrl"} {
+	for _, want := range []string{".go", ".py", ".ts", ".rs", ".swift", ".proto", ".dart", ".r", ".jl", ".zig", ".bicep", ".graphql", ".pl", ".pm", ".hs", ".erl", ".hrl", ".m"} {
 		if !contains(caps.SupportedFileExtensions, want) {
 			t.Fatalf("capabilities missing extension %q in %#v", want, caps.SupportedFileExtensions)
 		}
@@ -10836,5 +10837,56 @@ add(A, B) ->
 	}
 	if names["area"] != 1 {
 		t.Fatalf("Erlang multi-clause function should fold into one symbol, got %d: %#v", names["area"], kinds)
+	}
+}
+func TestObjectiveCSemanticExtraction(t *testing.T) {
+	// Objective-C was promoted from inventory to the semantic tier (vendored
+	// tree-sitter-objc grammar for .m files); it must now extract classes from
+	// @interface/@implementation, methods (named by the selector's first
+	// segment), and plain C functions. .h files keep their existing C-path /
+	// inventory handling.
+	repo := t.TempDir()
+	writeFile(t, repo, "Sources/Manager.m", `#import <Foundation/Foundation.h>
+
+static NSString * EscapedString(NSString *string) {
+    return string;
+}
+
+@interface Manager : NSObject
+@end
+
+@implementation Manager
+
+- (void)startMonitoring {
+    NSLog(@"%@", EscapedString(@"hi"));
+}
+
+- (instancetype)initWithBaseURL:(NSURL *)url sessionConfiguration:(NSURLSessionConfiguration *)configuration {
+    return self;
+}
+
+@end
+`)
+	snapshot, err := BuildProviderSnapshotWithOptions(t.Context(), repo, "test-version", ProviderSnapshotOptions{Worktree: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	kinds := map[string]string{}
+	for _, s := range snapshot.Symbols {
+		if s.Language == "Objective-C" {
+			kinds[s.Name] = s.Kind
+		}
+	}
+	if kinds["EscapedString"] != "function" {
+		t.Fatalf("Objective-C C function not extracted: %#v", kinds)
+	}
+	if kinds["Manager"] != "class" {
+		t.Fatalf("Objective-C class not extracted: %#v", kinds)
+	}
+	if kinds["Manager.startMonitoring"] == "" && kinds["startMonitoring"] == "" {
+		t.Fatalf("Objective-C unary-selector method not extracted: %#v", kinds)
+	}
+	if kinds["Manager.initWithBaseURL"] == "" && kinds["initWithBaseURL"] == "" {
+		t.Fatalf("Objective-C multi-part-selector method not extracted: %#v", kinds)
 	}
 }

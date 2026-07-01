@@ -77,7 +77,6 @@ var inventoryLanguageExtensions = map[string]languageSpec{
 	".lisp":        {language: "Common Lisp", inventoryOnly: true},
 	".ll":          {language: "LLVM", inventoryOnly: true},
 	".ls":          {language: "LiveScript", inventoryOnly: true},
-	".m":           {language: "Objective-C", inventoryOnly: true},
 	".m4":          {language: "M4", inventoryOnly: true},
 	".matlab":      {language: "MATLAB", inventoryOnly: true},
 	".mm":          {language: "Objective-C++", inventoryOnly: true},

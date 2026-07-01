@@ -41,6 +41,7 @@ import (
 	erlang "github.com/suhaanthayyil/entire-sem/internal/sem/grammars/erlang"
 	haskell "github.com/suhaanthayyil/entire-sem/internal/sem/grammars/haskell"
 	julia "github.com/suhaanthayyil/entire-sem/internal/sem/grammars/julia"
+	objc "github.com/suhaanthayyil/entire-sem/internal/sem/grammars/objc"
 	perl "github.com/suhaanthayyil/entire-sem/internal/sem/grammars/perl"
 	rlang "github.com/suhaanthayyil/entire-sem/internal/sem/grammars/r"
 	zig "github.com/suhaanthayyil/entire-sem/internal/sem/grammars/zig"
@@ -94,6 +95,7 @@ var treeSitterLanguages = map[string]languageSpec{
 	".markdown":   {language: "Markdown"},
 	".md":         {language: "Markdown"},
 	".mk":         {language: "Make"},
+	".m":          {language: "Objective-C", grammar: objc.GetLanguage()},
 	".ml":         {language: "OCaml", grammar: ocaml.GetLanguage()},
 	".mli":        {language: "OCaml", grammar: ocaml.GetLanguage()},
 	".php":        {language: "PHP", grammar: php.GetLanguage()},
@@ -2294,6 +2296,21 @@ func looksLikeFluxKustomizationManifest(content string) bool {
 		regexp.MustCompile(`(?m)^kind:\s*Kustomization\s*$`).MatchString(content)
 }
 
+// objcSelectorName returns the first selector segment of an Objective-C
+// method_definition. The grammar emits each selector segment as a bare
+// identifier child (parameters live in method_parameter nodes), so the first
+// direct identifier child is the method name — `startMonitoring` for a unary
+// selector, `initWithBaseURL` for `initWithBaseURL:sessionConfiguration:`.
+func objcSelectorName(node *sitter.Node, src []byte) string {
+	for i := 0; i < int(node.NamedChildCount()); i++ {
+		child := node.NamedChild(i)
+		if validNode(child) && child.Type() == "identifier" {
+			return strings.TrimSpace(child.Content(src))
+		}
+	}
+	return ""
+}
+
 func looksLikeObjectiveC(content string) bool {
 	return regexp.MustCompile(`(?m)^\s*@(?:interface|implementation|protocol|class|end)\b`).MatchString(content) ||
 		regexp.MustCompile(`(?m)^\s*#import\s+[<"]`).MatchString(content)
@@ -3447,6 +3464,19 @@ func entityFromNode(node *sitter.Node, src []byte, language, scope string) (Enti
 		}
 		kind = "function"
 		name = nodeName(node, src)
+		if language == "Objective-C" {
+			// A C function in a .m file routinely returns a typedef'd type
+			// (`static NSString * Escape(...)`), whose type_identifier is the
+			// first name node in pre-order, so nodeName would misname the
+			// function after its return type. Take the identifier from the
+			// declarator field instead. Gated to Objective-C so C/C++
+			// extraction is unchanged.
+			if declarator := node.ChildByFieldName("declarator"); validNode(declarator) {
+				if id := firstDescendantOfType(declarator, "identifier"); validNode(id) {
+					name = strings.TrimSpace(id.Content(src))
+				}
+			}
+		}
 		if scope != "" {
 			kind = "method"
 			name = qualify(scope, name)
@@ -3518,6 +3548,13 @@ func entityFromNode(node *sitter.Node, src []byte, language, scope string) (Enti
 			name = qualify(scope, name)
 		}
 	case "method_declaration":
+		// An Objective-C method_declaration is a prototype in an @interface /
+		// category head; the @implementation's method_definition carries the
+		// symbol. It also has no name field, so nodeName's descent would latch
+		// onto the return type instead of the selector.
+		if language == "Objective-C" {
+			return Entity{}, false
+		}
 		kind = "method"
 		name = nodeName(node, src)
 		if receiver := goReceiverName(node, src); receiver != "" {
@@ -3527,10 +3564,25 @@ func entityFromNode(node *sitter.Node, src []byte, language, scope string) (Enti
 		}
 	case "method_definition":
 		kind = "method"
-		name = nodeName(node, src)
+		if language == "Objective-C" {
+			// tree-sitter-objc has no name field on method_definition; the
+			// selector's segments are bare identifier children following the
+			// return method_type, so nodeName's pre-order descent would return
+			// the return type. Use the first selector segment (colon-free),
+			// e.g. `initWithBaseURL:sessionConfiguration:` -> initWithBaseURL.
+			name = objcSelectorName(node, src)
+		} else {
+			name = nodeName(node, src)
+		}
 		if scope != "" {
 			name = qualify(scope, name)
 		}
+	case "class_interface", "class_implementation":
+		// Objective-C @interface / @implementation (node types unique to
+		// tree-sitter-objc). Both declare the class; the first identifier child
+		// is the class name (a category `@interface Foo (Bar)` still names Foo).
+		kind = "class"
+		name = nodeName(node, src)
 	case "method":
 		kind = "function"
 		name = nodeName(node, src)
@@ -3549,6 +3601,14 @@ func entityFromNode(node *sitter.Node, src []byte, language, scope string) (Enti
 		// symbol is extracted at the enclosing variable_declaration, which carries
 		// the name. Extracting here would latch onto the first container field.
 		if language == "Zig" {
+			return Entity{}, false
+		}
+		// tree-sitter-objc reuses `struct_declaration` for @property and ivar
+		// declarations (`AFHTTPSessionManager *sessionManager;`), whose first
+		// name node is the property's *type* — emitting those would flood the
+		// snapshot with type names masquerading as structs. Skip them for
+		// Objective-C; real `struct x` usages still surface as struct_specifier.
+		if language == "Objective-C" && node.Type() == "struct_declaration" {
 			return Entity{}, false
 		}
 		kind = "struct"
