@@ -119,6 +119,13 @@ func FileCochanges(ctx context.Context, repo string, maxCommits int) ([]FileCoch
 	// commit's output is either the marker alone (no files, e.g. a merge) or
 	// "<marker>\n<first file>" followed by NUL-separated paths.
 	const marker = "--entire-sem-commit--"
+	// maxFilesPerCommit bounds the O(n^2) co-change pair expansion for a single
+	// commit. A commit touching more files than this is a mass change (initial
+	// import, tree-wide rename/format, generated-file regeneration, large merge),
+	// whose pairs are co-change noise rather than signal — and enumerating them
+	// blows up memory: one 10k-file commit alone produces ~50M pair keys (multi-GB).
+	// Real feature/fix commits touch a handful of related files and stay well under.
+	const maxFilesPerCommit = 50
 	out, err := run(ctx, repo, "git", "log", "-z", "--name-only", "--pretty=format:"+marker, "-n", strconv.Itoa(maxCommits), "--")
 	if err != nil {
 		return nil, err
@@ -136,6 +143,10 @@ func FileCochanges(ctx context.Context, repo string, maxCommits int) ([]FileCoch
 			if len(uniq) == 0 || uniq[len(uniq)-1] != path {
 				uniq = append(uniq, path)
 			}
+		}
+		if len(uniq) > maxFilesPerCommit {
+			commitFiles = nil
+			return // mass-change commit: skip its O(n^2) noise pairs (the memory explosion source)
 		}
 		for i := 0; i < len(uniq); i++ {
 			for j := i + 1; j < len(uniq); j++ {
