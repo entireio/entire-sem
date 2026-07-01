@@ -94,17 +94,21 @@ func (m *ignoreMatcher) loadFile(file string, includeMode bool) error {
 	if err != nil {
 		return fmt.Errorf("read %s %q: %w", label, file, err)
 	}
-	scanner := bufio.NewScanner(strings.NewReader(string(content)))
+	if err := m.loadContent(string(content), includeMode); err != nil {
+		return fmt.Errorf("read %s %q: %w", label, file, err)
+	}
+	return nil
+}
+
+func (m *ignoreMatcher) loadContent(content string, includeMode bool) error {
+	scanner := bufio.NewScanner(strings.NewReader(content))
 	for scanner.Scan() {
 		rule, ok := parseIgnoreRule(scanner.Text(), includeMode)
 		if ok {
 			m.rules = append(m.rules, rule)
 		}
 	}
-	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("read %s %q: %w", label, file, err)
-	}
-	return nil
+	return scanner.Err()
 }
 
 func ignoreFileLabel(includeMode bool) string {
@@ -192,6 +196,33 @@ func (m ignoreMatcher) MayIncludeDescendant(rel string) bool {
 	}
 	for _, rule := range m.rules {
 		if rule.includeFile && !rule.ignore && rule.mayMatchDescendant(rel) {
+			return true
+		}
+	}
+	return false
+}
+
+// ReincludesDescendant reports whether the ignore rules negate (re-include) a
+// specific path under rel — the project declares part of that tree as
+// first-party. An erlang.mk/rebar monorepo gitignores fetched dependencies
+// (`/deps/*`) but negates its own applications (`!/deps/rabbit/`), so the
+// vendored-directory-name heuristic must not skip the tree wholesale; the
+// ignore rules themselves keep the fetched dependencies out. Basename-only
+// negations (e.g. `!.keep`) carry no path and are not treated as a signal.
+func (m ignoreMatcher) ReincludesDescendant(rel string) bool {
+	rel = cleanIgnorePath(rel)
+	if rel == "" {
+		return false
+	}
+	for _, rule := range m.rules {
+		if rule.ignore || rule.includeFile || rule.basenameOnly {
+			continue
+		}
+		prefix := literalPatternPrefix(rule.pattern)
+		if prefix == "" {
+			continue
+		}
+		if prefix == rel || strings.HasPrefix(prefix, rel+"/") {
 			return true
 		}
 	}

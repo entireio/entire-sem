@@ -45,7 +45,6 @@ var inventoryLanguageExtensions = map[string]languageSpec{
 	".ecl":         {language: "ECL", inventoryOnly: true},
 	".elm":         {language: "Elm", inventoryOnly: true},
 	".erb":         {language: "ERB", inventoryOnly: true},
-	".erl":         {language: "Erlang", inventoryOnly: true},
 	".factor":      {language: "Factor", inventoryOnly: true},
 	".fan":         {language: "Fantom", inventoryOnly: true},
 	".fish":        {language: "Fish", inventoryOnly: true},

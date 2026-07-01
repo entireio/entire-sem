@@ -37,6 +37,7 @@ import (
 	treesitterts "github.com/smacker/go-tree-sitter/typescript/typescript"
 	treesitteryaml "github.com/smacker/go-tree-sitter/yaml"
 	dart "github.com/suhaanthayyil/entire-sem/internal/sem/grammars/dart"
+	erlang "github.com/suhaanthayyil/entire-sem/internal/sem/grammars/erlang"
 	"github.com/suhaanthayyil/entire-sem/internal/sem/pgsql"
 	"github.com/suhaanthayyil/entire-sem/internal/sem/zsh"
 )
@@ -56,8 +57,10 @@ var treeSitterLanguages = map[string]languageSpec{
 	".cue":        {language: "CUE", grammar: cue.GetLanguage()},
 	".cxx":        {language: "C++", grammar: cpp.GetLanguage()},
 	".dart":       {language: "Dart", grammar: dart.GetLanguage()},
+	".erl":        {language: "Erlang", grammar: erlang.GetLanguage()},
 	".ex":         {language: "Elixir", grammar: elixir.GetLanguage()},
 	".exs":        {language: "Elixir", grammar: elixir.GetLanguage()},
+	".hrl":        {language: "Erlang", grammar: erlang.GetLanguage()},
 	".go":         {language: "Go", grammar: golang.GetLanguage()},
 	".gradle":     {language: "Groovy", grammar: groovy.GetLanguage()},
 	".groovy":     {language: "Groovy", grammar: groovy.GetLanguage()},
@@ -3219,6 +3222,29 @@ func entityFromNode(node *sitter.Node, src []byte, language, scope string) (Enti
 			kind = "method"
 			name = qualify(scope, name)
 		}
+	case "fun_decl":
+		// Erlang function definition form (`name(Args) -> Body.`). Gated to
+		// Erlang and handled by a dedicated builder because tree-sitter-erlang
+		// parses each clause of a multi-clause function as its own fun_decl form,
+		// so consecutive same-name/arity clauses fold into one function symbol.
+		if language != "Erlang" {
+			return Entity{}, false
+		}
+		return erlangFunDeclEntity(node, src)
+	case "module_attribute":
+		// Erlang `-module(name).` attribute names the compilation unit.
+		if language != "Erlang" {
+			return Entity{}, false
+		}
+		kind = "module"
+		name = nodeName(node, src)
+	case "record_decl":
+		// Erlang `-record(name, {...}).` — the language's struct-like form.
+		if language != "Erlang" {
+			return Entity{}, false
+		}
+		kind = "struct"
+		name = nodeName(node, src)
 	case "module_definition":
 		kind = "module"
 		name = nodeName(node, src)
@@ -4929,6 +4955,65 @@ func scopesChildren(kind string) bool {
 	default:
 		return false
 	}
+}
+
+// erlangFunDeclEntity builds the function symbol for an Erlang fun_decl form.
+// tree-sitter-erlang parses each clause of a multi-clause function
+// (`f(1) -> a;\nf(2) -> b.`) as its own fun_decl form, so a run of consecutive
+// fun_decl siblings with the same name/arity is folded into a single symbol:
+// the first clause emits an entity spanning the whole run and the later
+// clauses emit nothing.
+func erlangFunDeclEntity(node *sitter.Node, src []byte) (Entity, bool) {
+	name, arity := erlangFunClauseNameArity(node, src)
+	if name == "" {
+		return Entity{}, false
+	}
+	if prev := node.PrevNamedSibling(); validNode(prev) && prev.Type() == "fun_decl" {
+		if prevName, prevArity := erlangFunClauseNameArity(prev, src); prevName == name && prevArity == arity {
+			return Entity{}, false // continuation clause; the run's first clause carries the symbol
+		}
+	}
+	last := node
+	for next := last.NextNamedSibling(); validNode(next) && next.Type() == "fun_decl"; next = next.NextNamedSibling() {
+		if nextName, nextArity := erlangFunClauseNameArity(next, src); nextName != name || nextArity != arity {
+			break
+		}
+		last = next
+	}
+	start, end := node.StartByte(), last.EndByte()
+	if end <= start || int(end) > len(src) {
+		end = node.EndByte()
+	}
+	block := string(src[start:end])
+	signature := name
+	if clause := firstNamedChildOfType(node, "function_clause"); validNode(clause) {
+		signature = strings.TrimSpace(strings.TrimSuffix(signatureFromNode(clause, src), "->"))
+	}
+	return Entity{
+		Kind:        "function",
+		Name:        name,
+		Signature:   signature,
+		StartLine:   int(node.StartPoint().Row) + 1,
+		EndLine:     int(last.EndPoint().Row) + 1,
+		BodyHash:    hash(normalize(block)),
+		Fingerprint: hash(normalize(entityFingerprintSource(Entity{Name: name, Signature: signature}, block))),
+	}, true
+}
+
+// erlangFunClauseNameArity returns the function name and arity of a fun_decl's
+// first clause. Erlang identifies functions by name/arity, so both are needed
+// to decide whether adjacent fun_decl forms are clauses of the same function.
+func erlangFunClauseNameArity(node *sitter.Node, src []byte) (string, int) {
+	clause := firstNamedChildOfType(node, "function_clause")
+	if !validNode(clause) {
+		return "", 0
+	}
+	name := nameFromNode(clause.ChildByFieldName("name"), src)
+	arity := 0
+	if args := clause.ChildByFieldName("args"); validNode(args) {
+		arity = int(args.NamedChildCount())
+	}
+	return name, arity
 }
 
 func elixirCallEntity(node *sitter.Node, src []byte, scope string) (string, string, bool) {

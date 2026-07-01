@@ -6160,7 +6160,7 @@ func openSource(ctx context.Context, repo string, useHead bool, ignoreFiles, inc
 		if err != nil {
 			return nil, nil, nil, err
 		}
-		paths = filterVendoredPaths(paths)
+		paths = filterVendoredPaths(paths, headIgnoreMatcher(ctx, repo))
 		batch, err := gitutil.NewBatchFileReader(ctx, repo, "HEAD")
 		if err != nil {
 			return nil, nil, nil, err
@@ -6259,7 +6259,7 @@ func workingTreeFiles(repo string, ignores ignoreMatcher) ([]string, error) {
 					return err
 				}
 				rel = filepath.ToSlash(rel)
-				if isVendoredScanDir(rel, name) {
+				if isVendoredScanDir(rel, name) && !ignores.ReincludesDescendant(rel) {
 					return filepath.SkipDir
 				}
 				if ignores.Ignored(rel, true) && !ignores.MayIncludeDescendant(rel) {
@@ -6289,10 +6289,10 @@ func workingTreeFiles(repo string, ignores ignoreMatcher) ([]string, error) {
 	return paths, err
 }
 
-func filterVendoredPaths(paths []string) []string {
+func filterVendoredPaths(paths []string, ignores ignoreMatcher) []string {
 	filtered := paths[:0]
 	for _, rel := range paths {
-		if vendoredPath(rel) {
+		if vendoredPath(rel, ignores) {
 			continue
 		}
 		filtered = append(filtered, rel)
@@ -6300,7 +6300,23 @@ func filterVendoredPaths(paths []string) []string {
 	return filtered
 }
 
-func vendoredPath(rel string) bool {
+// headIgnoreMatcher parses the repository's root .gitignore as of HEAD so the
+// vendored-directory heuristic can honor negation rules (see
+// ReincludesDescendant) when listing files from the HEAD tree, matching the
+// working-tree walk's behavior.
+func headIgnoreMatcher(ctx context.Context, repo string) ignoreMatcher {
+	content, ok, err := gitutil.ShowFile(ctx, repo, "HEAD", ".gitignore")
+	if err != nil || !ok {
+		return ignoreMatcher{}
+	}
+	var matcher ignoreMatcher
+	if err := matcher.loadContent(content, false); err != nil {
+		return ignoreMatcher{}
+	}
+	return matcher
+}
+
+func vendoredPath(rel string, ignores ignoreMatcher) bool {
 	rel = filepath.ToSlash(rel)
 	parts := strings.Split(rel, "/")
 	if len(parts) == 0 {
@@ -6311,7 +6327,7 @@ func vendoredPath(rel string) bool {
 	}
 	for i, part := range parts[:len(parts)-1] {
 		dirRel := strings.Join(parts[:i+1], "/")
-		if isVendoredScanDir(dirRel, part) {
+		if isVendoredScanDir(dirRel, part) && !ignores.ReincludesDescendant(dirRel) {
 			return true
 		}
 	}
