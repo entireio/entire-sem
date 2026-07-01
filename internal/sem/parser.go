@@ -39,6 +39,7 @@ import (
 	clojure "github.com/suhaanthayyil/entire-sem/internal/sem/grammars/clojure"
 	dart "github.com/suhaanthayyil/entire-sem/internal/sem/grammars/dart"
 	julia "github.com/suhaanthayyil/entire-sem/internal/sem/grammars/julia"
+	perl "github.com/suhaanthayyil/entire-sem/internal/sem/grammars/perl"
 	rlang "github.com/suhaanthayyil/entire-sem/internal/sem/grammars/r"
 	zig "github.com/suhaanthayyil/entire-sem/internal/sem/grammars/zig"
 	"github.com/suhaanthayyil/entire-sem/internal/sem/pgsql"
@@ -90,6 +91,8 @@ var treeSitterLanguages = map[string]languageSpec{
 	".ml":         {language: "OCaml", grammar: ocaml.GetLanguage()},
 	".mli":        {language: "OCaml", grammar: ocaml.GetLanguage()},
 	".php":        {language: "PHP", grammar: php.GetLanguage()},
+	".pl":         {language: "Perl", grammar: perl.GetLanguage()},
+	".pm":         {language: "Perl", grammar: perl.GetLanguage()},
 	".proto":      {language: "Protocol Buffers", grammar: protobuf.GetLanguage()},
 	".py":         {language: "Python", grammar: python.GetLanguage()},
 	".r":          {language: "R", grammar: rlang.GetLanguage()},
@@ -3248,6 +3251,28 @@ func entityFromNode(node *sitter.Node, src []byte, language, scope string) (Enti
 			kind = "method"
 			name = qualify(scope, name)
 		}
+	case "subroutine_declaration_statement":
+		// Perl `sub name { ... }` (name field is a bareword). Gated to Perl so
+		// the generic extraction of other languages is unchanged. Perl subs are
+		// plain functions regardless of the enclosing package (packages are
+		// namespaces, not classes), so the kind stays "function"; a sub inside a
+		// `package Name { ... }` block is qualified under that package's scope.
+		if language != "Perl" {
+			return Entity{}, false
+		}
+		kind = "function"
+		name = nodeName(node, src)
+		if scope != "" {
+			name = qualify(scope, name)
+		}
+	case "package_statement":
+		// Perl `package Name;` / `package Name { ... }` namespace declaration
+		// (name field is a package node such as Mojo::Util).
+		if language != "Perl" {
+			return Entity{}, false
+		}
+		kind = "module"
+		name = nodeName(node, src)
 	case "module_definition":
 		kind = "module"
 		name = nodeName(node, src)

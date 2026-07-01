@@ -9207,6 +9207,7 @@ func TestCapabilitiesAdvertiseExpandedLanguageSet(t *testing.T) {
 		"Dart",
 		"R",
 		"Julia",
+		"Perl",
 		"Zig",
 		"Bicep",
 		"GraphQL",
@@ -9218,7 +9219,7 @@ func TestCapabilitiesAdvertiseExpandedLanguageSet(t *testing.T) {
 			t.Fatalf("capabilities missing language %q in %#v", want, caps.SupportedLanguages)
 		}
 	}
-	for _, want := range []string{"TypeScript", "Python", "JavaScript", "Java", "C++", "C", "C#", "Go", "PHP", "Rust", "Kotlin", "Ruby", "Swift", "SQL", "Bash", "Zsh", "Dart", "R", "Julia", "Clojure", "ClojureScript", "Zig"} {
+	for _, want := range []string{"TypeScript", "Python", "JavaScript", "Java", "C++", "C", "C#", "Go", "PHP", "Rust", "Kotlin", "Ruby", "Swift", "SQL", "Bash", "Zsh", "Dart", "R", "Julia", "Clojure", "ClojureScript", "Zig", "Perl"} {
 		if !semanticSeen[want] {
 			t.Fatalf("capabilities should classify %q as semantic, got semantic=%#v inventory=%#v", want, caps.SemanticLanguages, caps.InventoryOnlyLanguages)
 		}
@@ -9228,7 +9229,7 @@ func TestCapabilitiesAdvertiseExpandedLanguageSet(t *testing.T) {
 			t.Fatalf("capabilities should classify %q as inventory-only, got semantic=%#v inventory=%#v", want, caps.SemanticLanguages, caps.InventoryOnlyLanguages)
 		}
 	}
-	for _, want := range []string{".go", ".py", ".ts", ".rs", ".swift", ".proto", ".dart", ".r", ".jl", ".zig", ".bicep", ".graphql"} {
+	for _, want := range []string{".go", ".py", ".ts", ".rs", ".swift", ".proto", ".dart", ".r", ".jl", ".zig", ".bicep", ".graphql", ".pl", ".pm"} {
 		if !contains(caps.SupportedFileExtensions, want) {
 			t.Fatalf("capabilities missing extension %q in %#v", want, caps.SupportedFileExtensions)
 		}
@@ -10680,5 +10681,54 @@ test "add works" {
 		if strings.Contains(name, "add works") || kind == "" {
 			t.Fatalf("Zig test declaration should be skipped: %#v", kinds)
 		}
+	}
+}
+func TestPerlSemanticExtraction(t *testing.T) {
+	// Perl was promoted from inventory to the semantic tier (vendored grammar);
+	// it must now extract packages (as modules) and subroutines (as functions).
+	repo := t.TempDir()
+	writeFile(t, repo, "lib/My/Util.pm", `package My::Util;
+
+sub slugify {
+  my ($value) = @_;
+  return lc $value;
+}
+
+package My::Inner {
+  sub scoped { return 1 }
+}
+
+1;
+`)
+	writeFile(t, repo, "bin/tool.pl", `#!/usr/bin/perl
+sub run {
+  return 42;
+}
+run();
+`)
+	snapshot, err := BuildProviderSnapshotWithOptions(t.Context(), repo, "test-version", ProviderSnapshotOptions{Worktree: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	kinds := map[string]string{}
+	for _, s := range snapshot.Symbols {
+		if s.Language == "Perl" {
+			kinds[s.Name] = s.Kind
+		}
+	}
+	if kinds["My::Util"] != "module" {
+		t.Fatalf("Perl package statement not extracted as module: %#v", kinds)
+	}
+	if kinds["My::Inner"] != "module" {
+		t.Fatalf("Perl package block not extracted as module: %#v", kinds)
+	}
+	if kinds["slugify"] != "function" {
+		t.Fatalf("Perl sub in .pm not extracted as function: %#v", kinds)
+	}
+	if kinds["run"] != "function" {
+		t.Fatalf("Perl sub in .pl not extracted as function: %#v", kinds)
+	}
+	if kinds["My::Inner.scoped"] != "function" && kinds["scoped"] != "function" {
+		t.Fatalf("Perl sub inside package block not extracted: %#v", kinds)
 	}
 }
