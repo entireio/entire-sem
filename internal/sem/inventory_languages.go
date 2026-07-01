@@ -144,7 +144,6 @@ var inventoryLanguageExtensions = map[string]languageSpec{
 	".xquery":      {language: "XQuery", inventoryOnly: true},
 	".xslt":        {language: "XSLT", inventoryOnly: true},
 	".xtend":       {language: "Xtend", inventoryOnly: true},
-	".zig":         {language: "Zig", inventoryOnly: true},
 	".zimpl":       {language: "Zimpl", inventoryOnly: true},
 }
 

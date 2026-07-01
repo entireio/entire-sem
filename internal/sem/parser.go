@@ -40,6 +40,7 @@ import (
 	dart "github.com/suhaanthayyil/entire-sem/internal/sem/grammars/dart"
 	julia "github.com/suhaanthayyil/entire-sem/internal/sem/grammars/julia"
 	rlang "github.com/suhaanthayyil/entire-sem/internal/sem/grammars/r"
+	zig "github.com/suhaanthayyil/entire-sem/internal/sem/grammars/zig"
 	"github.com/suhaanthayyil/entire-sem/internal/sem/pgsql"
 	"github.com/suhaanthayyil/entire-sem/internal/sem/zsh"
 )
@@ -110,6 +111,7 @@ var treeSitterLanguages = map[string]languageSpec{
 	".xml":        {language: "XML"},
 	".yaml":       {language: "YAML", grammar: treesitteryaml.GetLanguage()},
 	".yml":        {language: "YAML", grammar: treesitteryaml.GetLanguage()},
+	".zig":        {language: "Zig", grammar: zig.GetLanguage()},
 	".zsh":        {language: "Zsh", grammar: zsh.GetLanguage()},
 	".dockerfile": {language: "Dockerfile"},
 }
@@ -2895,6 +2897,25 @@ func walkEntitiesScoped(node *sitter.Node, src []byte, language, scope string, i
 	}
 }
 
+// zigContainerKind classifies a Zig variable_declaration whose value is a
+// container literal (`const Name = struct/union/enum {...}`) into the symbol
+// vocabulary: struct -> "struct", enum -> "enum", union -> "type" (unions have
+// no dedicated kind). It returns "" for plain value bindings, which are not
+// declarations of a named type.
+func zigContainerKind(node *sitter.Node) string {
+	for i := 0; i < int(node.NamedChildCount()); i++ {
+		switch node.NamedChild(i).Type() {
+		case "struct_declaration":
+			return "struct"
+		case "enum_declaration":
+			return "enum"
+		case "union_declaration":
+			return "type"
+		}
+	}
+	return ""
+}
+
 // rustImplTypeName returns the implementing type of a Rust impl block (the `type`
 // field; for `impl Trait for Foo` that is Foo), so methods inside scope under it.
 func rustImplTypeName(node *sitter.Node, src []byte) string {
@@ -3374,11 +3395,36 @@ func entityFromNode(node *sitter.Node, src []byte, language, scope string) (Enti
 		kind = "interface"
 		name = nodeName(node, src)
 	case "struct_item", "struct_specifier", "struct_declaration":
+		// Zig struct literals are anonymous (`const Point = struct {...}`); the
+		// symbol is extracted at the enclosing variable_declaration, which carries
+		// the name. Extracting here would latch onto the first container field.
+		if language == "Zig" {
+			return Entity{}, false
+		}
 		kind = "struct"
 		name = nodeName(node, src)
 	case "enum_item", "enum_declaration", "enum_specifier":
+		// Same as struct_declaration: Zig enums are anonymous literals named by
+		// the enclosing variable_declaration.
+		if language == "Zig" {
+			return Entity{}, false
+		}
 		kind = "enum"
 		name = nodeName(node, src)
+	case "variable_declaration":
+		// Zig type declarations are `const Name = struct/union/enum {...}`. Gated
+		// to Zig so other grammars' variable declarations stay unextracted. Plain
+		// value bindings (locals, imports) are not symbols and are skipped.
+		if language != "Zig" {
+			return Entity{}, false
+		}
+		kind = zigContainerKind(node)
+		if kind == "" {
+			return Entity{}, false
+		}
+		if id := firstNamedChildOfType(node, "identifier"); validNode(id) {
+			name = strings.TrimSpace(id.Content(src))
+		}
 	case "trait_definition", "trait_item":
 		kind = "trait"
 		name = nodeName(node, src)
