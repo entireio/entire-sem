@@ -1771,6 +1771,7 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 	methodsByContainer := map[string]map[string]SymbolRecord{}
 	fieldsByContainer := map[string]map[string]SymbolRecord{}
 	returnTypesBySymbolNameAndFile := map[string]map[string][]string{}
+	returnTypesBySymbolNameAndDir := map[string]map[string][]string{}
 	var inheritanceEdges []RelationRecord // captured for OVERRIDES derivation
 	routeHandlers := map[string][]SymbolRecord{}
 	httpCallsByRoute := map[string][]RelationRecord{}
@@ -1791,6 +1792,24 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 			}
 		}
 	}
+	// Cross-file container index: entitySymbols links a member to its container
+	// only within one file, but some containers span files — a Go receiver type
+	// commonly lives in a different file of the same package than its methods
+	// (C# partial classes and reopened Ruby classes behave the same) — leaving
+	// such members with an empty ContainerID and therefore invisible to
+	// receiver-typed call resolution. Resolve those containers from the
+	// member's qualified-name prefix against the workspace's type-like symbols.
+	crossFileContainers := needsCallScan || needsReceiverCalls || needsFields || needsOverrides
+	typeLikeByShortName := map[string][]SymbolRecord{}
+	if crossFileContainers {
+		for _, file := range files {
+			for _, symbol := range recordsByFile[file.Path] {
+				if typeLikeKind(symbol.Kind) {
+					typeLikeByShortName[symbol.Name] = append(typeLikeByShortName[symbol.Name], symbol)
+				}
+			}
+		}
+	}
 	// Iterate files in their (stable) slice order, not the recordsByFile map, so
 	// structural relations stream deterministically.
 	for _, file := range files {
@@ -1798,9 +1817,23 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 			return
 		}
 		records := recordsByFile[file.Path]
-		for _, symbol := range records {
+		for si, symbol := range records {
 			if shouldStop != nil && shouldStop() {
 				return
+			}
+			containsScope := "file"
+			if crossFileContainers && symbol.ContainerID == "" && (symbol.Kind == "method" || symbol.Kind == "field") {
+				if parent := containerName(symbol.QualifiedName); parent != "" {
+					if container, ok := resolveContainerAcrossFiles(parent, symbol.FilePath, typeLikeByShortName); ok && container.ID != symbol.ID {
+						symbol.ContainerID = container.ID
+						// Write through so later passes (receiver-call scans read
+						// recordsByFile again) see the resolved container too.
+						records[si].ContainerID = container.ID
+						if container.FilePath != symbol.FilePath {
+							containsScope = "module"
+						}
+					}
+				}
 			}
 			if symbol.Kind == "route" {
 				routeHandlers[symbol.Name] = append(routeHandlers[symbol.Name], symbol)
@@ -1833,7 +1866,7 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 					Type:          "CONTAINS",
 					Confidence:    1,
 					Reason:        "symbol qualified name is nested in container",
-					RelationScope: "file",
+					RelationScope: containsScope,
 					Resolution:    "exact",
 					TargetKind:    "symbol",
 					WarningCodes:  []string{},
@@ -1890,6 +1923,16 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 						returnTypesBySymbolNameAndFile[symbol.Name] = map[string][]string{}
 					}
 					returnTypesBySymbolNameAndFile[symbol.Name][symbol.FilePath] = append(returnTypesBySymbolNameAndFile[symbol.Name][symbol.FilePath], typeName)
+					if symbol.Language == "Go" {
+						// A Go package spans every file in a directory, so a factory
+						// is commonly declared in a sibling file of its callers; key
+						// return types by directory too for the package-level lookup.
+						dir := filepath.ToSlash(filepath.Dir(symbol.FilePath))
+						if returnTypesBySymbolNameAndDir[symbol.Name] == nil {
+							returnTypesBySymbolNameAndDir[symbol.Name] = map[string][]string{}
+						}
+						returnTypesBySymbolNameAndDir[symbol.Name][dir] = append(returnTypesBySymbolNameAndDir[symbol.Name][dir], typeName)
+					}
 				}
 			}
 		}
@@ -2405,7 +2448,7 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 				}
 			}
 			if spec.callResolution == "full" {
-				for _, r := range receiverCallRelations(from, block, methodsByContainer, superContainerByID, symbolsByShortName, returnTypesBySymbolNameAndFile, importsByName, manifestImports.goModule, pkgVarTypesByDir[filepath.ToSlash(filepath.Dir(file.Path))], phpPropTypes) {
+				for _, r := range receiverCallRelations(from, block, methodsByContainer, superContainerByID, symbolsByShortName, returnTypesBySymbolNameAndFile, returnTypesBySymbolNameAndDir, importsByName, manifestImports.goModule, pkgVarTypesByDir[filepath.ToSlash(filepath.Dir(file.Path))], phpPropTypes) {
 					emit(r)
 				}
 				for _, r := range importedReceiverCallRelations(from, block, importsByName, symbolsByShortName) {
@@ -2794,6 +2837,39 @@ func lookupMethodUpChain(start, name string, methodsByContainer map[string]map[s
 	return SymbolRecord{}, false, false
 }
 
+// resolveContainerAcrossFiles resolves a member's container name to a
+// type-like symbol when per-file linking left the member orphaned. Preference
+// order keeps it conservative: a unique same-file type (per-file linking can
+// miss a container declared after its member), then a unique same-directory
+// type (a Go package — where methods routinely live in sibling files of their
+// receiver type — is a directory), then a workspace-unique type. Ambiguity at
+// the first populated tier resolves to nothing rather than wrongly.
+func resolveContainerAcrossFiles(name, file string, typesByShortName map[string][]SymbolRecord) (SymbolRecord, bool) {
+	candidates := typesByShortName[name]
+	if len(candidates) == 0 {
+		return SymbolRecord{}, false
+	}
+	dir := filepath.ToSlash(filepath.Dir(file))
+	var sameFile, sameDir []SymbolRecord
+	for _, candidate := range candidates {
+		switch {
+		case candidate.FilePath == file:
+			sameFile = append(sameFile, candidate)
+		case filepath.ToSlash(filepath.Dir(candidate.FilePath)) == dir:
+			sameDir = append(sameDir, candidate)
+		}
+	}
+	for _, tier := range [][]SymbolRecord{sameFile, sameDir, candidates} {
+		if len(tier) == 1 {
+			return tier[0], true
+		}
+		if len(tier) > 1 {
+			return SymbolRecord{}, false
+		}
+	}
+	return SymbolRecord{}, false
+}
+
 // pkgQualType is a package-qualified type reference (alias.TypeName), used to
 // resolve method calls on package-level vars whose bare type name is ambiguous
 // across packages (e.g. zerolog's `enc = json.Encoder{}` where both internal/json
@@ -2852,7 +2928,7 @@ func resolveQualifiedType(qt pkgQualType, symbolsByShortName map[string][]Symbol
 	return SymbolRecord{}, false
 }
 
-func receiverCallRelations(from SymbolRecord, block string, methodsByContainer map[string]map[string]SymbolRecord, superContainerByID map[string]string, symbolsByShortName map[string][]SymbolRecord, returnTypesBySymbolNameAndFile map[string]map[string][]string, importsByName map[string][]string, goModule string, pkgVarTypes map[string]pkgQualType, phpPropTypes map[string]string) []RelationRecord {
+func receiverCallRelations(from SymbolRecord, block string, methodsByContainer map[string]map[string]SymbolRecord, superContainerByID map[string]string, symbolsByShortName map[string][]SymbolRecord, returnTypesBySymbolNameAndFile, returnTypesBySymbolNameAndDir map[string]map[string][]string, importsByName map[string][]string, goModule string, pkgVarTypes map[string]pkgQualType, phpPropTypes map[string]string) []RelationRecord {
 	if typeLikeKind(from.Kind) {
 		return nil
 	}
@@ -3260,7 +3336,24 @@ func receiverCallRelations(from SymbolRecord, block string, methodsByContainer m
 		if !ok {
 			continue
 		}
+		confidence := 0.8
+		reason := "method call resolved via chained constructor type"
+		resolution := "type_inferred"
 		method, ok := methodsByContainer[sym.ID][call.Method]
+		if !ok && interfaceSignatureDeclaresMethod(sym.Signature, call.Method) {
+			// The "constructor" here is really an interface-typed accessor: a Go
+			// getter is conventionally named after the interface it returns
+			// (s.AuthStore().IsAdminPermitted()), and interface methods are
+			// declared inside the type declaration rather than as method
+			// symbols. When the interface names this method and exactly one
+			// method in the workspace carries the name, resolve to that sole
+			// implementation — the same unique-name tier as the receiver-call
+			// fallback.
+			method, ok = uniqueMethodByShortName(symbolsByShortName[call.Method])
+			confidence = 0.7
+			reason = "interface method call resolved to the unique implementing method"
+			resolution = "name_only"
+		}
 		if !ok || method.ID == from.ID {
 			continue
 		}
@@ -3273,10 +3366,10 @@ func receiverCallRelations(from SymbolRecord, block string, methodsByContainer m
 			FromID:        from.ID,
 			ToID:          method.ID,
 			Type:          "CALLS",
-			Confidence:    0.8,
-			Reason:        "method call resolved via chained constructor type",
+			Confidence:    confidence,
+			Reason:        reason,
 			RelationScope: scope,
-			Resolution:    "type_inferred",
+			Resolution:    resolution,
 			TargetKind:    "symbol",
 			Evidence: []Evidence{{
 				Kind:      "call_site",
@@ -3292,12 +3385,35 @@ func receiverCallRelations(from SymbolRecord, block string, methodsByContainer m
 		if deepReturnedCallSuffixes[call.Factory+"."+call.Method] {
 			continue
 		}
-		for _, typeName := range returnTypesBySymbolNameAndFile[call.Factory][from.FilePath] {
+		returnTypes := returnTypesBySymbolNameAndFile[call.Factory][from.FilePath]
+		if len(returnTypes) == 0 && from.Language == "Go" {
+			// A Go factory is commonly declared in a sibling file of the same
+			// package (one package spans a directory), so fall back to the
+			// package-level return types when this file declares no such factory.
+			returnTypes = returnTypesBySymbolNameAndDir[call.Factory][filepath.ToSlash(filepath.Dir(from.FilePath))]
+		}
+		for _, typeName := range returnTypes {
 			sym, ok := firstTypeLikeNamed(symbolsByShortName[typeName], typeName)
 			if !ok {
 				continue
 			}
+			confidence := 0.78
+			reason := "method call resolved via returned receiver type"
+			resolution := "type_inferred"
 			method, ok := methodsByContainer[sym.ID][call.Method]
+			if !ok && interfaceSignatureDeclaresMethod(sym.Signature, call.Method) {
+				// Interface-typed return: a Go interface declares its methods
+				// inside the type declaration itself (they are not separate
+				// method symbols), so the container lookup above cannot succeed.
+				// When the locally-known interface names this method and exactly
+				// one method in the workspace carries the name, resolve to that
+				// sole implementation — the same unique-name tier as the
+				// receiver-call fallback.
+				method, ok = uniqueMethodByShortName(symbolsByShortName[call.Method])
+				confidence = 0.7
+				reason = "interface-typed return resolved to the unique implementing method"
+				resolution = "name_only"
+			}
 			if !ok || method.ID == from.ID {
 				continue
 			}
@@ -3310,10 +3426,10 @@ func receiverCallRelations(from SymbolRecord, block string, methodsByContainer m
 				FromID:        from.ID,
 				ToID:          method.ID,
 				Type:          "CALLS",
-				Confidence:    0.78,
-				Reason:        "method call resolved via returned receiver type",
+				Confidence:    confidence,
+				Reason:        reason,
 				RelationScope: scope,
-				Resolution:    "type_inferred",
+				Resolution:    resolution,
 				TargetKind:    "symbol",
 				Evidence: []Evidence{{
 					Kind:      "call_site",

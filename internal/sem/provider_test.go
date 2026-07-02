@@ -6788,6 +6788,177 @@ func walk(s string) {
 	}
 }
 
+func TestGoReceiverMethodResolvesAcrossPackageFiles(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "go.mod", "module example.com/etcdlike\n\ngo 1.21\n")
+	// The receiver type and the caller live in server.go; the callee method
+	// lives in a sibling file of the same package. A same-named method on
+	// another package's type defeats the globally-unique-name fallback, so the
+	// edge only resolves when the sibling file's method is linked to its
+	// cross-file container type.
+	writeFile(t, repo, "server/server.go", `package server
+
+import "context"
+
+type Server struct{}
+
+func (s *Server) checkPermission(ctx context.Context) error {
+	info, err := s.AuthInfoFromCtx(ctx)
+	_ = info
+	return err
+}
+`)
+	writeFile(t, repo, "server/v3.go", `package server
+
+import "context"
+
+type Info struct{ User string }
+
+func (s *Server) AuthInfoFromCtx(ctx context.Context) (*Info, error) {
+	return &Info{}, nil
+}
+`)
+	writeFile(t, repo, "auth/store.go", `package auth
+
+import "context"
+
+type Info struct{ User string }
+
+type authStore struct{}
+
+func (as *authStore) AuthInfoFromCtx(ctx context.Context) (*Info, error) {
+	return &Info{}, nil
+}
+`)
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasRelationByLastSegmentWithResolution(snapshot.Relations, "CALLS", "Server.checkPermission", "Server.AuthInfoFromCtx", "type_inferred") {
+		t.Fatalf("cross-file receiver call s.AuthInfoFromCtx() not resolved to the sibling-file method: %#v", snapshot.Relations)
+	}
+	for _, r := range snapshot.Relations {
+		if r.Type == "CALLS" && lastSegment(r.FromID) == "Server.checkPermission" &&
+			strings.Contains(r.ToID, "auth/store.go") {
+			t.Fatalf("cross-file receiver call bound to the wrong package's method: %s -> %s (%s)", r.FromID, r.ToID, r.Reason)
+		}
+	}
+	// The reconciled container also restores type CONTAINS method across files.
+	found := false
+	for _, r := range snapshot.Relations {
+		if r.Type == "CONTAINS" && strings.Contains(r.FromID, "server/server.go:type:Server") &&
+			strings.Contains(r.ToID, "server/v3.go:method:Server.AuthInfoFromCtx") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("cross-file method missing CONTAINS edge from its receiver type: %#v", snapshot.Relations)
+	}
+}
+
+func TestGoInterfaceReturnedCallResolvesUniqueImplementingMethod(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "go.mod", "module example.com/etcdlike\n\ngo 1.21\n")
+	// AuthStore() returns an interface declared in another package; the
+	// interface's methods are part of its type declaration, not method
+	// symbols, so resolution must fall back to the unique implementation.
+	writeFile(t, repo, "server/server.go", `package server
+
+import "example.com/etcdlike/auth"
+
+type Server struct {
+	authStore auth.AuthStore
+}
+
+func (s *Server) AuthStore() auth.AuthStore { return s.authStore }
+
+func (s *Server) store() auth.AuthStore { return s.authStore }
+
+func (s *Server) checkPermission(info *auth.Info) error {
+	return s.AuthStore().IsAdminPermitted(info)
+}
+`)
+	writeFile(t, repo, "server/v3.go", `package server
+
+import "example.com/etcdlike/auth"
+
+func (s *Server) permitted(info *auth.Info) bool {
+	return s.store().IsAdminPermitted(info) == nil
+}
+`)
+	writeFile(t, repo, "auth/store.go", `package auth
+
+type Info struct{ User string }
+
+type AuthStore interface {
+	Authenticate(name string) (*Info, error)
+	IsAdminPermitted(info *Info) error
+}
+
+type authStore struct{}
+
+func (as *authStore) Authenticate(name string) (*Info, error) { return &Info{}, nil }
+
+func (as *authStore) IsAdminPermitted(info *Info) error { return nil }
+`)
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// One-hop chain through the capitalized getter (same file as the caller).
+	if !hasRelationByLastSegment(snapshot.Relations, "CALLS", "Server.checkPermission", "authStore.IsAdminPermitted") {
+		t.Fatalf("interface-typed chain s.AuthStore().IsAdminPermitted() not resolved to the unique implementation: %#v", snapshot.Relations)
+	}
+	// One-hop chain through a lower-case getter declared in a sibling file of
+	// the same package (exercises the package-level return-type lookup).
+	if !hasRelationByLastSegment(snapshot.Relations, "CALLS", "Server.permitted", "authStore.IsAdminPermitted") {
+		t.Fatalf("interface-typed chain s.store().IsAdminPermitted() with sibling-file getter not resolved: %#v", snapshot.Relations)
+	}
+}
+
+func TestGoInterfaceReturnedCallStaysUnresolvedWhenMethodNameAmbiguous(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "go.mod", "module example.com/etcdlike\n\ngo 1.21\n")
+	writeFile(t, repo, "server/server.go", `package server
+
+import "example.com/etcdlike/auth"
+
+type Server struct {
+	authStore auth.AuthStore
+}
+
+func (s *Server) AuthStore() auth.AuthStore { return s.authStore }
+
+func (s *Server) Close() error { return nil }
+
+func (s *Server) shutdown() error {
+	return s.AuthStore().Close()
+}
+`)
+	writeFile(t, repo, "auth/store.go", `package auth
+
+type AuthStore interface {
+	Close() error
+}
+
+type authStore struct{}
+
+func (as *authStore) Close() error { return nil }
+`)
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Two methods named Close exist, so the conservative unique-name subset
+	// must not guess between them.
+	for _, r := range snapshot.Relations {
+		if r.Type == "CALLS" && lastSegment(r.FromID) == "Server.shutdown" &&
+			(lastSegment(r.ToID) == "authStore.Close" || lastSegment(r.ToID) == "Server.Close") {
+			t.Fatalf("ambiguous interface method call must stay unresolved, got %s -> %s (%s)", r.FromID, r.ToID, r.Reason)
+		}
+	}
+}
+
 func TestBuildProviderSnapshotEmitsImportedExternalCalls(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "trim.go", `package api

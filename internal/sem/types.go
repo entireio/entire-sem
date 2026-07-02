@@ -2606,6 +2606,47 @@ func returnedReceiverDeepChainCalls(block string) []returnedMethodDeepChainCall 
 	return out
 }
 
+// interfaceBodyRe locates an interface body inside a type-like symbol's
+// signature. A Go interface's method set lives inside the type declaration
+// (there is no body-like child node to cut at), so the collapsed one-line
+// signature carries every declared method as `Name(...)`.
+var interfaceBodyRe = regexp.MustCompile(`\binterface\s*\{`)
+
+// interfaceSignatureDeclaresMethod reports whether a type-like symbol's
+// signature contains an interface body that declares the given method name.
+// Languages whose interface members are real symbols never need this check
+// (their methodsByContainer lookup succeeds and their signatures carry no
+// body); it exists so interface-typed values can still resolve calls.
+func interfaceSignatureDeclaresMethod(signature, method string) bool {
+	if method == "" {
+		return false
+	}
+	loc := interfaceBodyRe.FindStringIndex(signature)
+	if loc == nil {
+		return false
+	}
+	body := signature[loc[1]:]
+	for start := 0; ; {
+		i := strings.Index(body[start:], method)
+		if i < 0 {
+			return false
+		}
+		i += start
+		end := i + len(method)
+		boundaryBefore := i == 0 || !identifierByte(body[i-1])
+		if boundaryBefore && end < len(body) && body[end] == '(' {
+			return true
+		}
+		start = i + 1
+	}
+}
+
+// identifierByte reports whether a byte can be part of an identifier (or a
+// qualifier dot), used for word-boundary checks in collapsed signatures.
+func identifierByte(b byte) bool {
+	return b == '_' || b == '.' || ('0' <= b && b <= '9') || ('a' <= b && b <= 'z') || ('A' <= b && b <= 'Z')
+}
+
 func isCapitalized(value string) bool {
 	if value == "" {
 		return false
