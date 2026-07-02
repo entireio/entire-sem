@@ -165,6 +165,16 @@ func (TreeSitterParser) ParseWithStatus(path, content string) ([]Entity, string,
 	} else if strings.EqualFold(filepath.Ext(path), ".h") && looksLikeCPlusPlusHeader(content) {
 		spec = treeSitterLanguages[".hpp"]
 	}
+	flowJS := false
+	if spec.language == "JavaScript" && looksLikeFlowJavaScript(content) {
+		// Flow-typed JavaScript parses with the vendored TSX grammar (a
+		// near-superset of Flow's annotation syntax) plus a small
+		// position-preserving mask; tree-sitter-javascript chokes on every
+		// type annotation. The language label stays "JavaScript", mirroring
+		// the .jsx routing. See flowjs.go for the probe evidence.
+		spec.grammar = treesittertsx.GetLanguage()
+		flowJS = true
+	}
 	if spec.language == "SQL" {
 		spec.grammar = pgsql.GetLanguage()
 	}
@@ -220,6 +230,9 @@ func (TreeSitterParser) ParseWithStatus(path, content string) ([]Entity, string,
 	}
 	if spec.language == "Rust" {
 		parseSrc = []byte(maskRustUnsupportedSyntax(content))
+	}
+	if flowJS {
+		parseSrc = []byte(maskFlowJavaScriptUnsupportedSyntax(content))
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), treeSitterParseTimeout)
 	defer cancel()
