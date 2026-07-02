@@ -206,6 +206,9 @@ func (TreeSitterParser) ParseWithStatus(path, content string) ([]Entity, string,
 	if spec.language == "Swift" {
 		parseSrc = []byte(maskSwiftUnsupportedSyntax(content))
 	}
+	if spec.language == "Dart" {
+		parseSrc = []byte(maskDartUnsupportedSyntax(content))
+	}
 	if spec.language == "OCaml" && strings.EqualFold(filepath.Ext(path), ".mli") {
 		parseSrc = []byte(maskOCamlInterfaceSyntax(content))
 	}
@@ -724,6 +727,32 @@ func maskOCamlInterfaceSyntax(content string) string {
 		}
 	}
 	return strings.Join(lines, "")
+}
+
+// dartClassModifierPattern matches a Dart 3 class modifier immediately ahead
+// of the `class` keyword (`final class`, `sealed class`, `base mixin class`,
+// `abstract interface class`, ...). The vendored tree-sitter-dart grammar
+// predates class modifiers, so an unmasked `final class ByteStream extends
+// StreamView<List<int>>` parses as an ERROR node and the class symbol is lost
+// (its factory constructor gets recovered as a bare function instead).
+var dartClassModifierPattern = regexp.MustCompile(`\b(final|base|interface|sealed|mixin)(\s+)(class\b)`)
+
+// maskDartUnsupportedSyntax blanks Dart 3 class modifiers the grammar cannot
+// parse, preserving byte length so node offsets keep pointing into the
+// original source. `abstract` is left alone (the grammar knows `abstract
+// class`); stacked modifiers (`base mixin class`) resolve over the fixpoint
+// iterations.
+func maskDartUnsupportedSyntax(content string) string {
+	for {
+		masked := dartClassModifierPattern.ReplaceAllStringFunc(content, func(match string) string {
+			m := dartClassModifierPattern.FindStringSubmatch(match)
+			return strings.Repeat(" ", len(m[1])) + m[2] + m[3]
+		})
+		if masked == content {
+			return masked
+		}
+		content = masked
+	}
 }
 
 func maskSwiftUnsupportedSyntax(content string) string {

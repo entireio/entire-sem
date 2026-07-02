@@ -2079,6 +2079,57 @@ object Plain {
 	}
 }
 
+// Dart 3 class modifiers (`final class`, `sealed class`, `base class`, ...)
+// predate the vendored tree-sitter-dart grammar, so such declarations parsed
+// as ERROR nodes (evidence: on dart-lang/http `final class ByteStream extends
+// StreamView<List<int>>` lost its class symbol — a recovered factory
+// constructor emitted kind "function" named ByteStream instead — and `final
+// class RetryClient extends BaseClient` emitted nothing). The modifier is
+// masked to spaces before parsing.
+func TestDartClassModifierSymbols(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "byte_stream.dart", `final class ByteStream extends StreamView<List<int>> {
+  const ByteStream(super.stream);
+
+  factory ByteStream.fromBytes(List<int> bytes) =>
+      ByteStream(Stream.value(bytes));
+
+  Future<Uint8List> toBytes() {
+    return completer.future;
+  }
+}
+
+sealed class Shape {}
+
+abstract interface class Client {
+  void close();
+}
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, name := range []string{"ByteStream", "Shape", "Client"} {
+		class := symbolByKindAndName(snapshot.Symbols, "class", name)
+		if class.ID == "" {
+			t.Fatalf("missing class symbol %q in %#v", name, snapshot.Symbols)
+		}
+		if class.FilePath != "byte_stream.dart" {
+			t.Fatalf("%s file = %q", name, class.FilePath)
+		}
+	}
+	if symbolByKindAndName(snapshot.Symbols, "method", "ByteStream.toBytes").ID == "" {
+		t.Fatalf("modified class method not qualified under class in %#v", snapshot.Symbols)
+	}
+	// The old failure mode: the recovered factory constructor emitted as a
+	// top-level function named after the class.
+	if symbolByKindAndName(snapshot.Symbols, "function", "ByteStream").ID != "" {
+		t.Fatalf("class name still emitted as a bare function symbol")
+	}
+}
+
 func TestGraphQLSchemaFieldEntities(t *testing.T) {
 	entities, language := TreeSitterParser{}.Parse("schema.graphql", `schema {
   query: Query
