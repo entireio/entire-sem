@@ -15,9 +15,9 @@ and honest unsupported/degraded coverage reporting.
 
 Current generated counts:
 
-- Supported language/filetype names: 184
-- Semantic languages: 24
-- Inventory-only languages: 160
+- Supported language/filetype names: 185
+- Semantic languages: 36
+- Inventory-only languages: 149
 
 ## Semantic Languages
 
@@ -26,18 +26,28 @@ Current generated counts:
 - C#
 - C++
 - CUE
+- Clojure
+- ClojureScript
+- Dart
 - Elixir
+- Erlang
+- F#
 - Go
 - Groovy
 - HCL
+- Haskell
 - Java
 - JavaScript
+- Julia
 - Kotlin
 - Lua
 - OCaml
+- Objective-C
 - PHP
+- Perl
 - Protocol Buffers
 - Python
+- R
 - Ruby
 - Rust
 - SQL
@@ -45,6 +55,8 @@ Current generated counts:
 - Swift
 - TypeScript
 - YAML
+- Zig
+- Zsh
 
 ## Inventory-Only Languages
 
@@ -74,8 +86,6 @@ Current generated counts:
 - CSS
 - Cabal
 - Ceylon
-- Clojure
-- ClojureScript
 - CoffeeScript
 - ColdFusion
 - Common Lisp
@@ -84,7 +94,6 @@ Current generated counts:
 - D
 - DM
 - DTD
-- Dart
 - Dhall
 - Diff
 - Dockerfile
@@ -95,8 +104,6 @@ Current generated counts:
 - EditorConfig
 - Eiffel
 - Elm
-- Erlang
-- F#
 - Factor
 - Fantom
 - Fish
@@ -112,7 +119,6 @@ Current generated counts:
 - Hack
 - Haml
 - Handlebars
-- Haskell
 - Homebrew Bundle
 - INI
 - Idris
@@ -121,7 +127,6 @@ Current generated counts:
 - JSON5
 - JSP
 - Jinja
-- Julia
 - Just
 - Kustomize
 - LLVM
@@ -144,12 +149,10 @@ Current generated counts:
 - Nim
 - Nix
 - Nu
-- Objective-C
 - Objective-C++
 - OpenSCAD
 - Pascal
 - Patch
-- Perl
 - Pico-8
 - Pip Requirements
 - Pony
@@ -158,7 +161,6 @@ Current generated counts:
 - Pug
 - Puppet
 - PureScript
-- R
 - RON
 - Racket
 - Rake
@@ -203,7 +205,6 @@ Current generated counts:
 - XQuery
 - XSLT
 - Xtend
-- Zig
 - Zimpl
 - jq
 - reStructuredText

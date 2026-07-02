@@ -2625,6 +2625,13 @@ func interfaceSignatureDeclaresMethod(signature, method string) bool {
 	if loc == nil {
 		return false
 	}
+	// The `interface {` must be the type's OWN body, not an anonymous interface
+	// field embedded in a struct (`struct { hooks interface{ Reload() } }`) — that
+	// would falsely report the struct as declaring the field's method. A struct
+	// keyword before the interface means it is embedded, so it does not count.
+	if strings.Contains(signature[:loc[0]], "struct") {
+		return false
+	}
 	body := signature[loc[1]:]
 	for start := 0; ; {
 		i := strings.Index(body[start:], method)
@@ -3030,7 +3037,7 @@ func goFirstResultType(signature string) string {
 // `cmd, flags, err := c.Find(args)` / `cmd, flags, err = c.Traverse(args)`,
 // including the `if v, ok := f(); ...` header form. The first assigned
 // variable and the called name are captured.
-var goMultiAssignRe = regexp.MustCompile(`(?m)(?:^|;)[^\S\n]*(?:(?:if|for)\s+)?([A-Za-z_]\w*)(?:\s*,\s*[A-Za-z_]\w*)+\s*:?=\s*(?:[A-Za-z_]\w*\s*\.\s*)*([A-Za-z_]\w*)\s*\(`)
+var goMultiAssignRe = regexp.MustCompile(`(?m)(?:^|;)[^\S\n]*(?:(?:if|for)\s+)?([A-Za-z_]\w*)(?:\s*,\s*[A-Za-z_]\w*)+\s*:?=\s*((?:[A-Za-z_]\w*\s*\.\s*)*)([A-Za-z_]\w*)\s*\(`)
 
 // goMultiAssignReturnVarTypes types the first variable of Go multi-value
 // assignments from the called function's declared first result — the generic
@@ -3041,17 +3048,21 @@ func goMultiAssignReturnVarTypes(block string, from SymbolRecord, symbolsByShort
 	stripped := stripCodeLiteralsAndComments(block)
 	out := map[string]string{}
 	for _, m := range goMultiAssignRe.FindAllStringSubmatch(stripped, -1) {
-		if len(m) != 3 {
+		if len(m) != 4 {
 			continue
 		}
-		name, callee := m[1], m[2]
+		name, qualifier, callee := m[1], m[2], m[3]
 		if name == "" || name == "_" {
 			continue
 		}
 		if _, exists := out[name]; exists {
 			continue
 		}
-		if typeName := goFirstResultTypeForCallable(callee, from, symbolsByShortName); typeName != "" {
+		// A receiver-qualified callee (`c.Find(...)`) is definitionally a method,
+		// so resolving it against package-level functions of the same short name
+		// mis-types the receiver. Restrict qualified calls to method candidates.
+		methodOnly := strings.TrimSpace(qualifier) != ""
+		if typeName := goFirstResultTypeForCallable(callee, from, symbolsByShortName, methodOnly); typeName != "" {
 			out[name] = typeName
 		}
 	}
@@ -3063,11 +3074,16 @@ func goMultiAssignReturnVarTypes(block string, from SymbolRecord, symbolsByShort
 // resolution tiers targets — same file, then the caller's directory (a Go
 // package spans a directory), then the workspace — and a tier only answers
 // when every candidate in it agrees.
-func goFirstResultTypeForCallable(name string, from SymbolRecord, symbolsByShortName map[string][]SymbolRecord) string {
+func goFirstResultTypeForCallable(name string, from SymbolRecord, symbolsByShortName map[string][]SymbolRecord, methodOnly bool) string {
 	var sameFile, sameDir, workspace []string
 	dir := filepath.ToSlash(filepath.Dir(from.FilePath))
 	for _, candidate := range symbolsByShortName[name] {
 		if candidate.Language != "Go" || (candidate.Kind != "function" && candidate.Kind != "method") {
+			continue
+		}
+		// Qualified calls resolve only against methods (see caller); a package
+		// function of the same short name is not a valid target for `x.name()`.
+		if methodOnly && candidate.Kind != "method" {
 			continue
 		}
 		typeName := goFirstResultType(candidate.Signature)
