@@ -1840,6 +1840,10 @@ func TestTreeSitterParserTypeScriptMasksTypeofDynamicImportTypeArgument(t *testi
 }
 
 func TestTreeSitterParserObjectiveCInventoryFallback(t *testing.T) {
+	// A .h that sniffs as Objective-C parses with the tree-sitter-objc grammar
+	// (the header is the canonical anchor of the class: definition lookups
+	// expect e.g. AFHTTPSessionManager at AFHTTPSessionManager.h), so the
+	// @interface must yield a class symbol rather than an inventory document.
 	entities, language, status := TreeSitterParser{}.ParseWithStatus("AppDelegate.h", `#import <RCTAppDelegate.h>
 #import <UIKit/UIKit.h>
 
@@ -1853,8 +1857,14 @@ func TestTreeSitterParserObjectiveCInventoryFallback(t *testing.T) {
 	if status.ParseError {
 		t.Fatalf("unexpected parse status: %#v", status)
 	}
-	if len(entities) == 0 || entities[0].Kind != "document" {
-		t.Fatalf("expected Objective-C inventory entity, got %#v", entities)
+	var class *Entity
+	for i := range entities {
+		if entities[i].Kind == "class" && entities[i].Name == "AppDelegate" {
+			class = &entities[i]
+		}
+	}
+	if class == nil {
+		t.Fatalf("expected Objective-C class entity from header, got %#v", entities)
 	}
 
 	entities, language, status = TreeSitterParser{}.ParseWithStatus("AppDelegate.mm", `#import "AppDelegate.h"

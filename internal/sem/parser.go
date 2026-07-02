@@ -156,7 +156,12 @@ func (TreeSitterParser) ParseWithStatus(path, content string) ([]Entity, string,
 		spec = treeSitterLanguages[".yaml"]
 	}
 	if strings.EqualFold(filepath.Ext(path), ".h") && looksLikeObjectiveC(content) {
-		spec = languageSpec{language: "Objective-C", inventoryOnly: true}
+		// Objective-C classes are canonically anchored at their .h header
+		// (`@interface Foo : NSObject` lives there; the .m holds the
+		// @implementation), so sniffed headers parse with the vendored
+		// tree-sitter-objc grammar like .m files instead of falling back to
+		// inventory. Headers that don't sniff keep the C/C++ routing below.
+		spec = treeSitterLanguages[".m"]
 	} else if strings.EqualFold(filepath.Ext(path), ".h") && looksLikeCPlusPlusHeader(content) {
 		spec = treeSitterLanguages[".hpp"]
 	}
@@ -173,6 +178,9 @@ func (TreeSitterParser) ParseWithStatus(path, content string) ([]Entity, string,
 	}
 	if spec.language == "C" {
 		parseSrc = []byte(maskCUnsupportedSyntax(content))
+	}
+	if spec.language == "Objective-C" {
+		parseSrc = []byte(maskObjectiveCUnsupportedSyntax(content))
 	}
 	if spec.language == "Bash" {
 		parseSrc = []byte(maskBashUnsupportedSyntax(content))
@@ -2316,6 +2324,28 @@ func objcSelectorName(node *sitter.Node, src []byte) string {
 	return ""
 }
 
+// objcBareAuditMacroPattern matches file-scope nullability/sendability audit
+// macros that expand to nothing statement-like (`NS_ASSUME_NONNULL_BEGIN`,
+// `NS_HEADER_AUDIT_BEGIN(nullability, sendability)`); tree-sitter-objc has no
+// production for a bare identifier at file scope, so an unmasked occurrence
+// derails the parse of everything that follows (AFHTTPSessionManager.h lost
+// its whole @interface to this).
+var objcBareAuditMacroPattern = regexp.MustCompile(`^NS_(?:ASSUME_NONNULL_(?:BEGIN|END)|HEADER_AUDIT_(?:BEGIN|END)\s*\([^)]*\))$`)
+
+// maskObjectiveCUnsupportedSyntax blanks file-scope audit macros (see
+// objcBareAuditMacroPattern) with same-length whitespace so byte offsets and
+// line numbers of the surviving code are unchanged.
+func maskObjectiveCUnsupportedSyntax(content string) string {
+	lines := strings.SplitAfter(content, "\n")
+	for i, line := range lines {
+		text, newline := splitLineEnding(line)
+		if objcBareAuditMacroPattern.MatchString(strings.TrimSpace(text)) {
+			lines[i] = maskLineText(text) + newline
+		}
+	}
+	return strings.Join(lines, "")
+}
+
 func looksLikeObjectiveC(content string) bool {
 	return regexp.MustCompile(`(?m)^\s*@(?:interface|implementation|protocol|class|end)\b`).MatchString(content) ||
 		regexp.MustCompile(`(?m)^\s*#import\s+[<"]`).MatchString(content)
@@ -3448,6 +3478,13 @@ func entityFromNode(node *sitter.Node, src []byte, language, scope string) (Enti
 		// Without this case the class symbol is dropped and — because scope flows
 		// from the class kind — its methods are never qualified under it (empty
 		// container_id), so this/self call resolution can't fire for them.
+		//
+		// tree-sitter-objc reuses `class_declaration` for `@class Foo;` forward
+		// declarations (headers are full of them); the class symbol comes from
+		// class_interface / class_implementation, so forward decls are skipped.
+		if language == "Objective-C" && node.Type() == "class_declaration" {
+			return Entity{}, false
+		}
 		kind = "class"
 		name = nodeName(node, src)
 	case "method_signature", "getter_signature", "setter_signature":
@@ -3773,6 +3810,18 @@ func entityFromNode(node *sitter.Node, src []byte, language, scope string) (Enti
 		// tree-sitter-objc). Both declare the class; the first identifier child
 		// is the class name (a category `@interface Foo (Bar)` still names Foo).
 		kind = "class"
+		name = nodeName(node, src)
+	case "protocol_declaration":
+		// Objective-C `@protocol Foo <NSObject> ... @end` (the first identifier
+		// child is the protocol name). Protocols are the ObjC analogue of
+		// interfaces. Gated to Objective-C because tree-sitter-swift also emits
+		// protocol_declaration, whose extraction must stay unchanged. Forward
+		// declarations (`@protocol Foo;`) are a distinct
+		// protocol_forward_declaration node and stay unextracted.
+		if language != "Objective-C" {
+			return Entity{}, false
+		}
+		kind = "interface"
 		name = nodeName(node, src)
 	case "method":
 		kind = "function"

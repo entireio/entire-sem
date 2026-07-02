@@ -10891,6 +10891,100 @@ static NSString * EscapedString(NSString *string) {
 		t.Fatalf("Objective-C multi-part-selector method not extracted: %#v", kinds)
 	}
 }
+
+func TestObjectiveCHeaderSemanticExtraction(t *testing.T) {
+	// Definition lookups anchor an Objective-C class at its .h header (the
+	// @interface lives there; the .m only holds the @implementation), so a
+	// header that sniffs as Objective-C must parse with the objc grammar and
+	// emit the class from the header. Method prototypes stay skipped (the .m
+	// implementation carries the method symbols), @class / @protocol forward
+	// declarations stay unextracted, and @protocol blocks emit interfaces.
+	repo := t.TempDir()
+	writeFile(t, repo, "Sources/Manager.h", `#import <Foundation/Foundation.h>
+
+@class NSURLSessionConfiguration;
+@protocol ManagerObserving;
+
+@protocol ManagerDelegate <NSObject>
+- (void)managerDidFinish;
+@end
+
+@interface Manager : NSObject
+@property (readonly, nonatomic, strong) NSURL *baseURL;
+- (instancetype)initWithBaseURL:(NSURL *)url;
++ (instancetype)manager;
+@end
+`)
+	snapshot, err := BuildProviderSnapshotWithOptions(t.Context(), repo, "test-version", ProviderSnapshotOptions{Worktree: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	type sym struct {
+		kind, file, language string
+	}
+	symbols := map[string]sym{}
+	for _, s := range snapshot.Symbols {
+		symbols[s.Name] = sym{kind: s.Kind, file: s.FilePath, language: s.Language}
+	}
+	manager := symbols["Manager"]
+	if manager.kind != "class" || manager.file != "Sources/Manager.h" || manager.language != "Objective-C" {
+		t.Fatalf("Objective-C class not extracted from header: %#v (all: %#v)", manager, symbols)
+	}
+	delegate := symbols["ManagerDelegate"]
+	if delegate.kind != "interface" || delegate.file != "Sources/Manager.h" || delegate.language != "Objective-C" {
+		t.Fatalf("Objective-C protocol not extracted as interface: %#v (all: %#v)", delegate, symbols)
+	}
+	for _, forwardOnly := range []string{"NSURLSessionConfiguration", "ManagerObserving"} {
+		if _, ok := symbols[forwardOnly]; ok {
+			t.Fatalf("forward declaration %q must not emit a symbol: %#v", forwardOnly, symbols)
+		}
+	}
+	for _, prototype := range []string{"initWithBaseURL", "Manager.initWithBaseURL", "manager", "Manager.manager", "managerDidFinish", "ManagerDelegate.managerDidFinish"} {
+		if _, ok := symbols[prototype]; ok {
+			t.Fatalf("header method prototype %q must not emit a symbol: %#v", prototype, symbols)
+		}
+	}
+}
+
+func TestCHeaderRoutingUnchangedByObjectiveCSniff(t *testing.T) {
+	// A plain C header (no @interface/@implementation/#import markers) must
+	// keep the existing C routing — C repos (linux, postgres, tmux) are full
+	// of .h files that must be untouched by the Objective-C header dispatch.
+	repo := t.TempDir()
+	writeFile(t, repo, "include/queue.h", `#ifndef QUEUE_H
+#define QUEUE_H
+
+#include <stddef.h>
+
+struct queue_entry {
+	struct queue_entry *next;
+	void *data;
+};
+
+static inline size_t queue_align(size_t n) {
+	return (n + 7) & ~(size_t)7;
+}
+
+#endif
+`)
+	snapshot, err := BuildProviderSnapshotWithOptions(t.Context(), repo, "test-version", ProviderSnapshotOptions{Worktree: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]string{}
+	for _, s := range snapshot.Symbols {
+		if s.Language != "C" {
+			t.Fatalf("plain C header must stay on the C path, got language %q for %q", s.Language, s.Name)
+		}
+		byName[s.Name] = s.Kind
+	}
+	if byName["queue_entry"] != "struct" {
+		t.Fatalf("C struct not extracted from header: %#v", byName)
+	}
+	if byName["queue_align"] != "function" {
+		t.Fatalf("C inline function not extracted from header: %#v", byName)
+	}
+}
 func TestFSharpSemanticExtraction(t *testing.T) {
 	// F# was promoted from inventory to the semantic tier (vendored
 	// ionide/tree-sitter-fsharp grammar); it must now extract modules, types,
