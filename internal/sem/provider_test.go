@@ -9470,7 +9470,7 @@ func TestCapabilitiesReportRelationSupportPerLanguage(t *testing.T) {
 			}
 		}
 	}
-	for _, language := range []string{"Go", "Python", "TypeScript", "Java", "Rust", "C#", "PHP"} {
+	for _, language := range []string{"Go", "Python", "TypeScript", "Java", "Rust", "C#", "PHP", "Erlang"} {
 		if !contains(caps.RelationSupportByLanguage[language], "CALLS") {
 			t.Fatalf("language %q should support CALLS: %#v", language, caps.RelationSupportByLanguage[language])
 		}

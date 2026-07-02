@@ -572,7 +572,7 @@ func supportsCallExtraction(spec languageSpec) bool {
 		return false
 	}
 	switch spec.language {
-	case "Bash", "C", "C++", "C#", "Elixir", "Go", "Groovy", "Java", "JavaScript", "Kotlin", "Lua", "OCaml", "PHP", "Python", "Ruby", "Rust", "Scala", "Swift", "TypeScript", "Zsh":
+	case "Bash", "C", "C++", "C#", "Elixir", "Erlang", "Go", "Groovy", "Java", "JavaScript", "Kotlin", "Lua", "OCaml", "PHP", "Python", "Ruby", "Rust", "Scala", "Swift", "TypeScript", "Zsh":
 		return true
 	default:
 		return false
@@ -2113,7 +2113,17 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 				return
 			}
 			block := symbolBlockFromLines(lines, from)
-			if fileNeedsCallScan && !typeLikeKind(from.Kind) {
+			if fileNeedsCallScan && !typeLikeKind(from.Kind) && file.Language == "Erlang" {
+				// Erlang call sites carry information the generic scanner cannot
+				// use: a bare call is module-local by language rule, and a remote
+				// `mod:fun(...)` call names the target module explicitly (module
+				// `mod` lives in `mod.erl` by convention). A dedicated scanner
+				// also keeps Erlang's variables (capitalized), `?MACRO(...)`
+				// expansions, and `%` comments out of the call-name set.
+				for _, r := range erlangCallRelations(from, block, currentFileSymbols, symbolsByShortName) {
+					emit(r)
+				}
+			} else if fileNeedsCallScan && !typeLikeKind(from.Kind) {
 				callBlock := block
 				if file.Language == "Rust" {
 					callBlock = stripRustCodegenMacroBodies(block)
@@ -2365,7 +2375,11 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 			}
 		}
 
-		if fileNeedsCallScan {
+		// Erlang has no top-level call expressions: everything outside function
+		// bodies is a module attribute, and attribute payloads like
+		// `-spec name(...)` or `-export([...])` are declarations that would
+		// register as bogus file->function call sites.
+		if fileNeedsCallScan && file.Language != "Erlang" {
 			topLevel := stripDeclarationOnlyCallSignatures(file.Language, topLevelBlockFromLines(lines, currentFileSymbols))
 			if file.Language == "Rust" {
 				topLevel = stripRustCodegenMacroBodies(topLevel)
