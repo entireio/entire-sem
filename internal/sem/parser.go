@@ -3646,6 +3646,17 @@ func entityFromNode(node *sitter.Node, src []byte, language, scope string) (Enti
 	case "module_definition":
 		kind = "module"
 		name = nodeName(node, src)
+	case "module":
+		// Ruby `module Name ... end` (tree-sitter-ruby's node type; the name
+		// field is a constant). Modules are namespaces/mixins on par with
+		// classes, and "module" scopes children, so nested methods qualify under
+		// the module name. Gated to Ruby because the bare node type is a word
+		// other grammars could reuse.
+		if language != "Ruby" {
+			return Entity{}, false
+		}
+		kind = "module"
+		name = nodeName(node, src)
 	case "binary_operator":
 		// R defines functions by assignment: `name <- function(args) ...` is a
 		// binary_operator whose value side is a function_definition. Gated to R

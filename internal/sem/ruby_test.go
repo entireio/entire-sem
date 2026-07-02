@@ -87,6 +87,42 @@ end
 	}
 }
 
+// Ruby `module Name ... end` declarations must emit a "module" symbol with
+// nested instance methods qualified under it (evidence: on discourse/discourse
+// `module PrettyText`, `module HasCustomFields`, and `module
+// SiteSettingExtension` were absent from the symbol set while classes
+// extracted fine — tree-sitter-ruby's `module` node had no entityFromNode
+// case).
+func TestRubyModuleDeclarationsEmitted(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "lib/pretty_text.rb", `module PrettyText
+  def markdown(text)
+    text
+  end
+end
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	module := symbolByKindAndName(snapshot.Symbols, "module", "PrettyText")
+	if module.ID == "" {
+		t.Fatalf("missing module symbol PrettyText in %#v", snapshot.Symbols)
+	}
+	if module.FilePath != "lib/pretty_text.rb" {
+		t.Fatalf("module file = %q", module.FilePath)
+	}
+	method := symbolByKindAndName(snapshot.Symbols, "method", "PrettyText.markdown")
+	if method.ID == "" {
+		t.Fatalf("nested method not qualified under module in %#v", snapshot.Symbols)
+	}
+	if method.ContainerID != module.ID {
+		t.Fatalf("method container = %q, want %q", method.ContainerID, module.ID)
+	}
+}
+
 // Bare-word scanning must not invent calls from comments, heredocs, %w
 // literals, local variables, parameters, hash keys, or `!=` comparisons.
 func TestRubyBareCallScanPrecision(t *testing.T) {
