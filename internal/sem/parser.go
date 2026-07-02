@@ -215,6 +215,9 @@ func (TreeSitterParser) ParseWithStatus(path, content string) ([]Entity, string,
 	if spec.language == "TypeScript" && !strings.EqualFold(filepath.Ext(path), ".tsx") {
 		parseSrc = []byte(maskTypeScriptUnsupportedSyntax(content))
 	}
+	if spec.language == "Rust" {
+		parseSrc = []byte(maskRustUnsupportedSyntax(content))
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), treeSitterParseTimeout)
 	defer cancel()
 	// Own the parser and tree explicitly and free their native (cgo) memory on
@@ -420,6 +423,158 @@ func maskTypeScriptKeywordTypeProperty(line string) string {
 
 func maskTypeScriptStaticAccessorMethod(line string) string {
 	return tsStaticAccessorMethodPattern.ReplaceAllString(line, "static accessoR${1}")
+}
+
+// rustItemWrapperMacroHint cheaply detects source that may contain a
+// brace-delimited cfg_*! macro invocation so unaffected files skip the extra
+// unwrap parse below.
+var rustItemWrapperMacroHint = regexp.MustCompile(`\bcfg_[A-Za-z0-9_]*\s*!\s*\{`)
+
+// rustItemWrapperMacroName gates which macros maskRustUnsupportedSyntax may
+// unwrap: tokio's declarative config family (cfg_net!, cfg_io_util!, ...) plus
+// cfg_if!, whose brace bodies wrap real items. Arbitrary macros (quote!,
+// macro_rules!, matches!, vec!) must stay opaque token trees.
+var rustItemWrapperMacroName = regexp.MustCompile(`^cfg_[A-Za-z0-9_]*$`)
+
+// maskRustUnsupportedSyntax unwraps known item-wrapping macro invocations so
+// the items they wrap parse as real items. tree-sitter-rust parses a macro
+// invocation's body as an opaque token_tree, so `cfg_net! { pub struct
+// TcpListener { ... } }` (pervasive in tokio) otherwise yields no entities at
+// all. The macro name, `!`, and wrapping braces are blanked with same-length
+// whitespace so the contents parse at identical byte offsets. Wrappers nest
+// (`cfg_net! { cfg_io! { ... } }`), so unwrapping iterates to a fixed point.
+func maskRustUnsupportedSyntax(content string) string {
+	if !rustItemWrapperMacroHint.MatchString(content) {
+		return content
+	}
+	src := []byte(content)
+	const maxUnwrapDepth = 8
+	for i := 0; i < maxUnwrapDepth; i++ {
+		if !unwrapRustItemWrapperMacros(src) {
+			break
+		}
+	}
+	return string(src)
+}
+
+// unwrapRustItemWrapperMacros blanks one layer of item-position cfg_*! macro
+// wrappers in src in place and reports whether anything changed.
+func unwrapRustItemWrapperMacros(src []byte) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), treeSitterParseTimeout)
+	defer cancel()
+	parser := sitter.NewParser()
+	defer parser.Close()
+	parser.SetLanguage(rust.GetLanguage())
+	tree, err := parser.ParseCtx(ctx, nil, src)
+	if tree != nil {
+		defer tree.Close()
+	}
+	if err != nil || tree == nil {
+		return false
+	}
+	root := tree.RootNode()
+	if root == nil || root.IsNull() {
+		return false
+	}
+	changed := false
+	var walk func(node *sitter.Node)
+	walk = func(node *sitter.Node) {
+		for i := 0; i < int(node.NamedChildCount()); i++ {
+			child := node.NamedChild(i)
+			if child == nil || child.IsNull() {
+				continue
+			}
+			if child.Type() == "macro_invocation" && unwrapRustItemWrapperMacro(src, child, node) {
+				changed = true
+				continue
+			}
+			walk(child)
+		}
+	}
+	walk(root)
+	return changed
+}
+
+// unwrapRustItemWrapperMacro blanks a single cfg_*! wrapper when the
+// invocation sits at item position (file, module, impl, or trait scope — not
+// inside a function body) with a brace-delimited body. cfg_if!-style bodies
+// (`if #[cfg(...)] { items } else { items }`) additionally get the if/else
+// scaffolding blanked, keeping only the branch interiors.
+func unwrapRustItemWrapperMacro(src []byte, node, parent *sitter.Node) bool {
+	switch parent.Type() {
+	case "source_file", "declaration_list":
+	default:
+		return false
+	}
+	name := node.ChildByFieldName("macro")
+	if name == nil || name.IsNull() {
+		return false
+	}
+	macroName := string(src[name.StartByte():name.EndByte()])
+	if dot := strings.LastIndex(macroName, "::"); dot >= 0 {
+		macroName = macroName[dot+2:]
+	}
+	if !rustItemWrapperMacroName.MatchString(macroName) {
+		return false
+	}
+	var body *sitter.Node
+	for i := int(node.NamedChildCount()) - 1; i >= 0; i-- {
+		child := node.NamedChild(i)
+		if child != nil && !child.IsNull() && child.Type() == "token_tree" {
+			body = child
+			break
+		}
+	}
+	if body == nil || src[body.StartByte()] != '{' {
+		return false
+	}
+	// Byte ranges inside the invocation whose contents survive the blanking.
+	var keep [][2]int
+	if rustTokenTreeStartsWithIf(src, body) {
+		// cfg_if! style: keep only the brace-delimited branch bodies.
+		for i := 0; i < int(body.NamedChildCount()); i++ {
+			branch := body.NamedChild(i)
+			if branch == nil || branch.IsNull() || branch.Type() != "token_tree" {
+				continue
+			}
+			if src[branch.StartByte()] != '{' {
+				continue
+			}
+			keep = append(keep, [2]int{int(branch.StartByte()) + 1, int(branch.EndByte()) - 1})
+		}
+	} else {
+		keep = append(keep, [2]int{int(body.StartByte()) + 1, int(body.EndByte()) - 1})
+	}
+	pos := int(node.StartByte())
+	for _, segment := range keep {
+		maskBytesPreservingNewlines(src, pos, segment[0])
+		pos = segment[1]
+	}
+	maskBytesPreservingNewlines(src, pos, int(node.EndByte()))
+	return true
+}
+
+// rustTokenTreeStartsWithIf reports whether the first token inside the brace
+// body is the `if` keyword, i.e. a cfg_if!-style conditional wrapper.
+func rustTokenTreeStartsWithIf(src []byte, body *sitter.Node) bool {
+	i := int(body.StartByte()) + 1
+	end := int(body.EndByte()) - 1
+	for i < end {
+		switch src[i] {
+		case ' ', '\t', '\n', '\r':
+			i++
+			continue
+		}
+		break
+	}
+	if i+2 > end || src[i] != 'i' || src[i+1] != 'f' {
+		return false
+	}
+	if i+2 == end {
+		return true
+	}
+	next := src[i+2]
+	return !(next == '_' || (next >= 'a' && next <= 'z') || (next >= 'A' && next <= 'Z') || (next >= '0' && next <= '9'))
 }
 
 var (

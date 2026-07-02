@@ -2685,3 +2685,117 @@ func TestTreeSitterParserOCamlInterfaceValSignatures(t *testing.T) {
 		t.Fatalf("val names not extracted from .mli: %#v", entities)
 	}
 }
+
+func TestRustCfgWrapperMacroItemsExtracted(t *testing.T) {
+	// tokio wraps public items in declarative config macros (`cfg_net! { pub
+	// struct TcpListener { ... } }`). tree-sitter-rust parses a macro body as
+	// an opaque token_tree, so without unwrapping the wrapper every item
+	// inside — TcpListener included — vanished from the snapshot.
+	entities, language, status := TreeSitterParser{}.ParseWithStatus("listener.rs", `use std::io;
+
+cfg_net! {
+    pub struct TcpListener {
+        io: u8,
+    }
+
+    impl TcpListener {
+        pub fn local_addr(&self) -> io::Result<u8> {
+            Ok(self.io)
+        }
+    }
+}
+`)
+	if language != "Rust" {
+		t.Fatalf("language = %q", language)
+	}
+	if status.ParseError {
+		t.Fatalf("unexpected parse error: %+v", status)
+	}
+	byName := map[string]Entity{}
+	for _, entity := range entities {
+		byName[entity.Name] = entity
+	}
+	listener, ok := byName["TcpListener"]
+	if !ok {
+		t.Fatalf("TcpListener not extracted from cfg_net! wrapper: %#v", entities)
+	}
+	if listener.Kind != "struct" {
+		t.Fatalf("TcpListener kind = %q, want struct: %#v", listener.Kind, entities)
+	}
+	if listener.StartLine != 4 {
+		t.Fatalf("TcpListener start line = %d, want 4 (masking must preserve positions)", listener.StartLine)
+	}
+	if method, ok := byName["TcpListener.local_addr"]; !ok || method.Kind != "method" {
+		t.Fatalf("impl method inside cfg_net! not extracted: %#v", entities)
+	}
+}
+
+func TestRustCfgWrapperMacroNestedAndCfgIf(t *testing.T) {
+	entities, _, status := TreeSitterParser{}.ParseWithStatus("nested.rs", `cfg_net! {
+    cfg_io_util! {
+        pub struct Inner;
+    }
+}
+
+mod sys {
+    cfg_rt! {
+        pub fn spawn() {}
+    }
+}
+
+cfg_if! {
+    if #[cfg(unix)] {
+        pub fn unix_only() {}
+    } else if #[cfg(windows)] {
+        pub fn windows_only() {}
+    } else {
+        pub fn fallback() {}
+    }
+}
+`)
+	if status.ParseError {
+		t.Fatalf("unexpected parse error: %+v", status)
+	}
+	names := map[string]bool{}
+	for _, entity := range entities {
+		names[entity.Name] = true
+	}
+	for _, want := range []string{"Inner", "spawn", "unix_only", "windows_only", "fallback"} {
+		if !names[want] {
+			t.Fatalf("missing %q after unwrapping nested cfg wrappers: %#v", want, entities)
+		}
+	}
+}
+
+func TestRustNonCfgMacrosStayOpaque(t *testing.T) {
+	// Only the cfg_*! wrapper family is unwrapped. Arbitrary macros — both at
+	// item position (macro_rules!, quote! in build scripts) and in function
+	// bodies (matches!, vec!) — must remain opaque token trees: their bodies
+	// are patterns/templates, not items.
+	entities, _, status := TreeSitterParser{}.ParseWithStatus("lib.rs", `macro_rules! ready {
+    ($e:expr) => { struct NotAnItem; };
+}
+
+quote! {
+    pub struct Generated;
+}
+
+pub fn check(value: u8) -> bool {
+    let all = vec![1, 2, 3];
+    matches!(value, 1 | 2)
+}
+`)
+	if status.ParseError {
+		t.Fatalf("unexpected parse error: %+v", status)
+	}
+	names := map[string]bool{}
+	for _, entity := range entities {
+		names[entity.Name] = true
+	}
+	if names["NotAnItem"] || names["Generated"] {
+		t.Fatalf("non-cfg macro bodies must stay opaque: %#v", entities)
+	}
+	if !names["check"] {
+		t.Fatalf("plain function missing: %#v", entities)
+	}
+}
