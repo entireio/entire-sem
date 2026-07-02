@@ -1920,7 +1920,11 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 					}
 					methodsByContainer[symbol.ContainerID][symbol.Name] = symbol
 				}
-				if needsFields && symbol.Kind == "field" {
+				// C# receiver-call resolution also reads the field index:
+				// class-level `Type Name { get; }` members type `Name.Method()`
+				// receivers (csharpMemberType), so the map is built whenever
+				// receiver calls are resolved, not only for field relations.
+				if (needsFields || (needsReceiverCalls && symbol.Language == "C#")) && symbol.Kind == "field" {
 					if fieldsByContainer[symbol.ContainerID] == nil {
 						fieldsByContainer[symbol.ContainerID] = map[string]SymbolRecord{}
 					}
@@ -2239,6 +2243,12 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 				if file.Language == "Rust" {
 					callBlock = stripRustCodegenMacroBodies(block)
 				}
+				if file.Language == "C#" {
+					// Multi-line verbatim/raw string bodies (SQL blocks and the
+					// like) survive the generic stripper's line-scoped string
+					// masking and would register as call sites.
+					callBlock = maskCSharpTextBlocks(block)
+				}
 				callNames := callLikeIdentifiers(callBlock, file.Language)
 				if file.Language == "Ruby" {
 					// Ruby method names may end in `!`/`?` and are commonly called
@@ -2487,7 +2497,7 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 				}
 			}
 			if spec.callResolution == "full" {
-				for _, r := range receiverCallRelations(from, block, methodsByContainer, superContainerByID, symbolsByShortName, returnTypesBySymbolNameAndFile, returnTypesBySymbolNameAndDir, importsByName, manifestImports.goModule, pkgVarTypesByDir[filepath.ToSlash(filepath.Dir(file.Path))], phpPropTypes, kotlinPropTypes) {
+				for _, r := range receiverCallRelations(from, block, methodsByContainer, superContainerByID, symbolsByShortName, returnTypesBySymbolNameAndFile, returnTypesBySymbolNameAndDir, importsByName, manifestImports.goModule, pkgVarTypesByDir[filepath.ToSlash(filepath.Dir(file.Path))], phpPropTypes, kotlinPropTypes, fieldsByContainer) {
 					emit(r)
 				}
 				for _, r := range importedReceiverCallRelations(from, block, importsByName, symbolsByShortName) {
@@ -2971,11 +2981,28 @@ func resolveQualifiedType(qt pkgQualType, symbolsByShortName map[string][]Symbol
 	return SymbolRecord{}, false
 }
 
-func receiverCallRelations(from SymbolRecord, block string, methodsByContainer map[string]map[string]SymbolRecord, superContainerByID map[string]string, symbolsByShortName map[string][]SymbolRecord, returnTypesBySymbolNameAndFile, returnTypesBySymbolNameAndDir map[string]map[string][]string, importsByName map[string][]string, goModule string, pkgVarTypes map[string]pkgQualType, phpPropTypes, kotlinPropTypes map[string]string) []RelationRecord {
+func receiverCallRelations(from SymbolRecord, block string, methodsByContainer map[string]map[string]SymbolRecord, superContainerByID map[string]string, symbolsByShortName map[string][]SymbolRecord, returnTypesBySymbolNameAndFile, returnTypesBySymbolNameAndDir map[string]map[string][]string, importsByName map[string][]string, goModule string, pkgVarTypes map[string]pkgQualType, phpPropTypes, kotlinPropTypes map[string]string, fieldsByContainer map[string]map[string]SymbolRecord) []RelationRecord {
 	if typeLikeKind(from.Kind) {
 		return nil
 	}
+	if from.Language == "C#" {
+		// Multi-line verbatim (@"...") and raw ("""...""") string bodies pass
+		// through the generic stripper (which contains string masking to one
+		// line), so SQL/text blocks would feed every extractor below.
+		block = maskCSharpTextBlocks(block)
+	}
 	calls := receiverCalls(block)
+	allReceiverCalls := calls
+	if from.Language == "C#" {
+		// Chain tails (`Dependencies.MigrationsSqlGenerator.Generate(`) look
+		// like `MigrationsSqlGenerator.Generate(` to the generic scanner, and
+		// the typed tiers misresolve them — EF Core names properties after
+		// their concrete type, so the static-call tier hits that class instead
+		// of the property's interface. The typed tiers get only clean-receiver
+		// calls; the chain loop below resolves the tails, and the extension
+		// fallback — receiver-agnostic by construction — sees every pair.
+		calls = csharpNonTailReceiverCalls(block)
+	}
 	chainedCalls := chainedConstructorCalls(block)
 	returnedCalls := returnedReceiverCalls(block)
 	chainedReturnCalls := chainedConstructorReturnCalls(block)
@@ -3008,7 +3035,15 @@ func receiverCallRelations(from SymbolRecord, block string, methodsByContainer m
 		phpPropCalls = phpPropertyReceiverCalls(block)
 		chainedCalls = append(chainedCalls, phpChainedConstructorCalls(block)...)
 	}
-	if len(calls) == 0 && len(chainedCalls) == 0 && len(returnedCalls) == 0 && len(chainedReturnCalls) == 0 && len(deepChainedReturnCalls) == 0 && len(returnedChainCalls) == 0 && len(returnedDeepChainCalls) == 0 && len(rubyBareCalls) == 0 && len(phpStatics) == 0 && len(phpPropCalls) == 0 {
+	var csChainCalls []csharpChainCall
+	if from.Language == "C#" {
+		// One-hop member chains (`Dependencies.ModelDiffer.GetDifferences(`)
+		// are matched by receiverCallRe as `ModelDiffer.GetDifferences(`, an
+		// untypeable receiver; the dedicated extractor keeps the full chain so
+		// class-level member types can resolve it hop by hop.
+		csChainCalls = csharpMemberChainCalls(block)
+	}
+	if len(allReceiverCalls) == 0 && len(chainedCalls) == 0 && len(returnedCalls) == 0 && len(chainedReturnCalls) == 0 && len(deepChainedReturnCalls) == 0 && len(returnedChainCalls) == 0 && len(returnedDeepChainCalls) == 0 && len(rubyBareCalls) == 0 && len(phpStatics) == 0 && len(phpPropCalls) == 0 && len(csChainCalls) == 0 {
 		return nil
 	}
 	varTypes := parameterVarTypes(from.Signature)
@@ -3150,6 +3185,17 @@ func receiverCallRelations(from SymbolRecord, block string, methodsByContainer m
 				targetID = sym.ID
 				confidence = 0.78
 				reason = "method call on package var resolved via qualified imported type"
+			} else if typeName, ok := csharpReceiverMemberType(from, call.Receiver, fieldsByContainer, superContainerByID); ok {
+				// C# class-level member receiver: `Dependencies.Method(...)`
+				// where `Dependencies` is a typed property or field of the
+				// enclosing class (or a base class).
+				sym, ok := firstTypeLikeNamedPreferFile(symbolsByShortName[typeName], typeName, from.FilePath)
+				if !ok {
+					continue
+				}
+				targetID = sym.ID
+				confidence = 0.8
+				reason = "method call resolved via typed property receiver"
 			} else {
 				continue
 			}
@@ -3459,6 +3505,129 @@ func receiverCallRelations(from SymbolRecord, block string, methodsByContainer m
 			}},
 			WarningCodes: []string{},
 		})
+	}
+	// C# one-hop member chains `A.B.Method(...)`: A is a typed member of the
+	// enclosing class (or a typed parameter/local), B a typed property on A's
+	// type — declared in that type's own file — and Method resolves up B's
+	// type's inheritance chain. Interface-typed members resolve to the
+	// interface's method symbol, matching how the call is dispatched.
+	for _, call := range csChainCalls {
+		if methodResolved[call.Property+"."+call.Method] {
+			// The generic scanner read this site as `B.Method(` and a typed
+			// tier above already resolved that pair (e.g. the enclosing class
+			// itself has a member named B of the same type); don't double-emit.
+			continue
+		}
+		// The property is looked up on A's type — or on the enclosing class
+		// itself when the chain is spelled `this.B.Method(` / `base.B.Method(`
+		// (the member walk already covers inherited members for both).
+		propContainer, propFile := "", from.FilePath
+		if call.Receiver == "this" || call.Receiver == "base" {
+			propContainer = from.ContainerID
+		} else {
+			receiverType, ok := csharpReceiverMemberType(from, call.Receiver, fieldsByContainer, superContainerByID)
+			if !ok {
+				receiverType, ok = varTypes[call.Receiver]
+			}
+			if !ok {
+				continue
+			}
+			receiverSym, ok := firstTypeLikeNamedPreferFile(symbolsByShortName[receiverType], receiverType, from.FilePath)
+			if !ok {
+				continue
+			}
+			propContainer, propFile = receiverSym.ID, receiverSym.FilePath
+		}
+		if propContainer == "" {
+			continue
+		}
+		propType, ok := csharpMemberType(fieldsByContainer, superContainerByID, propContainer, call.Property)
+		if !ok {
+			continue
+		}
+		propSym, ok := firstTypeLikeNamedPreferFile(symbolsByShortName[propType], propType, propFile)
+		if !ok {
+			continue
+		}
+		method, inherited, ok := lookupMethodUpChain(propSym.ID, call.Method, methodsByContainer, superContainerByID)
+		if !ok || method.ID == from.ID {
+			continue
+		}
+		confidence := 0.75
+		reason := "method call resolved via typed property chain receiver"
+		if inherited {
+			confidence = 0.73
+			reason += " (inherited from a base type)"
+		}
+		scope := "file"
+		if method.FilePath != from.FilePath {
+			scope = "module"
+		}
+		relations = append(relations, RelationRecord{
+			RecordType:    "relation",
+			FromID:        from.ID,
+			ToID:          method.ID,
+			Type:          "CALLS",
+			Confidence:    confidence,
+			Reason:        reason,
+			RelationScope: scope,
+			Resolution:    "type_inferred",
+			TargetKind:    "symbol",
+			Evidence: []Evidence{{
+				Kind:      "call_site",
+				FilePath:  from.FilePath,
+				StartLine: from.StartLine,
+				EndLine:   from.EndLine,
+				Detail:    call.Detail,
+			}},
+			WarningCodes: []string{},
+		})
+		// The generic scanner saw this site as `B.Method(`; mark that pair
+		// resolved so the fallback tiers below do not re-emit for it.
+		methodResolved[call.Property+"."+call.Method] = true
+	}
+	// C# extension methods: `x.Ext(...)` never resolves through the receiver's
+	// type (the method is a static on an unrelated static class), so a receiver
+	// call left unresolved by the typed tiers falls back to the workspace's
+	// unique extension-shaped method with that name (static + `this` first
+	// parameter). Uniqueness keeps this conflict-free, as in the Go fallback.
+	if from.Language == "C#" {
+		for _, call := range allReceiverCalls {
+			if call.Receiver == "this" || call.Receiver == "self" || call.Receiver == "base" {
+				continue
+			}
+			if methodResolved[call.Receiver+"."+call.Method] {
+				continue
+			}
+			method, ok := csharpUniqueExtensionMethod(symbolsByShortName[call.Method])
+			if !ok || method.ID == from.ID {
+				continue
+			}
+			methodResolved[call.Receiver+"."+call.Method] = true
+			scope := "file"
+			if method.FilePath != from.FilePath {
+				scope = "module"
+			}
+			relations = append(relations, RelationRecord{
+				RecordType:    "relation",
+				FromID:        from.ID,
+				ToID:          method.ID,
+				Type:          "CALLS",
+				Confidence:    0.7,
+				Reason:        "method call resolved to the unique C# extension method",
+				RelationScope: scope,
+				Resolution:    "name_only",
+				TargetKind:    "symbol",
+				Evidence: []Evidence{{
+					Kind:      "call_site",
+					FilePath:  from.FilePath,
+					StartLine: from.StartLine,
+					EndLine:   from.EndLine,
+					Detail:    call.Receiver + "." + call.Method,
+				}},
+				WarningCodes: []string{},
+			})
+		}
 	}
 	for _, call := range chainedCalls {
 		sym, ok := firstTypeLikeNamed(symbolsByShortName[call.TypeName], call.TypeName)

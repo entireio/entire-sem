@@ -4479,6 +4479,18 @@ func entityFromNode(node *sitter.Node, src []byte, language, scope string) (Enti
 	case "interface_declaration", "interface_definition":
 		kind = "interface"
 		name = nodeName(node, src)
+	case "record_declaration":
+		// C# `record` / `record struct` types. Without this case a record is
+		// invisible: no type symbol, and its properties/methods get no container
+		// (dropping e.g. every EF Core `*Dependencies` parameter object), so
+		// property-typed receiver calls through a record can never resolve.
+		// Gated to C# so the same node name in other grammars (e.g. Java
+		// records, currently unextracted) keeps its existing behavior.
+		if language != "C#" {
+			return Entity{}, false
+		}
+		kind = "class"
+		name = nodeName(node, src)
 	case "struct_item", "struct_specifier", "struct_declaration":
 		// Zig struct literals are anonymous (`const Point = struct {...}`); the
 		// symbol is extracted at the enclosing variable_declaration, which carries
