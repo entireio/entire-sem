@@ -3904,6 +3904,20 @@ func entityFromNode(node *sitter.Node, src []byte, language, scope string) (Enti
 		if id := firstNamedChildOfType(node, "identifier"); validNode(id) {
 			name = strings.TrimSpace(id.Content(src))
 		}
+	case "object_definition":
+		// Scala `object Name` singleton — with or without an extends clause
+		// (`object SQLExecution extends Logging`); both parse as
+		// object_definition with the identifier in the name field, but the node
+		// type had no case, so objects never emitted (companion objects only
+		// appeared to extract because the same-named class carried the symbol).
+		// An object is a singleton class, so it emits kind "class", which also
+		// scopes nested defs under the object name. Gated to Scala so grammars
+		// reusing the node type are unchanged.
+		if language != "Scala" {
+			return Entity{}, false
+		}
+		kind = "class"
+		name = nodeName(node, src)
 	case "trait_definition", "trait_item":
 		kind = "trait"
 		name = nodeName(node, src)

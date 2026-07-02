@@ -2044,6 +2044,41 @@ internal suspend fun Exception.suspendAndThrow(): Nothing {
 	}
 }
 
+// Scala `object` singletons must emit — including with an extends clause
+// (evidence: on apache/spark `object SQLExecution extends Logging` was absent;
+// plain companion objects only appeared present because the same-named class
+// carried the symbol — object_definition had no entityFromNode case at all).
+func TestScalaObjectDefinitionSymbols(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "SQLExecution.scala", `object SQLExecution extends Logging {
+  def withNewExecutionId(x: Int): Int = x
+}
+
+object Plain {
+  def m(): Int = 1
+}
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, name := range []string{"SQLExecution", "Plain"} {
+		object := symbolByKindAndName(snapshot.Symbols, "class", name)
+		if object.ID == "" {
+			t.Fatalf("missing object symbol %q in %#v", name, snapshot.Symbols)
+		}
+		if object.FilePath != "SQLExecution.scala" {
+			t.Fatalf("%s file = %q", name, object.FilePath)
+		}
+	}
+	method := symbolByKindAndName(snapshot.Symbols, "method", "SQLExecution.withNewExecutionId")
+	if method.ID == "" {
+		t.Fatalf("object method not qualified under object in %#v", snapshot.Symbols)
+	}
+}
+
 func TestGraphQLSchemaFieldEntities(t *testing.T) {
 	entities, language := TreeSitterParser{}.Parse("schema.graphql", `schema {
   query: Query
