@@ -169,32 +169,48 @@ func similarityRelations(recordsByFile map[string][]SymbolRecord, readContent co
 	return relations
 }
 
-// maxMinifiedLineLen: a line longer than this marks a file as minified/bundled.
-// Real source lines are short (rarely > a few hundred chars); minified assets pack
-// the whole program onto one line of tens of thousands of characters.
-const maxMinifiedLineLen = 5000
+// Minified/bundled detection. A single overlong line is not enough to condemn a
+// file: real source occasionally embeds a giant one-line data literal (e.g. the
+// unicode range tables in microsoft/TypeScript's src/compiler/scanner.ts, ~3,500
+// ordinary lines plus three >5KB array literals). A file is treated as
+// minified/bundled only when overlong lines dominate its bytes: minified assets
+// pack (nearly) the whole program onto a few lines of tens of thousands of
+// characters, so almost all of their bytes live on overlong lines, while real
+// source keeps the bulk of its bytes on ordinary short lines.
+//
+// Calibrated on the TypeScript repo: real-source files with embedded data lines
+// measure at most ~25% of bytes on overlong lines (scanner.ts: 11%), while
+// genuinely one-line/bundle-shaped files measure >86%.
+const (
+	// maxMinifiedLineLen: lines longer than this (in bytes) count as overlong.
+	maxMinifiedLineLen = 5000
+	// minMinifiedOverlongByteFraction: flag a file as minified only when at least
+	// this fraction of its bytes live on overlong lines.
+	minMinifiedOverlongByteFraction = 0.7
+)
 
-// longestLineLen returns the length (in bytes) of the longest line, scanning once
-// and stopping early once the minified threshold is exceeded.
-func longestLineLen(content string) int {
-	longest, cur := 0, 0
+// looksMinified reports whether content appears to be a minified/bundled asset
+// rather than hand-written source, scanning once and comparing the bytes held
+// by overlong lines against the total size.
+func looksMinified(content string) bool {
+	if len(content) == 0 {
+		return false
+	}
+	overlong, cur := 0, 0
 	for i := 0; i < len(content); i++ {
 		if content[i] == '\n' {
-			if cur > longest {
-				longest = cur
-			}
-			if longest > maxMinifiedLineLen {
-				return longest
+			if cur > maxMinifiedLineLen {
+				overlong += cur
 			}
 			cur = 0
 		} else {
 			cur++
 		}
 	}
-	if cur > longest {
-		longest = cur
+	if cur > maxMinifiedLineLen {
+		overlong += cur
 	}
-	return longest
+	return float64(overlong) >= minMinifiedOverlongByteFraction*float64(len(content))
 }
 
 func bodyShingles(block string) map[uint64]struct{} {

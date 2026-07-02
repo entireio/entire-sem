@@ -3,9 +3,11 @@ package sem
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -3461,6 +3463,85 @@ func TestMaxParseBytesSkipsOversizedFileWithPartialFailure(t *testing.T) {
 	}
 	if len(summary.PartialFailures) != 1 || summary.PartialFailures[0].Code != "E_FILE_TOO_LARGE" {
 		t.Fatalf("partial failures = %#v, want E_FILE_TOO_LARGE", summary.PartialFailures)
+	}
+}
+
+// streamMinifiedProbe runs a snapshot over repo and returns the symbol names and
+// the set of partial-failure codes, for the minified-detection tests below.
+func streamMinifiedProbe(t *testing.T, repo string) (symbolNames []string, failureCodes []string) {
+	t.Helper()
+	err := StreamSnapshot(t.Context(), repo, "test-version", ProviderSnapshotOptions{}, func(rec any) error {
+		switch r := rec.(type) {
+		case SymbolRecord:
+			symbolNames = append(symbolNames, r.Name)
+		case SnapshotSummary:
+			for _, failure := range r.PartialFailures {
+				failureCodes = append(failureCodes, failure.Code)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return symbolNames, failureCodes
+}
+
+// Real source with a few enormous single-line data literals (the shape of
+// microsoft/TypeScript's src/compiler/scanner.ts) must not be treated as
+// minified: long lines exist but do not dominate the file's bytes.
+func TestFewGiantDataLinesInRealSourceStillParsed(t *testing.T) {
+	repo := t.TempDir()
+	var sb strings.Builder
+	sb.WriteString("export function createScanner(): number {\n\treturn unicodeTable0.length;\n}\n")
+	// ~172KB of ordinary lines.
+	sb.WriteString(strings.Repeat("// ordinary source line describing the scanner state machine\n", 2800))
+	// Three ~50KB single-line array literals (~150KB, well under 70% of total).
+	for i := 0; i < 3; i++ {
+		fmt.Fprintf(&sb, "const unicodeTable%d = [%s0];\n", i, strings.Repeat("170,171,", 6250))
+	}
+	writeFile(t, repo, "scanner.ts", sb.String())
+
+	symbols, failures := streamMinifiedProbe(t, repo)
+	for _, code := range failures {
+		if code == "E_MINIFIED" {
+			t.Fatalf("real source with a few giant data lines was flagged E_MINIFIED (failures = %v)", failures)
+		}
+	}
+	if !slices.Contains(symbols, "createScanner") {
+		t.Fatalf("symbols = %v, want createScanner extracted", symbols)
+	}
+}
+
+// A genuine bundle packing the whole program onto one enormous line must still
+// be flagged and skipped.
+func TestSingleLineBundleFlaggedMinified(t *testing.T) {
+	repo := t.TempDir()
+	// ~500KB of minified-style JS on a single line.
+	writeFile(t, repo, "main.min.js", "!function(){"+strings.Repeat("var a=fn(1);a&&a();", 26000)+"}();")
+
+	symbols, failures := streamMinifiedProbe(t, repo)
+	if !slices.Contains(failures, "E_MINIFIED") {
+		t.Fatalf("single-line bundle not flagged; failures = %v", failures)
+	}
+	if len(symbols) != 0 {
+		t.Fatalf("symbols = %v, want none for minified bundle", symbols)
+	}
+}
+
+// A bundle split across a handful of lines that are all overlong (a common
+// webpack/rollup output shape) must also be flagged.
+func TestFewLinesAllLongBundleFlaggedMinified(t *testing.T) {
+	repo := t.TempDir()
+	line := "!function(){" + strings.Repeat("var b=go(2);b&&b();", 1200) + "}();\n"
+	writeFile(t, repo, "bundle.js", strings.Repeat(line, 6))
+
+	symbols, failures := streamMinifiedProbe(t, repo)
+	if !slices.Contains(failures, "E_MINIFIED") {
+		t.Fatalf("few-lines-all-long bundle not flagged; failures = %v", failures)
+	}
+	if len(symbols) != 0 {
+		t.Fatalf("symbols = %v, want none for minified bundle", symbols)
 	}
 }
 

@@ -818,7 +818,9 @@ func StreamSnapshot(ctx context.Context, repo, providerVersion string, options P
 		// their thousands of single-letter symbols in one file form a near-complete
 		// same-file call graph (the dominant relation-count + time blow-up on repos
 		// that vendor web assets), and they are not meaningful source to analyze.
-		if longestLineLen(content) > maxMinifiedLineLen {
+		// Overlong lines must dominate the file; a few giant data lines embedded
+		// in otherwise ordinary source do not disqualify it.
+		if looksMinified(content) {
 			languageSet[language] = struct{}{}
 			if err := emit(file); err != nil {
 				return err
