@@ -23,8 +23,7 @@ entire sem snapshot --repo . --format ndjson --worktree --include-file .seminclu
 ## Status
 
 This plugin implements the semantic checkpoint context proposed in
-[entireio/cli#589](https://github.com/entireio/cli/issues/589). It intentionally
-does not vendor or copy Ataraxy Labs' `inspect` / `sem` projects.
+[entireio/cli#589](https://github.com/entireio/cli/issues/589).
 
 The plugin uses a tree-sitter-backed parser for:
 
