@@ -17,6 +17,20 @@ const (
 	shingleSize      = 3
 	minShingles      = 8    // suppress boilerplate / tiny functions
 	similarThreshold = 0.82 // estimated Jaccard required to emit SIMILAR_TO
+	// maxBucketMembers bounds the all-pairs expansion within one LSH band bucket.
+	// A bucket larger than this means a body is mass-duplicated across the repo
+	// (generated getters, boilerplate, minified code); enumerating its O(k^2) pairs
+	// is the dominant cost on large repos and yields only redundant clone-cluster
+	// noise, so such buckets are skipped. Genuine small clone groups are unaffected.
+	maxBucketMembers = 64
+	// maxSimilarityCandidates bounds the TOTAL candidate-pair set across all bands.
+	// The per-bucket cap bounds each near-dup cluster, but a repo with thousands of
+	// small near-identical clusters (e.g. microsoft/TypeScript's tests/cases corpus)
+	// can still accumulate enough pairs to exhaust memory. Past this many candidates
+	// the clone-hint signal is long since saturated, so further pairs are pure noise
+	// and memory pressure; stop collecting. Bucket iteration is sorted so the chosen
+	// subset is deterministic.
+	maxSimilarityCandidates = 2_000_000
 )
 
 var (
@@ -83,13 +97,25 @@ func similarityRelations(recordsByFile map[string][]SymbolRecord, readContent co
 	// LSH: group by per-band signature slices; symbols sharing a bucket in any
 	// band become candidate pairs.
 	candidates := map[[2]int]struct{}{}
-	for band := 0; band < lshBands; band++ {
+	capped := false
+	for band := 0; band < lshBands && !capped; band++ {
 		buckets := map[uint64][]int{}
 		for idx := range sigs {
 			key := bandKey(sigs[idx].signature, band)
 			buckets[key] = append(buckets[key], idx)
 		}
-		for _, group := range buckets {
+		// Iterate buckets in a deterministic order so that, if the global cap
+		// truncates the candidate set, the retained subset is reproducible.
+		keys := make([]uint64, 0, len(buckets))
+		for key := range buckets {
+			keys = append(keys, key)
+		}
+		sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
+		for _, key := range keys {
+			group := buckets[key]
+			if len(group) > maxBucketMembers {
+				continue // mass-duplication bucket: skip its O(k^2) pairs (noise + the explosion source)
+			}
 			for i := 0; i < len(group); i++ {
 				for j := i + 1; j < len(group); j++ {
 					a, b := group[i], group[j]
@@ -98,6 +124,10 @@ func similarityRelations(recordsByFile map[string][]SymbolRecord, readContent co
 					}
 					candidates[[2]int{a, b}] = struct{}{}
 				}
+			}
+			if len(candidates) >= maxSimilarityCandidates {
+				capped = true // total clone-hint budget reached: stop (bounds memory)
+				break
 			}
 		}
 	}
@@ -137,6 +167,34 @@ func similarityRelations(recordsByFile map[string][]SymbolRecord, readContent co
 		})
 	}
 	return relations
+}
+
+// maxMinifiedLineLen: a line longer than this marks a file as minified/bundled.
+// Real source lines are short (rarely > a few hundred chars); minified assets pack
+// the whole program onto one line of tens of thousands of characters.
+const maxMinifiedLineLen = 5000
+
+// longestLineLen returns the length (in bytes) of the longest line, scanning once
+// and stopping early once the minified threshold is exceeded.
+func longestLineLen(content string) int {
+	longest, cur := 0, 0
+	for i := 0; i < len(content); i++ {
+		if content[i] == '\n' {
+			if cur > longest {
+				longest = cur
+			}
+			if longest > maxMinifiedLineLen {
+				return longest
+			}
+			cur = 0
+		} else {
+			cur++
+		}
+	}
+	if cur > longest {
+		longest = cur
+	}
+	return longest
 }
 
 func bodyShingles(block string) map[uint64]struct{} {

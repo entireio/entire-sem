@@ -161,3 +161,38 @@ func TestPostgresDomainCastProcedureAndPlaceholders(t *testing.T) {
 		t.Fatalf("surrounding tables dropped: %#v", entities)
 	}
 }
+
+// Regression: a Unicode character that grows under strings.ToLower (e.g. 'İ' ->
+// "i̇", +1 byte) used to drift the keyword offsets in the Postgres SQL masking
+// past the end of the original content and panic with an index-out-of-range.
+// asciiLowerString keeps the byte length stable so offsets stay valid. Reproduces
+// the mono repo crash on GHTDB.DATA.PostgreSQL.sql.
+func TestPostgresUnicodeLowercaseDoesNotPanic(t *testing.T) {
+	src := "-- " + strings.Repeat("İ", 200) + "\n" +
+		"CREATE TABLE t (id int, CONSTRAINT pk PRIMARY KEY (id));\n" +
+		"CREATE POLICY İpol ON t USING (true);\n"
+	// Must not panic.
+	entities, _, _ := TreeSitterParser{}.ParseWithStatus("schema.sql", src)
+	if countEntity(entities, "table", "t") != 1 {
+		t.Errorf("table t missing after unicode-laden comment: %+v", entities)
+	}
+}
+
+func TestAsciiLowerStringPreservesByteLength(t *testing.T) {
+	cases := []string{
+		"PRIMARY KEY",
+		strings.Repeat("İ", 200),
+		"ß DROP TABLE Ω",
+		"plain ascii",
+		"",
+	}
+	for _, in := range cases {
+		out := asciiLowerString(in)
+		if len(out) != len(in) {
+			t.Errorf("length changed for %q: %d -> %d", in, len(in), len(out))
+		}
+	}
+	if asciiLowerString("CREATE Policy İ") != "create policy İ" {
+		t.Errorf("ASCII not lowercased / non-ASCII altered: %q", asciiLowerString("CREATE Policy İ"))
+	}
+}

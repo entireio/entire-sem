@@ -813,6 +813,28 @@ func StreamSnapshot(ctx context.Context, repo, providerVersion string, options P
 			})
 			continue
 		}
+		// Skip minified/bundled files (e.g. site assets like main.js / *.min.js):
+		// their thousands of single-letter symbols in one file form a near-complete
+		// same-file call graph (the dominant relation-count + time blow-up on repos
+		// that vendor web assets), and they are not meaningful source to analyze.
+		if longestLineLen(content) > maxMinifiedLineLen {
+			languageSet[language] = struct{}{}
+			if err := emit(file); err != nil {
+				return err
+			}
+			files = append(files, file)
+			lc := completenessLangs[language]
+			lc.Files++
+			completenessLangs[language] = lc
+			failures = append(failures, PartialFailure{
+				Code:                 "E_MINIFIED",
+				Severity:             "warning",
+				FilePath:             path,
+				EffectOnCompleteness: "file record emitted but symbol parsing skipped",
+				Detail:               "file appears minified/bundled (very long lines); not analyzed as source",
+			})
+			continue
+		}
 		entities, language, parseStatus := parseWithProfile(parser, spec, langSpec, path, content)
 		if language == "" {
 			failures = append(failures, PartialFailure{
@@ -6466,8 +6488,15 @@ type manifestImportResolver struct {
 	phpTypeAmbiguous    map[string]bool
 	phpPSR4Prefixes     []phpPSR4Prefix
 	rustCrateName       string
+	rustCrateNames      map[string]bool
+	rustSrcRoots        []rustSrcRoot
 	rustModules         map[string]string
 	rustAliases         map[string]string
+}
+
+type rustSrcRoot struct {
+	dir   string
+	crate string
 }
 
 type manifestImportResolution struct {
@@ -6505,7 +6534,7 @@ type pythonPackageDirMapping struct {
 }
 
 func buildManifestImportResolver(files []FileRecord, readContent contentReader) manifestImportResolver {
-	resolver := manifestImportResolver{goPackages: map[string]string{}, jsPackageExports: map[string]string{}, jsPackageImports: map[string]string{}, jsImportMap: map[string]string{}, jsModuleFiles: map[string]string{}, pythonSourceRoots: []string{"src"}, pythonModules: map[string]string{}, pythonNamespaces: map[string]bool{}, jvmTypes: map[string]string{}, jvmTypeEvidence: map[string]string{}, csharpNamespaces: map[string]string{}, csharpEvidence: map[string]string{}, csharpAmbiguous: map[string]bool{}, phpTypes: map[string]string{}, phpTypeEvidence: map[string]string{}, phpTypeAmbiguous: map[string]bool{}, rustModules: map[string]string{}, rustAliases: map[string]string{}}
+	resolver := manifestImportResolver{goPackages: map[string]string{}, jsPackageExports: map[string]string{}, jsPackageImports: map[string]string{}, jsImportMap: map[string]string{}, jsModuleFiles: map[string]string{}, pythonSourceRoots: []string{"src"}, pythonModules: map[string]string{}, pythonNamespaces: map[string]bool{}, jvmTypes: map[string]string{}, jvmTypeEvidence: map[string]string{}, csharpNamespaces: map[string]string{}, csharpEvidence: map[string]string{}, csharpAmbiguous: map[string]bool{}, phpTypes: map[string]string{}, phpTypeEvidence: map[string]string{}, phpTypeAmbiguous: map[string]bool{}, rustModules: map[string]string{}, rustAliases: map[string]string{}, rustCrateNames: map[string]bool{}}
 	if content, ok := readContent("go.mod"); ok {
 		resolver.goModule = parseGoModulePath(content)
 	}
@@ -6572,6 +6601,7 @@ func buildManifestImportResolver(files []FileRecord, readContent contentReader) 
 	if content, ok := readContent("pom.xml"); ok {
 		resolver.jvmPackagePrefixes = append(resolver.jvmPackagePrefixes, parsePOMJVMPackagePrefixes(content)...)
 	}
+	var cargoPaths []string
 	var gradleArtifactName string
 	for _, path := range []string{"settings.gradle", "settings.gradle.kts"} {
 		if content, ok := readContent(path); ok {
@@ -6626,6 +6656,9 @@ func buildManifestImportResolver(files []FileRecord, readContent contentReader) 
 		}
 		if strings.EqualFold(filepath.Ext(file.Path), ".rs") {
 			rustPaths = append(rustPaths, filepath.ToSlash(file.Path))
+		}
+		if filepath.Base(file.Path) == "Cargo.toml" {
+			cargoPaths = append(cargoPaths, filepath.ToSlash(file.Path))
 		}
 	}
 	sort.Slice(goPaths, func(i, j int) bool {
@@ -6740,9 +6773,34 @@ func buildManifestImportResolver(files []FileRecord, readContent contentReader) 
 			}
 		}
 	}
+	// Build per-crate src roots from every Cargo.toml [package] (Cargo workspaces
+	// put crates under <crate>/src/, not ./src/). Longest dir first for nearest-match.
+	for _, cp := range cargoPaths {
+		content, ok := readContent(cp)
+		if !ok {
+			continue
+		}
+		name := normalizeRustCrateName(parseCargoPackageName(content))
+		if name == "" {
+			continue
+		}
+		dir := filepath.ToSlash(filepath.Dir(cp))
+		srcDir := "src"
+		if dir != "." && dir != "" {
+			srcDir = dir + "/src"
+		}
+		resolver.rustSrcRoots = append(resolver.rustSrcRoots, rustSrcRoot{dir: srcDir, crate: name})
+		resolver.rustCrateNames[name] = true
+	}
+	sort.Slice(resolver.rustSrcRoots, func(i, j int) bool {
+		return len(resolver.rustSrcRoots[i].dir) > len(resolver.rustSrcRoots[j].dir)
+	})
+	if resolver.rustCrateName != "" {
+		resolver.rustCrateNames[resolver.rustCrateName] = true
+	}
 	sort.Strings(rustPaths)
 	for _, path := range rustPaths {
-		for _, module := range rustModuleKeysForPath(path) {
+		for _, module := range resolver.rustModuleKeysForPath(path) {
 			if _, exists := resolver.rustModules[module]; !exists {
 				resolver.rustModules[module] = path
 			}
@@ -6753,7 +6811,7 @@ func buildManifestImportResolver(files []FileRecord, readContent contentReader) 
 		if !ok {
 			continue
 		}
-		for _, alias := range rustAliasesForFile(path, content) {
+		for _, alias := range resolver.rustAliasesForFile(path, content) {
 			if alias.From != "" && alias.To != "" {
 				resolver.rustAliases[alias.From] = alias.To
 			}
@@ -8438,18 +8496,42 @@ func (resolver manifestImportResolver) resolveRustImport(importingPath, spec str
 	if module == "" {
 		return manifestImportResolution{}, false
 	}
+	// Module keys are crate-qualified (e.g. "tokio::runtime::handle"), so import
+	// specs are resolved relative to the importing file's crate. crate::/self::/
+	// super:: are intra-crate; a bare path whose head is a known workspace crate is
+	// a cross-crate import; everything else (std, third-party deps) is external.
+	importCrate := resolver.crateForPath(importingPath)
 	evidenceKind := "rust_crate_import"
-	if strings.HasPrefix(module, "crate::") {
-		module = strings.TrimPrefix(module, "crate::")
-	} else if resolver.rustCrateName != "" && (module == resolver.rustCrateName || strings.HasPrefix(module, resolver.rustCrateName+"::")) {
-		module = strings.TrimPrefix(strings.TrimPrefix(module, resolver.rustCrateName), "::")
+	var qualified string
+	switch {
+	case module == "crate" || strings.HasPrefix(module, "crate::"):
+		qualified = rustJoinCrateRest(importCrate, strings.TrimPrefix(strings.TrimPrefix(module, "crate"), "::"))
+	case strings.HasPrefix(module, "self::"):
+		qualified = rustJoinCrateRest(resolver.rustCurrentModuleForPath(importingPath), strings.TrimPrefix(module, "self::"))
+	case strings.HasPrefix(module, "super::"):
+		current := resolver.rustCurrentModuleForPath(importingPath)
+		rest := module
+		for strings.HasPrefix(rest, "super::") {
+			rest = strings.TrimPrefix(rest, "super::")
+			if idx := strings.LastIndex(current, "::"); idx >= 0 {
+				current = current[:idx]
+			} else {
+				current = ""
+			}
+		}
+		qualified = rustJoinCrateRest(current, rest)
+	default:
+		head := module
+		if idx := strings.Index(module, "::"); idx >= 0 {
+			head = module[:idx]
+		}
+		if !resolver.rustCrateNames[head] {
+			return manifestImportResolution{}, false
+		}
+		qualified = module
 		evidenceKind = "cargo_package_import"
-	} else if strings.HasPrefix(module, "self::") {
-		module = strings.TrimPrefix(module, "self::")
-	} else {
-		return manifestImportResolution{}, false
 	}
-	path, ok := resolver.resolveRustModulePath(module)
+	path, ok := resolver.resolveRustModulePath(qualified)
 	if !ok || path == filepath.ToSlash(importingPath) {
 		return manifestImportResolution{}, false
 	}
@@ -8464,8 +8546,15 @@ func (resolver manifestImportResolver) resolveRustImport(importingPath, spec str
 
 func (resolver manifestImportResolver) resolveRustModulePath(module string) (string, bool) {
 	module = strings.Trim(module, ":")
+	// No indexed modules (e.g. a Cargo workspace where crates live under
+	// <crate>/src/ rather than ./src/, so rustModuleKeysForPath matched nothing):
+	// resolution can never succeed, so skip the O(depth^2) alias-expansion walk
+	// that would otherwise run — and fail — for every import on large repos.
+	if len(resolver.rustModules) == 0 {
+		return "", false
+	}
 	seen := map[string]bool{}
-	for module != "" {
+	for iters := 0; module != "" && iters < 256; iters++ {
 		if path, ok := resolver.rustModules[module]; ok {
 			return path, true
 		}
@@ -8520,23 +8609,62 @@ func normalizeRustImportSpec(spec string) string {
 	return strings.Trim(spec, ":")
 }
 
-func rustModuleKeysForPath(path string) []string {
-	path = filepath.ToSlash(path)
-	if !strings.HasPrefix(path, "src/") || !strings.HasSuffix(path, ".rs") {
-		return nil
-	}
-	rel := strings.TrimSuffix(strings.TrimPrefix(path, "src/"), ".rs")
+func rustModuleFromRel(rel string) string {
+	rel = strings.TrimSuffix(rel, ".rs")
 	if rel == "lib" || rel == "main" {
+		return ""
+	}
+	rel = strings.TrimSuffix(rel, "/mod")
+	return strings.ReplaceAll(rel, "/", "::")
+}
+
+func rustJoinCrateRest(base, rest string) string {
+	base, rest = strings.Trim(base, ":"), strings.Trim(rest, ":")
+	if base == "" {
+		return rest
+	}
+	if rest == "" {
+		return base
+	}
+	return base + "::" + rest
+}
+
+// rustModuleKeysForPath maps a .rs file to its crate-qualified module key
+// (e.g. tokio/src/runtime/handle.rs -> "tokio::runtime::handle") using the
+// per-crate src roots discovered from every Cargo.toml. Falls back to a bare
+// key for a root-level src/ when no crate metadata is available.
+func (resolver manifestImportResolver) rustModuleKeysForPath(path string) []string {
+	path = filepath.ToSlash(path)
+	if !strings.HasSuffix(path, ".rs") {
 		return nil
 	}
-	if strings.HasSuffix(rel, "/mod") {
-		rel = strings.TrimSuffix(rel, "/mod")
+	for _, sr := range resolver.rustSrcRoots {
+		if strings.HasPrefix(path, sr.dir+"/") {
+			mod := rustModuleFromRel(strings.TrimPrefix(path, sr.dir+"/"))
+			if mod == "" {
+				return []string{sr.crate}
+			}
+			return []string{sr.crate + "::" + mod}
+		}
 	}
-	module := strings.ReplaceAll(rel, "/", "::")
-	if module == "" {
-		return nil
+	if strings.HasPrefix(path, "src/") {
+		mod := rustModuleFromRel(strings.TrimPrefix(path, "src/"))
+		if mod == "" {
+			return nil
+		}
+		return []string{mod}
 	}
-	return []string{module}
+	return nil
+}
+
+func (resolver manifestImportResolver) crateForPath(path string) string {
+	path = filepath.ToSlash(path)
+	for _, sr := range resolver.rustSrcRoots {
+		if strings.HasPrefix(path, sr.dir+"/") {
+			return sr.crate
+		}
+	}
+	return resolver.rustCrateName
 }
 
 type rustAlias struct {
@@ -8544,20 +8672,21 @@ type rustAlias struct {
 	To   string
 }
 
-func rustAliasesForFile(path, content string) []rustAlias {
-	current := rustCurrentModuleForPath(path)
+func (resolver manifestImportResolver) rustAliasesForFile(path, content string) []rustAlias {
+	current := resolver.rustCurrentModuleForPath(path)
+	crate := resolver.crateForPath(path)
 	var aliases []rustAlias
-	aliases = append(aliases, rustPathModuleAliases(path, content, current)...)
-	aliases = append(aliases, rustPubUseAliases(content, current)...)
+	aliases = append(aliases, resolver.rustPathModuleAliases(path, content, current)...)
+	aliases = append(aliases, rustPubUseAliases(content, current, crate)...)
 	return aliases
 }
 
-func rustPathModuleAliases(path, content, current string) []rustAlias {
+func (resolver manifestImportResolver) rustPathModuleAliases(path, content, current string) []rustAlias {
 	re := regexp.MustCompile(`(?m)#\s*\[\s*path\s*=\s*"([^"]+)"\s*\]\s*(?:pub\s+)?mod\s+([A-Za-z_][A-Za-z0-9_]*)\s*;`)
 	var aliases []rustAlias
 	for _, match := range re.FindAllStringSubmatch(content, -1) {
 		targetPath := filepath.ToSlash(filepath.Join(filepath.Dir(path), match[1]))
-		keys := rustModuleKeysForPath(targetPath)
+		keys := resolver.rustModuleKeysForPath(targetPath)
 		if len(keys) == 0 {
 			continue
 		}
@@ -8567,11 +8696,11 @@ func rustPathModuleAliases(path, content, current string) []rustAlias {
 	return aliases
 }
 
-func rustPubUseAliases(content, current string) []rustAlias {
+func rustPubUseAliases(content, current, crate string) []rustAlias {
 	re := regexp.MustCompile(`(?m)^\s*pub\s+use\s+([^;]+);`)
 	var aliases []rustAlias
 	for _, match := range re.FindAllStringSubmatch(content, -1) {
-		source, exported, ok := parseRustPubUseAlias(match[1], current)
+		source, exported, ok := parseRustPubUseAlias(match[1], current, crate)
 		if ok {
 			aliases = append(aliases, rustAlias{From: exported, To: source})
 		}
@@ -8579,7 +8708,7 @@ func rustPubUseAliases(content, current string) []rustAlias {
 	return aliases
 }
 
-func parseRustPubUseAlias(expr, current string) (string, string, bool) {
+func parseRustPubUseAlias(expr, current, crate string) (string, string, bool) {
 	expr = strings.TrimSpace(expr)
 	if expr == "" || strings.Contains(expr, "*") || strings.Contains(expr, "{") || strings.Contains(expr, "}") {
 		return "", "", false
@@ -8590,7 +8719,7 @@ func parseRustPubUseAlias(expr, current string) (string, string, bool) {
 		expr = strings.TrimSpace(expr[:idx])
 	}
 	expr = normalizeRustImportSpec(expr)
-	target := rustNormalizeUsePath(expr, current)
+	target := rustNormalizeUsePath(expr, current, crate)
 	if target == "" {
 		return "", "", false
 	}
@@ -8602,11 +8731,11 @@ func parseRustPubUseAlias(expr, current string) (string, string, bool) {
 	return target, exported, true
 }
 
-func rustNormalizeUsePath(path, current string) string {
+func rustNormalizeUsePath(path, current, crate string) string {
 	path = strings.Trim(path, ": ")
 	switch {
 	case strings.HasPrefix(path, "crate::"):
-		return strings.TrimPrefix(path, "crate::")
+		return rustJoinModule(crate, strings.TrimPrefix(path, "crate::"))
 	case strings.HasPrefix(path, "self::"):
 		return rustJoinModule(current, strings.TrimPrefix(path, "self::"))
 	case strings.HasPrefix(path, "super::"):
@@ -8625,8 +8754,8 @@ func rustNormalizeUsePath(path, current string) string {
 	}
 }
 
-func rustCurrentModuleForPath(path string) string {
-	keys := rustModuleKeysForPath(path)
+func (resolver manifestImportResolver) rustCurrentModuleForPath(path string) string {
+	keys := resolver.rustModuleKeysForPath(path)
 	if len(keys) == 0 {
 		return ""
 	}
