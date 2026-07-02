@@ -3775,6 +3775,17 @@ func entityFromNode(node *sitter.Node, src []byte, language, scope string) (Enti
 	case "function_declaration", "function_item":
 		kind = "function"
 		name = nodeName(node, src)
+		if language == "Kotlin" {
+			// tree-sitter-kotlin has no name field on function_declaration, and on
+			// an extension function (`fun Call<T>.awaitResponse()`) the receiver
+			// type precedes the name, so nodeName's pre-order descent latches onto
+			// the receiver's type_identifier ("Call") instead of the function
+			// name. The function's own name is always the direct simple_identifier
+			// child (the receiver's identifiers sit inside a user_type subtree).
+			if id := firstNamedChildOfType(node, "simple_identifier"); validNode(id) {
+				name = strings.TrimSpace(id.Content(src))
+			}
+		}
 		if scope != "" {
 			kind = "method"
 			name = qualify(scope, name)

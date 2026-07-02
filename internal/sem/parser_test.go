@@ -2003,6 +2003,47 @@ data class User(
 	}
 }
 
+// Kotlin top-level extension functions must emit under their own name, not the
+// receiver type (evidence: on square/retrofit `suspend fun <T> Call<T>
+// .awaitResponse()` and `suspend fun Exception.suspendAndThrow()` in
+// KotlinExtensions.kt were absent — tree-sitter-kotlin has no name field on
+// function_declaration, so the generic name descent returned the receiver's
+// type_identifier).
+func TestKotlinTopLevelExtensionFunctionSymbols(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "KotlinExtensions.kt", `package retrofit2
+
+suspend fun <T : Any> Call<T>.awaitResponse(): Response<T> {
+  return suspendCancellableCoroutine { continuation -> }
+}
+
+internal suspend fun Exception.suspendAndThrow(): Nothing {
+  throw this
+}
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, name := range []string{"awaitResponse", "suspendAndThrow"} {
+		symbol := symbolByKindAndName(snapshot.Symbols, "function", name)
+		if symbol.ID == "" {
+			t.Fatalf("missing extension function symbol %q in %#v", name, snapshot.Symbols)
+		}
+		if symbol.FilePath != "KotlinExtensions.kt" {
+			t.Fatalf("%s file = %q", name, symbol.FilePath)
+		}
+	}
+	// The receiver type must not be misread as the function name.
+	for _, wrong := range []string{"Call", "Exception"} {
+		if symbolByKindAndName(snapshot.Symbols, "function", wrong).ID != "" {
+			t.Fatalf("receiver type %q emitted as a function symbol", wrong)
+		}
+	}
+}
+
 func TestGraphQLSchemaFieldEntities(t *testing.T) {
 	entities, language := TreeSitterParser{}.Parse("schema.graphql", `schema {
   query: Query
