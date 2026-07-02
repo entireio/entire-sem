@@ -3103,12 +3103,16 @@ func receiverCallRelations(from SymbolRecord, block string, methodsByContainer m
 		calls = mergeReceiverCalls(calls, kotlinReceiverCalls(block))
 		kotlinChains = kotlinChainedReceiverCalls(block)
 	}
+	var swiftChains []swiftChainedCall
 	if from.Language == "Swift" {
 		// Force-unwrapped (`self._buffer!.discardReadBytes()`) and
 		// optional-chained (`delegate?.retry(...)`) receivers never match the
 		// generic receiverCallRe, which requires a literal `.` directly after
-		// the receiver name.
+		// the receiver name. Property-chain receivers
+		// (`request.fileio.streamFile(...)`, often spelled across lines) carry
+		// a property hop the flat scanner misreads as an unknown receiver.
 		calls = mergeReceiverCalls(calls, swiftReceiverCalls(block))
+		swiftChains = swiftChainedReceiverCalls(block)
 	}
 	var javaChains []javaCtorChainCall
 	if from.Language == "Java" {
@@ -3137,7 +3141,7 @@ func receiverCallRelations(from SymbolRecord, block string, methodsByContainer m
 		// class-level member types can resolve it hop by hop.
 		csChainCalls = csharpMemberChainCalls(block)
 	}
-	if len(calls) == 0 && len(allReceiverCalls) == 0 && len(chainedCalls) == 0 && len(returnedCalls) == 0 && len(chainedReturnCalls) == 0 && len(deepChainedReturnCalls) == 0 && len(returnedChainCalls) == 0 && len(returnedDeepChainCalls) == 0 && len(rubyBareCalls) == 0 && len(phpStatics) == 0 && len(phpPropCalls) == 0 && len(csChainCalls) == 0 && len(kotlinChains) == 0 && len(javaChains) == 0 {
+	if len(calls) == 0 && len(allReceiverCalls) == 0 && len(chainedCalls) == 0 && len(returnedCalls) == 0 && len(chainedReturnCalls) == 0 && len(deepChainedReturnCalls) == 0 && len(returnedChainCalls) == 0 && len(returnedDeepChainCalls) == 0 && len(rubyBareCalls) == 0 && len(phpStatics) == 0 && len(phpPropCalls) == 0 && len(csChainCalls) == 0 && len(kotlinChains) == 0 && len(javaChains) == 0 && len(swiftChains) == 0 {
 		return nil
 	}
 	varTypes := parameterVarTypes(from.Signature)
@@ -3283,11 +3287,32 @@ func receiverCallRelations(from SymbolRecord, block string, methodsByContainer m
 	// from `self._buffer!....`, bare `delegate?.retry(...)`). Lowest tier: a
 	// same-named parameter or local shadows the property.
 	swiftPropReceivers := map[string]bool{}
+	swiftChainLocalReceivers := map[string]bool{}
+	swiftNestedTypeLocals := map[string]string{}
 	if from.Language == "Swift" {
 		for name, typeName := range swiftTypes.props {
 			if _, exists := varTypes[name]; !exists {
 				varTypes[name] = typeName
 				swiftPropReceivers[name] = true
+			}
+		}
+		// Locals bound from property chains (`let contentRange =
+		// request.headers.range`), typed by hopping declared property types
+		// through the workspace's field symbols. Locals of dotted nested
+		// types (`if let firstRange = contentRange.ranges.first` ->
+		// HTTPFields.Range.Value) resolve by qualified method name in a
+		// dedicated pass below: their type symbols keep the short name, so
+		// the flat tiers cannot look methods up on them.
+		plainChainLocals, dottedChainLocals := swiftChainBoundLocalTypes(block, varTypes, symbolsByShortName)
+		for name, typeName := range plainChainLocals {
+			if _, exists := varTypes[name]; !exists {
+				varTypes[name] = typeName
+				swiftChainLocalReceivers[name] = true
+			}
+		}
+		for name, dotted := range dottedChainLocals {
+			if _, exists := varTypes[name]; !exists {
+				swiftNestedTypeLocals[name] = dotted
 			}
 		}
 	}
@@ -3359,6 +3384,10 @@ func receiverCallRelations(from SymbolRecord, block string, methodsByContainer m
 				if kotlinPropReceivers[call.Receiver] || swiftPropReceivers[call.Receiver] {
 					confidence = 0.8
 					reason = "method call resolved via typed property receiver"
+				}
+				if swiftChainLocalReceivers[call.Receiver] {
+					confidence = 0.75
+					reason = "method call resolved via property-chain-typed local receiver"
 				}
 				sym, ok := firstTypeLikeNamedPreferFile(symbolsByShortName[typeName], typeName, from.FilePath)
 				if !ok {
@@ -3627,6 +3656,127 @@ func receiverCallRelations(from SymbolRecord, block string, methodsByContainer m
 					StartLine: from.StartLine,
 					EndLine:   from.EndLine,
 					Detail:    chain.Detail,
+				}},
+				WarningCodes: []string{},
+			})
+		}
+	}
+	// Swift property-chain receivers (`request.fileio.streamFile(...)`): the
+	// base is a typed variable, the middle hop a declared (stored or computed)
+	// property — including properties added in `extension` blocks, whose field
+	// symbols carry the extended type in their qualified name even when the
+	// extension lives away from the type's file — and the terminal call
+	// resolves against the property's type. An untyped base (route-handler
+	// closure parameters like `app.get { req ... }` carry no annotation) falls
+	// back to the workspace-unique property name, still gated by the tail
+	// method existing on the property's declared type.
+	if from.Language == "Swift" {
+		for _, chain := range swiftChains {
+			key := chain.Property + "." + chain.Method
+			if methodResolved[key] {
+				continue
+			}
+			if chain.Base == "self" || chain.Base == "super" {
+				// The flat scanner already reads `self.prop.method(` as
+				// `prop.method(`, which the stored-property tier types.
+				continue
+			}
+			baseType, baseTyped := varTypes[chain.Base]
+			propType := ""
+			nameOnly := false
+			if baseTyped {
+				propType = swiftFieldTypeOnType(baseType, chain.Property, symbolsByShortName)
+			} else {
+				propType = swiftUniqueFieldType(chain.Property, symbolsByShortName)
+				nameOnly = propType != ""
+			}
+			if propType == "" {
+				continue
+			}
+			var target SymbolRecord
+			resolved := false
+			if sym, ok := firstTypeLikeNamedPreferFile(symbolsByShortName[propType], propType, from.FilePath); ok {
+				if method, _, ok := lookupMethodUpChain(sym.ID, chain.Method, methodsByContainer, superContainerByID); ok {
+					target, resolved = method, true
+				}
+			}
+			if !resolved {
+				// Extension members declared in a different file than their
+				// type are scoped under the extended type's name but never
+				// linked to its container; resolve them by qualified name.
+				target, resolved = swiftUniqueQualifiedMethod(propType, chain.Method, symbolsByShortName)
+			}
+			if !resolved || target.ID == from.ID {
+				continue
+			}
+			confidence, reason, resolution := 0.75, "method call resolved via typed property of chained receiver", "type_inferred"
+			if nameOnly {
+				confidence, reason, resolution = 0.68, "chained receiver typed via workspace-unique Swift property", "name_only"
+			}
+			methodResolved[key] = true
+			scope := "file"
+			if target.FilePath != from.FilePath {
+				scope = "module"
+			}
+			relations = append(relations, RelationRecord{
+				RecordType:    "relation",
+				FromID:        from.ID,
+				ToID:          target.ID,
+				Type:          "CALLS",
+				Confidence:    confidence,
+				Reason:        reason,
+				RelationScope: scope,
+				Resolution:    resolution,
+				TargetKind:    "symbol",
+				Evidence: []Evidence{{
+					Kind:      "call_site",
+					FilePath:  from.FilePath,
+					StartLine: from.StartLine,
+					EndLine:   from.EndLine,
+					Detail:    chain.Detail,
+				}},
+				WarningCodes: []string{},
+			})
+		}
+		// Locals chain-bound to dotted nested types (`if let firstRange =
+		// contentRange.ranges.first` -> HTTPFields.Range.Value): the nested
+		// type's symbol keeps its short name (often ambiguous, e.g. two
+		// `Value` enums per header type), so calls on these receivers resolve
+		// by the method's unique dotted qualified name instead.
+		for _, call := range calls {
+			key := call.Receiver + "." + call.Method
+			if methodResolved[key] {
+				continue
+			}
+			dottedType := swiftNestedTypeLocals[call.Receiver]
+			if dottedType == "" {
+				continue
+			}
+			method, ok := swiftUniqueQualifiedMethod(dottedType, call.Method, symbolsByShortName)
+			if !ok || method.ID == from.ID {
+				continue
+			}
+			methodResolved[key] = true
+			scope := "file"
+			if method.FilePath != from.FilePath {
+				scope = "module"
+			}
+			relations = append(relations, RelationRecord{
+				RecordType:    "relation",
+				FromID:        from.ID,
+				ToID:          method.ID,
+				Type:          "CALLS",
+				Confidence:    0.75,
+				Reason:        "method call resolved via nested-type property-chain local receiver",
+				RelationScope: scope,
+				Resolution:    "type_inferred",
+				TargetKind:    "symbol",
+				Evidence: []Evidence{{
+					Kind:      "call_site",
+					FilePath:  from.FilePath,
+					StartLine: from.StartLine,
+					EndLine:   from.EndLine,
+					Detail:    call.Receiver + "." + call.Method,
 				}},
 				WarningCodes: []string{},
 			})

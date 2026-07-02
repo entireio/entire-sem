@@ -3957,6 +3957,15 @@ func fieldTypeText(node *sitter.Node, src []byte) string {
 			}
 		}
 	}
+	// tree-sitter-swift property_declaration carries the declared type in a
+	// type_annotation child (`var fileio: FileIO { ... }`); its named child is
+	// the type node. Without this, Swift field symbols carry no type text, so
+	// property-chain receiver typing has no cross-file source. No other
+	// routed grammar puts a type_annotation directly under a field node, so
+	// the fallback stays inert elsewhere.
+	if ann := firstNamedChildOfType(node, "type_annotation"); validNode(ann) && ann.NamedChildCount() > 0 {
+		return strings.TrimSpace(ann.NamedChild(0).Content(src))
+	}
 	return ""
 }
 

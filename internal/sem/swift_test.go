@@ -317,11 +317,32 @@ func TestSwiftFileTypeInfo(t *testing.T) {
 final class Other {
     // Same property name with a different type: dropped, not guessed.
     internal var _buffer: EventLoop?
+
+    // Computed property in a type body: the brace body marks it a
+    // property even without modifiers.
+    var mediaType: HTTPMediaType {
+        return .plainText
+    }
+}
+
+extension Request {
+    // Computed property in an extension block.
+    public var fileio: FileIO {
+        return .init(request: self)
+    }
+}
+
+protocol RequestProvider {
+    // Protocol property requirement.
+    var currentRequest: Request { get }
 }
 `
 	info := swiftFileTypeInfo(content)
 	if info.props["delegate"] != "ByteDecoder" || info.props["buffers"] != "CircularBuffer" {
 		t.Fatalf("props = %#v", info.props)
+	}
+	if info.props["mediaType"] != "HTTPMediaType" || info.props["fileio"] != "FileIO" || info.props["currentRequest"] != "Request" {
+		t.Fatalf("computed properties not collected: %#v", info.props)
 	}
 	if _, ok := info.props["_buffer"]; ok {
 		t.Fatalf("conflicting property type not dropped: %#v", info.props)
@@ -371,5 +392,284 @@ func TestSwiftReceiverCallsOperators(t *testing.T) {
 	}
 	if strings.Contains(stripSwiftCodeText(block), "leakedCall") {
 		t.Fatalf("stripSwiftCodeText left multiline string body intact")
+	}
+}
+
+// Swift property-chain receivers (evidence: on vapor/vapor the focus method
+// FileIO.streamFile resolved 0/5 inbound CALLS edges): every caller spells
+// `request.fileio.streamFile(...)` / `req.fileio.streamFile(...)`, where
+// `fileio` is a computed property declared in `extension Request` — in the
+// callee's file, not the callers' — and `req` is an unannotated route-handler
+// closure parameter. The outbound edges from streamFile hop through locals
+// bound from property chains (`if let firstRange = contentRange.ranges.first`)
+// into extension methods on dotted nested types (HTTPFields.Range.Value).
+func TestSwiftPropertyChainReceiverCalls(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "Sources/Vapor/Request/Request.swift", `public final class Request: Sendable {
+    public var headers: HTTPFields {
+        get { self.requestBox.headers }
+        set { self.requestBox.headers = newValue }
+    }
+
+    public var url: URI = .init()
+}
+`)
+	writeFile(t, repo, "Sources/Vapor/Utilities/FileIO.swift", `extension Request {
+    public var fileio: FileIO {
+        return .init(request: self)
+    }
+}
+
+public struct FileIO: Sendable {
+    let request: Request
+
+    public func streamFile(
+        at path: String,
+        mediaType: HTTPMediaType? = nil,
+        advancedETagComparison: Bool = false,
+        onCompleted: @escaping @Sendable (Result<Void, any Error>) async throws -> () = { _ in }
+    ) async throws -> Response {
+        let contentRange: HTTPFields.Range?
+        if let rangeFromHeaders = request.headers.range {
+            contentRange = rangeFromHeaders
+        } else {
+            contentRange = nil
+        }
+        let response = Response(status: .ok)
+        if let contentRange = contentRange {
+            if let firstRange = contentRange.ranges.first {
+                let range = try firstRange.asResponseContentRange(limit: 100)
+                let text = firstRange.serialize()
+                response.headers.contentRange = HTTPFields.ContentRange(range: range, text: text)
+            }
+        }
+        if
+            let fileExtension = path.components(separatedBy: ".").last,
+            let type = mediaType ?? HTTPMediaType.fileExtension(fileExtension)
+        {
+            response.headers.contentType = type
+        }
+        return response
+    }
+}
+`)
+	writeFile(t, repo, "Sources/Vapor/HTTP/HTTPFields+ContentRange.swift", `extension HTTPFields {
+    public struct Range: Sendable, Equatable {
+        public let unit: RangeUnit
+        public let ranges: [HTTPFields.Range.Value]
+
+        public init(unit: RangeUnit, ranges: [HTTPFields.Range.Value]) {
+            self.unit = unit
+            self.ranges = ranges
+        }
+    }
+
+    public struct ContentRange: Equatable {
+        public let range: HTTPFields.ContentRange.Value
+    }
+
+    public var range: Range? {
+        get {
+            return HTTPFields.Range(directives: self.parseDirectives(name: .range))
+        }
+        set {
+            self[.range] = newValue.serialize()
+        }
+    }
+}
+
+extension HTTPFields.Range {
+    public enum Value: Sendable, Equatable {
+        case start(value: Int)
+        case tail(value: Int)
+
+        public func serialize() -> String {
+            return ""
+        }
+    }
+}
+
+extension HTTPFields.ContentRange {
+    public enum Value: Equatable {
+        case within(start: Int, end: Int)
+
+        public func serialize() -> String {
+            return ""
+        }
+    }
+}
+
+extension HTTPFields.Range.Value {
+    public func asResponseContentRange(limit: Int) throws -> HTTPFields.ContentRange.Value {
+        return .within(start: 0, end: limit)
+    }
+}
+`)
+	writeFile(t, repo, "Sources/Vapor/HTTP/HTTPMediaType.swift", `public struct HTTPMediaType: Sendable, Equatable {
+    public let type: String
+    public let subType: String
+
+    public static func fileExtension(_ ext: String) -> HTTPMediaType? {
+        fileExtensionMediaTypeMapping[ext]
+    }
+}
+
+let fileExtensionMediaTypeMapping: [String: HTTPMediaType] = [:]
+`)
+	writeFile(t, repo, "Sources/Vapor/Middleware/FileMiddleware.swift", `public final class FileMiddleware {
+    private let publicDirectory: String
+
+    public func respond(to request: Request, chainingTo next: any Responder) async throws -> Response {
+        let absPath = self.publicDirectory + request.url.path
+        return try await request
+            .fileio
+            .streamFile(at: absPath, advancedETagComparison: true)
+            .cachePolicy(cachePolicy)
+    }
+}
+`)
+	writeFile(t, repo, "Tests/VaporTests/FileTests.swift", `import Testing
+
+struct FileTests {
+    @Test("Test Stream File")
+    func testStreamFile() async throws {
+        try await withApp { app in
+            app.get("file-stream") { req -> Response in
+                return try await req.fileio.streamFile(at: #filePath, advancedETagComparison: true) { result in
+                    do {
+                        try result.get()
+                    } catch {
+                        Issue.record("File Stream should have succeeded")
+                    }
+                }
+            }
+        }
+    }
+
+    @Test("Test Stream File Trailing Closure")
+    func testStreamFileTrailingClosure() async throws {
+        try await withApp { app in
+            app.get("file-stream") { req -> Response in
+                return try await req.fileio!.streamFile { result in
+                    try result.get()
+                }
+            }
+        }
+    }
+
+    @Test("Wrong-typed base never falls back to the unique property")
+    func testWrongBase() async throws {
+        let media = HTTPMediaType(type: "text", subType: "plain")
+        _ = media.fileio.streamFile(at: "x")
+    }
+
+    @Test("Deep chains are skipped, not guessed")
+    func testDeepChain() async throws {
+        let holder = Holder()
+        _ = try await holder.request.fileio.streamFile(at: "x")
+    }
+}
+
+struct Holder {
+    let request: Request
+
+    init() {}
+}
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	calls := map[string]RelationRecord{}
+	for _, r := range snapshot.Relations {
+		if r.Type == "CALLS" {
+			calls[lastSegment(r.FromID)+"->"+lastSegment(r.ToID)] = r
+		}
+	}
+
+	// Typed-base chain across files, spelled over several lines with a further
+	// call after the tail: `request\n.fileio\n.streamFile(...)\n.cachePolicy(...)`.
+	// `fileio` is a computed property declared in `extension Request` in the
+	// callee's file.
+	if r, ok := calls["FileMiddleware.respond->FileIO.streamFile"]; !ok || r.Reason != "method call resolved via typed property of chained receiver" || r.Resolution != "type_inferred" {
+		t.Fatalf("typed-base property chain not resolved: %#v", calls)
+	}
+	// Untyped base (route-handler closure parameter `req`): the hop resolves
+	// through the workspace-unique `fileio` property, gated by streamFile
+	// existing on its declared type.
+	if r, ok := calls["FileTests.testStreamFile->FileIO.streamFile"]; !ok || r.Reason != "chained receiver typed via workspace-unique Swift property" || r.Resolution != "name_only" {
+		t.Fatalf("unique-property chain (untyped base) not resolved: %#v", calls)
+	}
+	// Force-unwrapped hop with a bare trailing closure: `req.fileio!.streamFile { ... }`.
+	if _, ok := calls["FileTests.testStreamFileTrailingClosure->FileIO.streamFile"]; !ok {
+		t.Fatalf("trailing-closure chain not resolved: %#v", calls)
+	}
+	// Local bound from a property chain with an array `first` hop
+	// (`if let firstRange = contentRange.ranges.first`), calling an extension
+	// method on a dotted nested type (HTTPFields.Range.Value): resolves by the
+	// method's unique qualified name.
+	if r, ok := calls["FileIO.streamFile->HTTPFields.Range.Value.asResponseContentRange"]; !ok || r.Reason != "method call resolved via nested-type property-chain local receiver" {
+		t.Fatalf("nested-type chain-bound local not resolved: %#v", calls)
+	}
+	// Static call on the named type keeps resolving (regression guard for the
+	// second vapor outbound miss).
+	if _, ok := calls["FileIO.streamFile->HTTPMediaType.fileExtension"]; !ok {
+		t.Fatalf("static call on named type not resolved: %#v", calls)
+	}
+	// `firstRange.serialize()` is ambiguous by short qualified name (both
+	// nested Value enums declare serialize): resolved to nothing, not guessed.
+	if _, ok := calls["FileIO.streamFile->Value.serialize"]; ok {
+		t.Fatalf("ambiguous nested-type method guessed: %#v", calls)
+	}
+	// A typed base whose type does not declare the property never falls back
+	// to the workspace-unique property name.
+	if _, ok := calls["FileTests.testWrongBase->FileIO.streamFile"]; ok {
+		t.Fatalf("wrong-typed base fell back to unique property: %#v", calls)
+	}
+	// Deep chains (`holder.request.fileio.streamFile(...)`) are skipped.
+	if _, ok := calls["FileTests.testDeepChain->FileIO.streamFile"]; ok {
+		t.Fatalf("deep chain guessed: %#v", calls)
+	}
+}
+
+func TestSwiftChainedReceiverCalls(t *testing.T) {
+	block := `
+        return try await request
+            .fileio
+            .streamFile(at: absPath, advancedETagComparison: comparison)
+            .cachePolicy(cachePolicy)
+        req.fileio?.streamFile { result in }
+        socket!.channel.close(promise: nil)
+        res.body.string.contains(test)
+        f().handler.run()
+        let text = """
+            masked.prop.leakedCall()
+            """
+`
+	chains := swiftChainedReceiverCalls(block)
+	byDetail := map[string]swiftChainedCall{}
+	for _, c := range chains {
+		byDetail[c.Detail] = c
+	}
+	if _, ok := byDetail["request.fileio.streamFile"]; !ok {
+		t.Fatalf("multi-line chain missed: %#v", chains)
+	}
+	if _, ok := byDetail["req.fileio.streamFile"]; !ok {
+		t.Fatalf("optional-chained trailing-closure chain missed: %#v", chains)
+	}
+	if _, ok := byDetail["socket.channel.close"]; !ok {
+		t.Fatalf("force-unwrapped chain missed: %#v", chains)
+	}
+	for detail := range byDetail {
+		switch {
+		case strings.Contains(detail, "contains"):
+			t.Fatalf("deep chain tail bound as a chain: %#v", chains)
+		case strings.Contains(detail, "run"):
+			t.Fatalf("call-result receiver bound as a chain base: %#v", chains)
+		case strings.Contains(detail, "leakedCall"):
+			t.Fatalf("multiline string body leaked a chain site: %#v", chains)
+		}
 	}
 }
