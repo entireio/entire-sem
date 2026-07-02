@@ -6856,6 +6856,168 @@ func (as *authStore) AuthInfoFromCtx(ctx context.Context) (*Info, error) {
 	}
 }
 
+func TestGoMultiAssignedReceiverCallResolvesViaCalleeFirstResult(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "go.mod", "module example.com/cobralike\n\ngo 1.21\n")
+	// `cmd` is typed only by the multi-value assignment from Find's first
+	// result. A same-named method on another package's type defeats the
+	// globally-unique-name fallback, so the edge only resolves when the
+	// multi-assign receiver is actually typed.
+	writeFile(t, repo, "cli/command.go", `package cli
+
+type Command struct{}
+
+func (c *Command) Find(args []string) (*Command, []string, error) {
+	return c, args, nil
+}
+
+func (c *Command) execute(a []string) error { return nil }
+
+func (c *Command) Run(args []string) error {
+	cmd, flags, err := c.Find(args)
+	if err != nil {
+		return err
+	}
+	return cmd.execute(flags)
+}
+`)
+	writeFile(t, repo, "worker/worker.go", `package worker
+
+type Job struct{}
+
+func (j *Job) execute(a []string) error { return nil }
+`)
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasRelationByLastSegmentWithResolution(snapshot.Relations, "CALLS", "Command.Run", "Command.execute", "type_inferred") {
+		t.Fatalf("multi-assigned receiver call cmd.execute() not resolved through Find's first result type: %#v", snapshot.Relations)
+	}
+	for _, r := range snapshot.Relations {
+		if r.Type == "CALLS" && lastSegment(r.FromID) == "Command.Run" && strings.Contains(r.ToID, "worker/worker.go") {
+			t.Fatalf("multi-assigned receiver call bound to the wrong package's method: %s -> %s (%s)", r.FromID, r.ToID, r.Reason)
+		}
+	}
+}
+
+func TestGoNamedResultReceiverCallResolvesViaSignature(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "go.mod", "module example.com/cobralike\n\ngo 1.21\n")
+	// `st` is typed only by the named result declaration `(st *Store, err
+	// error)`: the assignment `st = s.lookup()` is receiver-qualified, which
+	// neither the constructor scan nor the factory-assignment scan types. A
+	// same-named method elsewhere defeats the unique-name fallback.
+	writeFile(t, repo, "registry/registry.go", `package registry
+
+type Store struct{}
+
+func (s *Store) lookup() *Store { return s }
+
+func (s *Store) refresh() error { return nil }
+
+func (s *Store) Sync() (st *Store, err error) {
+	st = s.lookup()
+	return st, st.refresh()
+}
+`)
+	writeFile(t, repo, "cache/cache.go", `package cache
+
+type Cache struct{}
+
+func (c *Cache) refresh() error { return nil }
+`)
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasRelationByLastSegmentWithResolution(snapshot.Relations, "CALLS", "Store.Sync", "Store.refresh", "type_inferred") {
+		t.Fatalf("named-result receiver call st.refresh() not resolved through the signature's result type: %#v", snapshot.Relations)
+	}
+	for _, r := range snapshot.Relations {
+		if r.Type == "CALLS" && lastSegment(r.FromID) == "Store.Sync" && strings.Contains(r.ToID, "cache/cache.go") {
+			t.Fatalf("named-result receiver call bound to the wrong package's method: %s -> %s (%s)", r.FromID, r.ToID, r.Reason)
+		}
+	}
+}
+
+func TestGoPackageQualifiedSubpackageCallsResolveAcrossPackageFiles(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "go.mod", "module example.com/hugolike\n\ngo 1.21\n")
+	// Both callees live in a NON-representative file of their package (the
+	// import resolver records the alphabetically first non-test file —
+	// handlerdefault.go / finder.go), so `pkg.Fn(...)` only resolves when
+	// import matching is package-directory granular. WalkDeep is called from
+	// inside a func literal.
+	writeFile(t, repo, "hugolib/map.go", `package hugolib
+
+import (
+	"example.com/hugolike/common/loggers"
+	"example.com/hugolike/identity"
+)
+
+type Sites struct{}
+
+func (h *Sites) resolveState(changes []string) error {
+	for _, change := range changes {
+		fn := func() bool {
+			identity.WalkDeep(change)
+			return false
+		}
+		_ = fn()
+	}
+	return loggers.TimeTrack(changes)
+}
+`)
+	writeFile(t, repo, "common/loggers/handlerdefault.go", `package loggers
+
+func Handler() {}
+`)
+	writeFile(t, repo, "common/loggers/logger.go", `package loggers
+
+func TimeTrack(v []string) error { return nil }
+`)
+	writeFile(t, repo, "identity/finder.go", `package identity
+
+func Find() {}
+`)
+	writeFile(t, repo, "identity/identity.go", `package identity
+
+func WalkDeep(v string) {}
+`)
+	writeFile(t, repo, "util/track.go", `package util
+
+func TimeTrack(v []string) error { return nil }
+`)
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertQualifiedCall := func(calleeFile, callee string) {
+		t.Helper()
+		for _, r := range snapshot.Relations {
+			if r.Type == "CALLS" && lastSegment(r.FromID) == "Sites.resolveState" &&
+				strings.Contains(r.ToID, calleeFile+":function:"+callee) && r.Resolution == "import_resolved" {
+				return
+			}
+		}
+		t.Fatalf("package-qualified call to %s (%s) not resolved through the imported package directory: %#v", callee, calleeFile, snapshot.Relations)
+	}
+	assertQualifiedCall("common/loggers/logger.go", "TimeTrack")
+	assertQualifiedCall("identity/identity.go", "WalkDeep")
+	for _, r := range snapshot.Relations {
+		if r.Type != "CALLS" || lastSegment(r.FromID) != "Sites.resolveState" {
+			continue
+		}
+		if strings.Contains(r.ToID, "util/track.go") {
+			t.Fatalf("package-qualified call bound to a same-named function outside the imported package: %s -> %s (%s)", r.FromID, r.ToID, r.Reason)
+		}
+		if strings.Contains(r.ToID, "external:symbol:example.com/hugolike/") {
+			t.Fatalf("in-module package-qualified call left as an external edge: %s -> %s (%s)", r.FromID, r.ToID, r.Reason)
+		}
+	}
+}
+
 func TestGoInterfaceReturnedCallResolvesUniqueImplementingMethod(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "go.mod", "module example.com/etcdlike\n\ngo 1.21\n")

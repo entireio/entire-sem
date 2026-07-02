@@ -2861,3 +2861,237 @@ func importPathsInModule(paths []string, goModule string) bool {
 	}
 	return false
 }
+
+// goSignatureResultList returns the result-list text of a collapsed Go
+// function/method signature and whether it was parenthesized. The receiver
+// group, function name (with any type-parameter list), and parameter group
+// are skipped positionally, so the extraction is exact where
+// splitSignatureTypes — which keys off the signature's first "(" and
+// therefore treats a method receiver as the parameter list — is not.
+func goSignatureResultList(signature string) (string, bool) {
+	rest, ok := strings.CutPrefix(strings.TrimSpace(signature), "func")
+	if !ok {
+		return "", false
+	}
+	rest = strings.TrimSpace(rest)
+	if strings.HasPrefix(rest, "(") { // method receiver
+		close := matchingParen(rest, 0)
+		if close < 0 {
+			return "", false
+		}
+		rest = strings.TrimSpace(rest[close+1:])
+	}
+	i := 0 // function name
+	for i < len(rest) && identifierByte(rest[i]) && rest[i] != '.' {
+		i++
+	}
+	if i == 0 {
+		return "", false
+	}
+	rest = rest[i:]
+	if strings.HasPrefix(rest, "[") { // type-parameter list
+		depth, j := 0, 0
+		for ; j < len(rest); j++ {
+			switch rest[j] {
+			case '[':
+				depth++
+			case ']':
+				depth--
+			}
+			if depth == 0 {
+				break
+			}
+		}
+		if j >= len(rest) {
+			return "", false
+		}
+		rest = rest[j+1:]
+	}
+	rest = strings.TrimSpace(rest)
+	if !strings.HasPrefix(rest, "(") { // parameter list
+		return "", false
+	}
+	close := matchingParen(rest, 0)
+	if close < 0 {
+		return "", false
+	}
+	results := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(rest[close+1:]), "{"))
+	if strings.HasPrefix(results, "(") {
+		end := matchingParen(results, 0)
+		if end < 0 {
+			return "", false
+		}
+		return strings.TrimSpace(results[1:end]), true
+	}
+	return results, false
+}
+
+// goBareTypeName reduces a Go type expression to its bare short type name
+// (`*Command` -> Command, `[]*pkg.Item` -> Item), returning "" for builtin
+// results and shapes that cannot type a receiver (func types, maps, chans).
+func goBareTypeName(typeText string) string {
+	typeText = strings.TrimSpace(typeText)
+	for {
+		switch {
+		case strings.HasPrefix(typeText, "*"), strings.HasPrefix(typeText, "&"):
+			typeText = typeText[1:]
+		case strings.HasPrefix(typeText, "[]"):
+			typeText = typeText[2:]
+		case strings.HasPrefix(typeText, "..."):
+			typeText = typeText[3:]
+		default:
+			if i := strings.LastIndex(typeText, "."); i >= 0 {
+				typeText = typeText[i+1:]
+			}
+			if !isTypeName(typeText) || !likelyUserTypeName(typeText) {
+				return ""
+			}
+			return typeText
+		}
+	}
+}
+
+// goResultListNamed reports whether a parenthesized Go result list declares
+// named results. Go results are either all named or all unnamed, so one
+// explicit name+type entry marks the whole list.
+func goResultListNamed(entries []string) bool {
+	for _, entry := range entries {
+		if len(strings.Fields(entry)) >= 2 {
+			return true
+		}
+	}
+	return false
+}
+
+// goNamedResultVarTypes maps a Go signature's named result parameters to
+// their bare type names (`func (c *Command) ExecuteC() (cmd *Command, err
+// error)` types cmd as Command). Named results declare typed locals exactly
+// like parameters; bare entries share the next explicit type, mirroring
+// grouped parameters (`a, b int`).
+func goNamedResultVarTypes(signature string) map[string]string {
+	out := map[string]string{}
+	results, parenthesized := goSignatureResultList(signature)
+	if !parenthesized || results == "" {
+		return out
+	}
+	entries := splitTopLevelCommas(results)
+	if !goResultListNamed(entries) {
+		return out
+	}
+	carried := ""
+	for i := len(entries) - 1; i >= 0; i-- {
+		fields := strings.Fields(entries[i])
+		if len(fields) == 0 {
+			continue
+		}
+		if len(fields) >= 2 {
+			carried = goBareTypeName(strings.Join(fields[1:], " "))
+		}
+		name := fields[0]
+		if carried == "" || name == "_" || !isTypeName(name) {
+			continue
+		}
+		out[name] = carried
+	}
+	return out
+}
+
+// goFirstResultType returns the bare type name of a Go signature's first
+// result (`func (c *Command) Find(args []string) (*Command, []string,
+// error)` -> Command), or "" when there is none or it is not a plain named
+// type.
+func goFirstResultType(signature string) string {
+	results, parenthesized := goSignatureResultList(signature)
+	if results == "" {
+		return ""
+	}
+	if !parenthesized {
+		return goBareTypeName(results)
+	}
+	entries := splitTopLevelCommas(results)
+	if len(entries) == 0 {
+		return ""
+	}
+	if !goResultListNamed(entries) {
+		return goBareTypeName(entries[0])
+	}
+	// Named list: the first result's type is its own explicit type or the
+	// next explicit one (`a, b Type`).
+	for _, entry := range entries {
+		if fields := strings.Fields(entry); len(fields) >= 2 {
+			return goBareTypeName(strings.Join(fields[1:], " "))
+		}
+	}
+	return ""
+}
+
+// goMultiAssignRe matches a statement-position Go multi-value assignment
+// whose right-hand side is a single (possibly receiver-qualified) call:
+// `cmd, flags, err := c.Find(args)` / `cmd, flags, err = c.Traverse(args)`,
+// including the `if v, ok := f(); ...` header form. The first assigned
+// variable and the called name are captured.
+var goMultiAssignRe = regexp.MustCompile(`(?m)(?:^|;)[^\S\n]*(?:(?:if|for)\s+)?([A-Za-z_]\w*)(?:\s*,\s*[A-Za-z_]\w*)+\s*:?=\s*(?:[A-Za-z_]\w*\s*\.\s*)*([A-Za-z_]\w*)\s*\(`)
+
+// goMultiAssignReturnVarTypes types the first variable of Go multi-value
+// assignments from the called function's declared first result — the generic
+// factory-assignment scan (factoryReturnVarTypes) matches only
+// single-variable, unqualified factories, so receivers like the `cmd` of
+// `cmd, flags, err := c.Find(args)` stayed untyped.
+func goMultiAssignReturnVarTypes(block string, from SymbolRecord, symbolsByShortName map[string][]SymbolRecord) map[string]string {
+	stripped := stripCodeLiteralsAndComments(block)
+	out := map[string]string{}
+	for _, m := range goMultiAssignRe.FindAllStringSubmatch(stripped, -1) {
+		if len(m) != 3 {
+			continue
+		}
+		name, callee := m[1], m[2]
+		if name == "" || name == "_" {
+			continue
+		}
+		if _, exists := out[name]; exists {
+			continue
+		}
+		if typeName := goFirstResultTypeForCallable(callee, from, symbolsByShortName); typeName != "" {
+			out[name] = typeName
+		}
+	}
+	return out
+}
+
+// goFirstResultTypeForCallable resolves a called short name to its declared
+// first result type. Candidates are tiered the same way receiver-call
+// resolution tiers targets — same file, then the caller's directory (a Go
+// package spans a directory), then the workspace — and a tier only answers
+// when every candidate in it agrees.
+func goFirstResultTypeForCallable(name string, from SymbolRecord, symbolsByShortName map[string][]SymbolRecord) string {
+	var sameFile, sameDir, workspace []string
+	dir := filepath.ToSlash(filepath.Dir(from.FilePath))
+	for _, candidate := range symbolsByShortName[name] {
+		if candidate.Language != "Go" || (candidate.Kind != "function" && candidate.Kind != "method") {
+			continue
+		}
+		typeName := goFirstResultType(candidate.Signature)
+		if typeName == "" {
+			continue
+		}
+		workspace = append(workspace, typeName)
+		if candidate.FilePath == from.FilePath {
+			sameFile = append(sameFile, typeName)
+		} else if filepath.ToSlash(filepath.Dir(candidate.FilePath)) == dir {
+			sameDir = append(sameDir, typeName)
+		}
+	}
+	for _, tier := range [][]string{sameFile, sameDir, workspace} {
+		if len(tier) == 0 {
+			continue
+		}
+		agreed := tier[0]
+		for _, typeName := range tier[1:] {
+			if typeName != agreed {
+				return ""
+			}
+		}
+		return agreed
+	}
+	return ""
+}

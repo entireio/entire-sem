@@ -3162,7 +3162,31 @@ func receiverCallRelations(from SymbolRecord, block string, methodsByContainer m
 	for name, typeName := range localTypes {
 		varTypes[name] = typeName
 	}
+	if from.Language == "Go" {
+		// Named result parameters (`func (c *Command) ExecuteC() (cmd
+		// *Command, err error)`) declare typed locals exactly like
+		// parameters, but the generic parameter scan reads the signature's
+		// first paren group — a method's receiver — so `cmd.execute()`
+		// receivers stayed untyped. Parameters and constructor-typed locals
+		// win; named results fill the gaps.
+		for name, typeName := range goNamedResultVarTypes(from.Signature) {
+			if _, exists := varTypes[name]; !exists {
+				varTypes[name] = typeName
+			}
+		}
+	}
 	factoryTypes := factoryReturnVarTypes(block, from.FilePath, returnTypesBySymbolNameAndFile)
+	if from.Language == "Go" {
+		// Multi-value assignments (`cmd, flags, err := c.Find(args)`) type
+		// their first variable from the callee's declared first result; the
+		// generic factory-assignment scan matches only single-variable,
+		// unqualified factories.
+		for name, typeName := range goMultiAssignReturnVarTypes(block, from, symbolsByShortName) {
+			if _, exists := factoryTypes[name]; !exists {
+				factoryTypes[name] = typeName
+			}
+		}
+	}
 	if from.Language == "PHP" {
 		// `$v = $this->factory()` receivers typed by the factory's declared
 		// return type, the PHP spelling of the factory-assignment tier above.
@@ -10438,6 +10462,18 @@ func importModuleMatchesFile(module, importingPath, targetPath string) bool {
 		base := filepath.ToSlash(filepath.Join(filepath.Dir(importingPath), module))
 		target := strings.TrimSuffix(targetPath, filepath.Ext(targetPath))
 		return target == base || (strings.HasSuffix(target, "/index") && strings.TrimSuffix(target, "/index") == base)
+	}
+	if strings.HasSuffix(module, ".go") && strings.HasSuffix(targetPath, ".go") {
+		// A Go import names a package — every non-test .go file in a
+		// directory — but resolveGoImport records one representative file per
+		// package, so symbols declared in sibling files of the imported
+		// package never matched (hugo's `loggers.TimeTrackfn` resolved only
+		// when the callee happened to live in the representative file). When
+		// the resolved module entry is a .go file, any non-test sibling in
+		// its directory belongs to the imported package; test files are not
+		// importable.
+		return !strings.HasSuffix(targetPath, "_test.go") &&
+			filepath.ToSlash(filepath.Dir(module)) == filepath.ToSlash(filepath.Dir(targetPath))
 	}
 	module = strings.TrimPrefix(module, "@/")
 	module = strings.TrimPrefix(module, "src/")
