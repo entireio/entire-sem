@@ -572,7 +572,7 @@ func supportsCallExtraction(spec languageSpec) bool {
 		return false
 	}
 	switch spec.language {
-	case "Bash", "C", "C++", "C#", "Dart", "Elixir", "Erlang", "Go", "Groovy", "Java", "JavaScript", "Kotlin", "Lua", "OCaml", "PHP", "Python", "Ruby", "Rust", "Scala", "Swift", "TypeScript", "Zsh":
+	case "Bash", "C", "C++", "C#", "Dart", "Elixir", "Erlang", "Go", "Groovy", "Haskell", "Java", "JavaScript", "Kotlin", "Lua", "OCaml", "PHP", "Python", "Ruby", "Rust", "Scala", "Swift", "TypeScript", "Zsh":
 		return true
 	default:
 		return false
@@ -2145,6 +2145,14 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 			// calls (`$this->prop->method()`) can resolve.
 			phpPropTypes = phpPropertyTypes(content)
 		}
+		var hsImports haskellFileImports
+		if file.Language == "Haskell" && fileNeedsCallScan {
+			// Import declarations live at the top of the file, outside any
+			// binding's block: parse them once per file so qualified
+			// applications (`Utils.fn` via `import qualified ... as Utils`)
+			// and imported bare names can resolve.
+			hsImports = haskellImports(content)
+		}
 		var kotlinPropTypes map[string]string
 		if file.Language == "Kotlin" && spec.callResolution == "full" {
 			// Kotlin property types live at the class level too (primary
@@ -2180,6 +2188,16 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 					for _, r := range ocamlCallRelations(from, block, currentFileSymbols, symbolsByShortName) {
 						emit(r)
 					}
+				}
+			} else if fileNeedsCallScan && !typeLikeKind(from.Kind) && file.Language == "Haskell" {
+				// Haskell applies functions by whitespace (`fn arg`, `fn $
+				// arg`, `Alias.fn arg`), so the generic `name(` scanner sees
+				// almost no Haskell call sites; a dedicated scanner reads
+				// applications directly, resolves qualified names through the
+				// file's import aliases, and resolves bare names against
+				// same-file bindings and the import section.
+				for _, r := range haskellCallRelations(from, block, currentFileSymbols, symbolsByShortName, hsImports) {
+					emit(r)
 				}
 			} else if fileNeedsCallScan && !typeLikeKind(from.Kind) {
 				callBlock := block
@@ -2456,7 +2474,12 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 		// (extracted as symbols and scanned by the dedicated OCaml pass), so
 		// what remains at top level is declarations — opens, type definitions,
 		// signatures — whose `name (` sequences are type syntax, not calls.
-		if fileNeedsCallScan && file.Language != "Erlang" && file.Language != "OCaml" {
+		// Haskell matches the same shape: all expressions live in top-level
+		// bindings (extracted as symbols and scanned by the dedicated Haskell
+		// pass), and what remains at top level — module/export lists, imports
+		// like `hiding (doesFileExist)`, class/instance heads — would only
+		// register bogus file->symbol call sites.
+		if fileNeedsCallScan && file.Language != "Erlang" && file.Language != "OCaml" && file.Language != "Haskell" {
 			topLevel := stripDeclarationOnlyCallSignatures(file.Language, topLevelBlockFromLines(lines, currentFileSymbols))
 			if file.Language == "Rust" {
 				topLevel = stripRustCodegenMacroBodies(topLevel)
