@@ -3137,9 +3137,54 @@ func walkEntitiesScoped(node *sitter.Node, src []byte, language, scope string, i
 			childScope = t
 		}
 	}
+	// A Swift `extension Foo { ... }` block is likewise not a symbol itself
+	// (entityFromNode skips it), but it scopes its members to the extended type
+	// so they emit as Foo.method and resolve against the primary declaration.
+	if language == "Swift" && node.Type() == "class_declaration" && swiftExtensionDeclaration(node) {
+		if t := swiftExtensionTypeName(node, src); t != "" {
+			childScope = t
+		}
+	}
 	for i := 0; i < int(node.NamedChildCount()); i++ {
 		walkEntitiesScoped(node.NamedChild(i), src, language, childScope, childInFunc, entities)
 	}
+}
+
+// swiftExtensionDeclaration reports whether a tree-sitter-swift
+// class_declaration node is an `extension` block (the grammar reuses one node
+// type for class/struct/enum/actor/extension; the introducing keyword is the
+// first child).
+func swiftExtensionDeclaration(node *sitter.Node) bool {
+	if node.Type() != "class_declaration" {
+		return false
+	}
+	for i := 0; i < int(node.ChildCount()); i++ {
+		switch node.Child(i).Type() {
+		case "modifiers", "attribute":
+			continue // `public extension Foo`, `@retroactive extension ...`
+		case "extension":
+			return true
+		default:
+			return false
+		}
+	}
+	return false
+}
+
+// swiftExtensionTypeName returns the extended type of a Swift extension block
+// (the user_type after the `extension` keyword; `extension Foo.Bar` keeps its
+// dotted path). Generic arguments are cut so `extension Array<Element>` scopes
+// to Array.
+func swiftExtensionTypeName(node *sitter.Node, src []byte) string {
+	t := firstNamedChildOfType(node, "user_type")
+	if !validNode(t) {
+		return ""
+	}
+	name := strings.TrimSpace(t.Content(src))
+	if idx := strings.IndexByte(name, '<'); idx >= 0 {
+		name = strings.TrimSpace(name[:idx])
+	}
+	return name
 }
 
 // zigContainerKind classifies a Zig variable_declaration whose value is a
@@ -3667,6 +3712,17 @@ func entityFromNode(node *sitter.Node, src []byte, language, scope string) (Enti
 		// declarations (headers are full of them); the class symbol comes from
 		// class_interface / class_implementation, so forward decls are skipped.
 		if language == "Objective-C" && node.Type() == "class_declaration" {
+			return Entity{}, false
+		}
+		// tree-sitter-swift reuses `class_declaration` for `extension Foo { ... }`
+		// blocks. An extension declares no new type — emitting it produced a
+		// duplicate class symbol per extension (same name as the primary
+		// struct/class), which forced #sig-suffixed IDs, pointed members'
+		// container_id at the extension instead of the real type, and broke the
+		// "globally unique name" gate in call resolution for every extended type.
+		// The extension is a pure scope: walkEntitiesScoped qualifies its members
+		// under the extended type name (see the swiftExtensionTypeName hook).
+		if language == "Swift" && swiftExtensionDeclaration(node) {
 			return Entity{}, false
 		}
 		kind = "class"

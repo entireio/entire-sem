@@ -1124,6 +1124,76 @@ func TestTreeSitterParserSwiftMasksModernSyntax(t *testing.T) {
 	}
 }
 
+// Swift `extension Foo` blocks parse as class_declaration nodes; they must not
+// emit duplicate class symbols, and their members (any modifier combination)
+// must qualify under the extended type so call resolution can find them.
+func TestTreeSitterParserSwiftExtensionMembersScopeToExtendedType(t *testing.T) {
+	entities, language, status := TreeSitterParser{}.ParseWithStatus("CommandParser.swift", `struct CommandParser {
+  var commandTree: Tree
+
+  struct Nested {
+    var flag: Bool
+  }
+}
+
+extension CommandParser {
+  fileprivate mutating func parseCurrent(
+    _ split: inout SplitArguments
+  ) throws -> ParsableCommand {
+    return try checkForBuiltInFlags(split)
+  }
+
+  internal mutating func descendingParse(_ split: inout SplitArguments) throws {
+    _ = try parseCurrent(&split)
+  }
+}
+
+public extension CommandParser {
+  func checkForCompletionScriptRequest(_ split: inout SplitArguments) throws {
+  }
+}
+
+extension CommandParser.Nested {
+  func toggle() -> Bool { return !flag }
+}
+
+extension Array<Element> {
+  func firstOrNil() -> Element? { return first }
+}
+`)
+	if language != "Swift" {
+		t.Fatalf("language = %q", language)
+	}
+	if status.ParseError {
+		t.Fatalf("unexpected parse status: %#v", status)
+	}
+	byName := map[string]Entity{}
+	for _, entity := range entities {
+		byName[entity.Name] = entity
+		if entity.Kind == "class" {
+			t.Fatalf("extension emitted a class symbol %q: %#v", entity.Name, entities)
+		}
+	}
+	for _, want := range []string{
+		"CommandParser.parseCurrent",
+		"CommandParser.descendingParse",
+		"CommandParser.checkForCompletionScriptRequest",
+		"CommandParser.Nested.toggle",
+		"Array.firstOrNil",
+	} {
+		entity, ok := byName[want]
+		if !ok {
+			t.Fatalf("missing extension member %q in %#v", want, entities)
+		}
+		if entity.Kind != "method" {
+			t.Fatalf("extension member %q kind = %q, want method", want, entity.Kind)
+		}
+	}
+	if entity := byName["CommandParser"]; entity.Kind != "struct" {
+		t.Fatalf("primary declaration kind = %q, want struct", entity.Kind)
+	}
+}
+
 func TestTreeSitterParserDetectsCPlusPlusHeaders(t *testing.T) {
 	entities, language, status := TreeSitterParser{}.ParseWithStatus("args.h", `#ifndef FMT_ARGS_H_
 #define FMT_ARGS_H_

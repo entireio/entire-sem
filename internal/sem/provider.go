@@ -1453,7 +1453,7 @@ func localReachable(from, to SymbolRecord) bool {
 // receiver and is handled by receiverCallRelations instead.
 func implicitReceiverLanguage(lang string) bool {
 	switch lang {
-	case "Java", "C#", "C++", "Kotlin", "Scala", "Ruby":
+	case "Java", "C#", "C++", "Kotlin", "Scala", "Ruby", "Swift":
 		return true
 	}
 	return false

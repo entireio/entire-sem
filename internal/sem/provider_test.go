@@ -6418,6 +6418,84 @@ export function labelFor(widget: Widget): string {
 	}
 }
 
+// Swift methods call same-type siblings without a receiver (implicit self),
+// including across `extension` blocks, and construct types whose extensions
+// must not break the unique-name gate. Shaped like swift-argument-parser's
+// CommandParser.swift / ArgumentSet.swift.
+func TestBuildProviderSnapshotResolvesSwiftExtensionAndImplicitSelfCalls(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "Sources/Parsing/CommandParser.swift", `struct CommandParser {
+  var commandTree: Tree
+}
+
+extension CommandParser {
+  func checkForBuiltInFlags(_ split: SplitArguments) throws {
+  }
+
+  fileprivate mutating func parseCurrent(
+    _ split: inout SplitArguments
+  ) throws -> ParsableCommand {
+    var parser = LenientParser(commandTree, split)
+    let values = try parser.parse()
+    try checkForBuiltInFlags(values)
+    return values
+  }
+
+  internal mutating func descendingParse(_ split: inout SplitArguments) throws {
+    var parsedCommand = try parseCurrent(&split)
+  }
+}
+
+extension CommandParser {
+  func checkForCompletionScriptRequest(_ split: inout SplitArguments) throws {
+    var completionsParser = CommandParser(GenerateCompletions.self)
+    if let result = try? completionsParser.parseCurrent(&split) {
+      return
+    }
+  }
+}
+`)
+	writeFile(t, repo, "Sources/Parsing/ArgumentSet.swift", `struct LenientParser {
+  var content: Int
+
+  mutating func parse() throws -> ParsedValues {
+    return ParsedValues()
+  }
+}
+
+extension LenientParser {
+  var describing: String { "parser" }
+}
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Bare same-file sibling-method calls (implicit self).
+	if !hasRelationByLastSegmentWithResolution(snapshot.Relations, "CALLS", "CommandParser.descendingParse", "CommandParser.parseCurrent", "exact") {
+		t.Fatalf("implicit-self call descendingParse -> parseCurrent not resolved: %#v", snapshot.Relations)
+	}
+	if !hasRelationByLastSegmentWithResolution(snapshot.Relations, "CALLS", "CommandParser.parseCurrent", "CommandParser.checkForBuiltInFlags", "exact") {
+		t.Fatalf("implicit-self call parseCurrent -> checkForBuiltInFlags not resolved: %#v", snapshot.Relations)
+	}
+	// Receiver-typed call on a constructor-assigned local; only works when the
+	// extension did not fork the CommandParser container.
+	if !hasRelationByLastSegmentWithResolution(snapshot.Relations, "CALLS", "CommandParser.checkForCompletionScriptRequest", "CommandParser.parseCurrent", "type_inferred") {
+		t.Fatalf("receiver call checkForCompletionScriptRequest -> parseCurrent not resolved: %#v", snapshot.Relations)
+	}
+	// Cross-file receiver call through the constructor-assigned type.
+	if !hasRelationByLastSegmentWithResolution(snapshot.Relations, "CALLS", "CommandParser.parseCurrent", "LenientParser.parse", "type_inferred") {
+		t.Fatalf("receiver call parseCurrent -> LenientParser.parse not resolved: %#v", snapshot.Relations)
+	}
+	// LenientParser has an extension in its defining file; construction must
+	// still resolve as a globally unique name (extensions emit no duplicate).
+	if !hasRelationByLastSegment(snapshot.Relations, "CONSTRUCTS", "CommandParser.parseCurrent", "LenientParser") {
+		t.Fatalf("construction parseCurrent -> LenientParser not resolved: %#v", snapshot.Relations)
+	}
+}
+
 func TestBuildProviderSnapshotResolvesJavaSamePackageStaticOverload(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "src/main/java/org/acme/LauncherDiscoveryRequest.java", `package org.acme;
