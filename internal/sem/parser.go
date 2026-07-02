@@ -647,9 +647,20 @@ var (
 	kotlinCallTypeArgumentsWithLambda = regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]*)<[^<>\n(){}]+>(\s*\{)`)
 	kotlinEmptyArrayDefault           = regexp.MustCompile(`=\s*\[\]`)
 	kotlinOverrideCallPattern         = regexp.MustCompile(`\boverride\(\)`)
+	kotlinFunInterfacePattern         = regexp.MustCompile(`\bfun(\s+interface\s+[A-Za-z_])`)
 )
 
 func maskKotlinUnsupportedSyntax(path, content string) string {
+	// tree-sitter-kotlin does not support `fun interface` (SAM interface)
+	// declarations: the whole declaration becomes an ERROR node and the
+	// interface symbol is lost (evidence: okhttp3.Interceptor was absent from
+	// the square/okhttp snapshot). Blank the `fun` modifier — same length, so
+	// node positions still line up with the original source — and the
+	// declaration parses as a plain interface; signatures and refineKind read
+	// the original text, which keeps the `fun` spelling visible there.
+	content = kotlinFunInterfacePattern.ReplaceAllStringFunc(content, func(match string) string {
+		return "   " + match[3:]
+	})
 	content = kotlinSuspendLambdaPattern.ReplaceAllStringFunc(content, func(match string) string {
 		return strings.Repeat(" ", len(match)-1) + "{"
 	})
@@ -3421,7 +3432,7 @@ func walkEntitiesScoped(node *sitter.Node, src []byte, language, scope string, i
 	}
 	// Field/property declarations emit one entity per declared name and are not
 	// descended into (their name nodes would otherwise look like field accesses).
-	if fields, ok := fieldEntities(node, src, language, scope); ok {
+	if fields, ok := fieldEntities(node, src, language, scope, inFunc); ok {
 		*entities = append(*entities, fields...)
 		return
 	}
@@ -3735,7 +3746,7 @@ func fsharpSignature(node *sitter.Node, src []byte) string {
 // variables and parameters are never treated as fields). This pass handles Go
 // struct fields (field_declaration -> field_identifier); TypeScript/Java/C#
 // fields are added later.
-func fieldEntities(node *sitter.Node, src []byte, language, scope string) ([]Entity, bool) {
+func fieldEntities(node *sitter.Node, src []byte, language, scope string, inFunc bool) ([]Entity, bool) {
 	if scope == "" {
 		return nil, false
 	}
@@ -3746,9 +3757,20 @@ func fieldEntities(node *sitter.Node, src []byte, language, scope string) ([]Ent
 	case "field_declaration", // Go/Rust/Java/C#/C/C++ struct & class fields
 		"public_field_definition", "field_definition", // TS/JS class fields
 		"property_signature",   // TS interface/type-literal fields
-		"property_declaration": // C# properties (mapped to the canonical field kind)
+		"property_declaration": // C# properties and Kotlin class-body properties (mapped to the canonical field kind)
 	default:
 		return nil, false
+	}
+	// tree-sitter-kotlin also emits property_declaration for locals inside
+	// function bodies (and for members of object literals declared there); only
+	// declarations directly inside a class/interface body, outside any function,
+	// are members (evidence: ktor's `public val application: Application` on the
+	// ApplicationCall interface, which typed-property receiver resolution needs).
+	if language == "Kotlin" {
+		parent := node.Parent()
+		if inFunc || !validNode(parent) || parent.Type() != "class_body" {
+			return nil, false
+		}
 	}
 	// A TS/JS class field initialised with a function value
 	// (`method = (x) => …` / `static create = function () {…}`) is a callable
@@ -3811,6 +3833,13 @@ func fieldDeclNames(node *sitter.Node, src []byte) []string {
 		if name := firstChildOfType(node, src, "property_identifier", "field_identifier"); name != "" {
 			return []string{name}
 		}
+		// Kotlin property_declaration: the name is the simple_identifier of the
+		// variable_declaration child (`val listener: Listener` / `var x = ...`).
+		if decl := firstNamedChildOfType(node, "variable_declaration"); validNode(decl) {
+			if name := firstChildOfType(decl, src, "simple_identifier"); name != "" {
+				return []string{name}
+			}
+		}
 		return nil
 	}
 	// field_declaration: collect every declared name.
@@ -3862,11 +3891,20 @@ func fieldTypeText(node *sitter.Node, src []byte) string {
 	if typeNode := node.ChildByFieldName("type"); validNode(typeNode) {
 		return strings.TrimSpace(typeNode.Content(src))
 	}
-	// C# field_declaration nests the type under variable_declaration.
+	// C# field_declaration nests the type under variable_declaration; Kotlin
+	// property_declaration nests the declared type there too, as the sibling of
+	// the name (`val listener: Listener` -> variable_declaration
+	// [simple_identifier, user_type]).
 	for i := 0; i < int(node.NamedChildCount()); i++ {
 		if child := node.NamedChild(i); child.Type() == "variable_declaration" {
 			if typeNode := child.ChildByFieldName("type"); validNode(typeNode) {
 				return strings.TrimSpace(typeNode.Content(src))
+			}
+			for j := 0; j < int(child.NamedChildCount()); j++ {
+				switch typeNode := child.NamedChild(j); typeNode.Type() {
+				case "user_type", "nullable_type":
+					return strings.TrimSpace(typeNode.Content(src))
+				}
 			}
 		}
 	}
@@ -4645,19 +4683,88 @@ func refineKind(kind string, node *sitter.Node, src []byte) string {
 	if kind != "class" {
 		return kind
 	}
-	content := strings.TrimSpace(node.Content(src))
-	switch {
-	case strings.HasPrefix(content, "struct "):
+	// Grammars that fold several declaration forms into one class-like node
+	// (tree-sitter-kotlin parses `interface X` as class_declaration) are told
+	// apart by the declaration keyword. That keyword may sit behind
+	// annotations and modifiers (`@OptIn(...) public sealed interface X`,
+	// `fun interface X`), so skip those before matching (evidence: ktor's
+	// `public interface HttpClientEngine : CoroutineScope, Closeable` was
+	// emitted as a class).
+	switch declarationKeyword(strings.TrimSpace(node.Content(src))) {
+	case "struct":
 		return "struct"
-	case strings.HasPrefix(content, "enum "):
+	case "enum":
 		return "enum"
-	case strings.HasPrefix(content, "interface "):
+	case "interface":
 		return "interface"
-	case strings.HasPrefix(content, "protocol "):
+	case "protocol":
 		return "interface"
 	default:
 		return kind
 	}
+}
+
+// declKeywordModifiers are declaration modifiers that may precede the
+// class/interface/struct/enum keyword across the class-like grammars. `fun` is
+// a modifier only in Kotlin's `fun interface`; a plain function never reaches
+// refineKind because its node kind is not class-like.
+var declKeywordModifiers = map[string]bool{
+	"public": true, "private": true, "protected": true, "internal": true,
+	"abstract": true, "final": true, "open": true, "sealed": true,
+	"static": true, "inner": true, "data": true, "value": true,
+	"expect": true, "actual": true, "external": true, "partial": true,
+	"fun": true, "export": true, "default": true,
+}
+
+// declarationKeyword returns the first word of a declaration after skipping
+// leading annotations (`@Name` / `@Name(...)`) and declaration modifiers, "" if
+// the text runs out before a non-modifier word.
+func declarationKeyword(content string) string {
+	for content != "" {
+		content = strings.TrimLeft(content, " \t\r\n")
+		if strings.HasPrefix(content, "@") {
+			end := 1
+			for end < len(content) && (isWordByte(content[end]) || content[end] == '.') {
+				end++
+			}
+			rest := strings.TrimLeft(content[end:], " \t\r\n")
+			if strings.HasPrefix(rest, "(") {
+				if close := matchingParen(rest, 0); close > 0 {
+					rest = rest[close+1:]
+				} else {
+					return ""
+				}
+			}
+			content = rest
+			continue
+		}
+		end := 0
+		for end < len(content) && isWordByte(content[end]) {
+			end++
+		}
+		if end == 0 {
+			return ""
+		}
+		word := content[:end]
+		if word == "interface" {
+			// Dart spells class modifiers with the same words (`abstract
+			// interface class Client` declares a class); only a bare
+			// `interface X` declaration keyword counts.
+			if rest := strings.TrimLeft(content[end:], " \t\r\n"); strings.HasPrefix(rest, "class ") {
+				content = content[end:]
+				continue
+			}
+		}
+		if !declKeywordModifiers[word] {
+			return word
+		}
+		content = content[end:]
+	}
+	return ""
+}
+
+func isWordByte(b byte) bool {
+	return b == '_' || ('a' <= b && b <= 'z') || ('A' <= b && b <= 'Z') || ('0' <= b && b <= '9')
 }
 
 var postgresGeneratedColumnPattern = regexp.MustCompile(`(?is)\bgenerated\s+always\s+as\s*\([^;]*?\)\s+stored`)

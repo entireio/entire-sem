@@ -400,3 +400,219 @@ func TestKotlinExtensionHelpers(t *testing.T) {
 		t.Fatalf("no supertypes expected: %v", supers)
 	}
 }
+
+// Implicit-extension-receiver call idioms (evidence: on ktor the focus
+// extension function ApplicationCall.resolveResource resolved 0/4 inbound
+// edges): a bare call inside a `fun R.name(...)` body dispatches on the
+// extension receiver R; a lambda parameter is typed by the callee's declared
+// function-type parameter; a bare receiver inside an extension body may be a
+// property of R declared in another file; and `base.property.method(...)`
+// chains type the terminal call through the property's declared type.
+func TestKotlinImplicitExtensionReceiverCalls(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "server/PipelineCall.kt", `package server
+
+public interface ApplicationCall : CoroutineScope {
+    public val application: Application
+}
+`)
+	writeFile(t, repo, "server/Application.kt", `package server
+
+public class Application {
+}
+`)
+	writeFile(t, repo, "server/StaticContentResolution.kt", `package server
+
+public fun ApplicationCall.resolveResource(
+    path: String,
+    resourcePackage: String? = null
+): ReadChannelContent? {
+    return null
+}
+
+internal fun Application.resolveResource(
+    path: String,
+    mimeResolve: (URL) -> ContentType
+): ReadChannelContent? {
+    return null
+}
+`)
+	writeFile(t, repo, "server/ApplicationResponseFunctionsJvm.kt", `package server
+
+public suspend fun ApplicationCall.respondResource(resourcePath: String) {
+    val message = resolveResource(resourcePath) ?: throw IllegalArgumentException(
+        "Resource not found: $resourcePath"
+    )
+}
+`)
+	writeFile(t, repo, "server/StatusPages.kt", `package server
+
+public class StatusPagesConfig {
+    public fun status(
+        vararg status: HttpStatusCode,
+        handler: suspend (ApplicationCall, HttpStatusCode) -> Unit
+    ) {
+    }
+
+    public fun status(
+        vararg status: HttpStatusCode,
+        handler: suspend StatusContext.(HttpStatusCode) -> Unit
+    ) {
+    }
+}
+
+public class HttpStatusCode {
+}
+
+public class StatusContext {
+}
+`)
+	writeFile(t, repo, "server/Decoy.kt", `package server
+
+class Monitor {
+    fun status(handler: (Monitor) -> Unit) {
+    }
+}
+`)
+	writeFile(t, repo, "server/StatusPagesJvm.kt", `package server
+
+public fun StatusPagesConfig.statusFile(vararg code: HttpStatusCode, filePattern: String) {
+    status(*code) { call, status ->
+        val message = call.resolveResource(filePattern)
+    }
+}
+`)
+	writeFile(t, repo, "server/PreCompressed.kt", `package server
+
+internal fun bestCompressionFit(
+    call: ApplicationCall,
+    resource: String,
+    contentType: (URL) -> ContentType
+): CompressedResource? {
+    val resolved = call.application.resolveResource(resource) { url ->
+        contentType(url)
+    }
+    return null
+}
+
+internal suspend fun ApplicationCall.respondStaticResource(requestedResource: String) {
+    val content = application.resolveResource(
+        path = requestedResource,
+        mimeResolve = contentType
+    )
+}
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	symbolsByID := map[string]SymbolRecord{}
+	for _, s := range snapshot.Symbols {
+		symbolsByID[s.ID] = s
+	}
+	// resolveResourceTarget returns the resolveResource overload the caller
+	// resolved to, identified by its declared extension receiver.
+	resolveResourceTarget := func(caller string) string {
+		for _, r := range snapshot.Relations {
+			if r.Type != "CALLS" || !strings.Contains(r.FromID, ":"+caller) {
+				continue
+			}
+			to := symbolsByID[r.ToID]
+			if to.Name != "resolveResource" {
+				continue
+			}
+			return kotlinExtensionReceiver(to.Signature, "resolveResource")
+		}
+		return ""
+	}
+	// Bare call in an extension body resolves type-directed to the
+	// ApplicationCall overload, not the Application one.
+	if got := resolveResourceTarget("respondResource"); got != "ApplicationCall" {
+		t.Fatalf("respondResource bare call resolved to receiver %q, want ApplicationCall", got)
+	}
+	// Lambda parameter `call` typed by the callee's declared function-type
+	// parameter; the callee itself resolves as a member of the enclosing
+	// extension receiver despite the same-named decoy method.
+	if got := resolveResourceTarget("statusFile"); got != "ApplicationCall" {
+		t.Fatalf("statusFile lambda-param call resolved to receiver %q, want ApplicationCall", got)
+	}
+	statusMemberCall := false
+	for _, r := range snapshot.Relations {
+		if r.Type == "CALLS" && strings.Contains(r.FromID, ":statusFile") && symbolsByID[r.ToID].QualifiedName == "StatusPagesConfig.status" {
+			statusMemberCall = true
+		}
+	}
+	if !statusMemberCall {
+		t.Fatalf("statusFile -> StatusPagesConfig.status member call not resolved")
+	}
+	// Chained receiver `call.application.resolveResource(...)`: the property
+	// hop is typed by the cross-file interface property field symbol.
+	if got := resolveResourceTarget("bestCompressionFit"); got != "Application" {
+		t.Fatalf("bestCompressionFit chained call resolved to receiver %q, want Application", got)
+	}
+	// Bare receiver `application` inside an ApplicationCall extension body is
+	// this.application, typed by the same cross-file property.
+	if got := resolveResourceTarget("respondStaticResource"); got != "Application" {
+		t.Fatalf("respondStaticResource property-receiver call resolved to receiver %q, want Application", got)
+	}
+}
+
+// Kotlin `fun interface`, modifier-prefixed interface declarations, and
+// interface-body properties must all survive into the symbol inventory
+// (evidence: ktor's HttpClientEngine/HttpClientPlugin and okhttp's Interceptor
+// were absent or misclassified in the snapshots).
+func TestKotlinInterfaceDeclarationKinds(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "client/HttpClientEngine.kt", `package client
+
+public interface HttpClientEngine : CoroutineScope, Closeable {
+    public val dispatcher: CoroutineDispatcher
+
+    @InternalAPI
+    public suspend fun execute(data: HttpRequestData): HttpResponseData
+}
+
+@OptIn(InternalAPI::class)
+public sealed interface Marker {
+}
+`)
+	writeFile(t, repo, "client/Interceptor.kt", `package client
+
+fun interface Interceptor {
+  fun intercept(chain: Chain): Response
+
+  interface Chain {
+    fun proceed(request: Request): Response
+  }
+}
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	kinds := map[string]string{}
+	for _, s := range snapshot.Symbols {
+		kinds[s.QualifiedName] = s.Kind
+	}
+	for _, name := range []string{"HttpClientEngine", "Marker", "Interceptor", "Chain"} {
+		if kinds[name] != "interface" {
+			t.Fatalf("kind of %s = %q, want interface (all symbols: %v)", name, kinds[name], kinds)
+		}
+	}
+	// The fun interface's member parses inside the container again.
+	if kinds["Interceptor.intercept"] != "method" {
+		t.Fatalf("Interceptor.intercept kind = %q, want method", kinds["Interceptor.intercept"])
+	}
+	// Interface-body properties become field symbols with their declared type.
+	found := false
+	for _, s := range snapshot.Symbols {
+		if s.QualifiedName == "HttpClientEngine.dispatcher" && s.Kind == "field" && strings.Contains(s.Signature, "CoroutineDispatcher") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("interface-body property HttpClientEngine.dispatcher not extracted as a typed field")
+	}
+}

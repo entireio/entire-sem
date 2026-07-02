@@ -2248,6 +2248,39 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 							WarningCodes: []string{},
 						})
 					}
+					if len(targets) == 0 && file.Language == "Kotlin" && spec.callResolution == "full" {
+						// A bare call inside a Kotlin extension-function body
+						// (`fun ApplicationCall.respondResource(...)` calling
+						// `resolveResource(...)`) dispatches on the implicit
+						// extension receiver: resolve it against the receiver
+						// type's members and matching extension functions.
+						if to, reason, ok := kotlinImplicitReceiverCallTarget(from, name, methodsByContainer, superContainerByID, symbolsByShortName); ok {
+							scope := "file"
+							if to.FilePath != from.FilePath {
+								scope = "module"
+							}
+							emit(RelationRecord{
+								RecordType:    "relation",
+								FromID:        from.ID,
+								ToID:          to.ID,
+								Type:          "CALLS",
+								Confidence:    0.8,
+								Reason:        reason,
+								RelationScope: scope,
+								Resolution:    "type_inferred",
+								TargetKind:    "symbol",
+								Evidence: []Evidence{{
+									Kind:      "call_site",
+									FilePath:  from.FilePath,
+									StartLine: from.StartLine,
+									EndLine:   from.EndLine,
+									Detail:    name,
+								}},
+								WarningCodes: []string{},
+							})
+							continue
+						}
+					}
 					if len(targets) == 0 {
 						for _, relation := range importedExternalCallRelationsForName(from, name, importsByName[name]) {
 							emit(relation)
@@ -2905,11 +2938,23 @@ func receiverCallRelations(from SymbolRecord, block string, methodsByContainer m
 		chainedCalls = append(chainedCalls, rubyChainedConstructorCalls(block)...)
 		rubyBareCalls = rubyBareCallNames(block, from.Signature)
 	}
+	var kotlinChains []kotlinChainedCall
 	if from.Language == "Kotlin" {
 		// Kotlin safe calls (`socket?.closeQuietly()`) and trailing-lambda
 		// invocations (`taskQueue.execute { ... }`) never match the generic
 		// receiverCallRe, which requires a literal `.` and a literal `(`.
+		// Chained receivers (`call.application.resolveResource(...)`) carry a
+		// property hop the flat scanner misreads as an unknown receiver.
 		calls = mergeReceiverCalls(calls, kotlinReceiverCalls(block))
+		kotlinChains = kotlinChainedReceiverCalls(block)
+	}
+	var javaChains []javaCtorChainCall
+	if from.Language == "Java" {
+		// Nested-type fluent constructor chains
+		// (`new Retrofit.Builder().baseUrl(...).build()`): the generic chain
+		// regexes handle neither the dotted type nor arbitrary chain depth with
+		// nested call arguments.
+		javaChains = javaConstructorChainCalls(block)
 	}
 	var phpStatics []phpStaticCall
 	var phpPropCalls []receiverCall
@@ -2922,7 +2967,7 @@ func receiverCallRelations(from SymbolRecord, block string, methodsByContainer m
 		phpPropCalls = phpPropertyReceiverCalls(block)
 		chainedCalls = append(chainedCalls, phpChainedConstructorCalls(block)...)
 	}
-	if len(calls) == 0 && len(chainedCalls) == 0 && len(returnedCalls) == 0 && len(chainedReturnCalls) == 0 && len(deepChainedReturnCalls) == 0 && len(returnedChainCalls) == 0 && len(returnedDeepChainCalls) == 0 && len(rubyBareCalls) == 0 && len(phpStatics) == 0 && len(phpPropCalls) == 0 {
+	if len(calls) == 0 && len(chainedCalls) == 0 && len(returnedCalls) == 0 && len(chainedReturnCalls) == 0 && len(deepChainedReturnCalls) == 0 && len(returnedChainCalls) == 0 && len(returnedDeepChainCalls) == 0 && len(rubyBareCalls) == 0 && len(phpStatics) == 0 && len(phpPropCalls) == 0 && len(kotlinChains) == 0 && len(javaChains) == 0 {
 		return nil
 	}
 	varTypes := parameterVarTypes(from.Signature)
@@ -2946,6 +2991,25 @@ func receiverCallRelations(from SymbolRecord, block string, methodsByContainer m
 		// Declared-type locals (`val writerToClose: WebSocketWriter?`), which
 		// the generic constructor-assignment scan cannot type.
 		for name, typeName := range kotlinLocalVarTypes(block) {
+			if _, exists := localTypes[name]; !exists {
+				localTypes[name] = typeName
+			}
+		}
+		// Trailing-lambda parameters typed by the callee's declared
+		// function-type parameter (`status(*code) { call, status -> ... }`
+		// against `fun status(..., handler: suspend (ApplicationCall,
+		// HttpStatusCode) -> Unit)`) or by an explicit annotation.
+		for name, typeName := range kotlinLambdaParamVarTypes(block, from, symbolsByShortName) {
+			if _, exists := localTypes[name]; !exists {
+				localTypes[name] = typeName
+			}
+		}
+	}
+	if from.Language == "Java" {
+		// Declared-type locals (`BuiltInFactories builtInFactories =
+		// Platform.builtInFactories;`), which the generic
+		// constructor-assignment scan cannot type.
+		for name, typeName := range javaLocalVarTypes(block) {
 			if _, exists := localTypes[name]; !exists {
 				localTypes[name] = typeName
 			}
@@ -2978,6 +3042,25 @@ func receiverCallRelations(from SymbolRecord, block string, methodsByContainer m
 			if _, exists := varTypes[name]; !exists {
 				varTypes[name] = typeName
 				kotlinPropReceivers[name] = true
+			}
+		}
+		// Properties of the enclosing extension receiver type: inside
+		// `fun ApplicationCall.respondStaticResource(...)` a bare receiver
+		// `application` is `this.application`, typed by the workspace field
+		// symbol `ApplicationCall.application: Application` — a cross-file
+		// source kotlinPropTypes (same-file class properties) cannot see.
+		if receiverType := kotlinExtensionReceiver(from.Signature, from.Name); receiverType != "" {
+			for _, call := range calls {
+				if call.Receiver == "this" || call.Receiver == "self" || call.Receiver == "super" {
+					continue
+				}
+				if _, exists := varTypes[call.Receiver]; exists {
+					continue
+				}
+				if typeName := kotlinFieldTypeOnType(receiverType, call.Receiver, from, symbolsByShortName); typeName != "" {
+					varTypes[call.Receiver] = typeName
+					kotlinPropReceivers[call.Receiver] = true
+				}
 			}
 		}
 	}
@@ -3225,6 +3308,121 @@ func receiverCallRelations(from SymbolRecord, block string, methodsByContainer m
 				}},
 				WarningCodes: []string{},
 			})
+		}
+	}
+	// Kotlin chained receivers (`call.application.resolveResource(...)`): the
+	// base is a typed variable, the middle hop a declared property of that type
+	// (workspace field symbols), and the terminal call resolves against the
+	// property's type — as a member first, then as a type-directed extension
+	// function.
+	if from.Language == "Kotlin" {
+		for _, chain := range kotlinChains {
+			key := chain.Property + "." + chain.Method
+			if methodResolved[key] {
+				continue
+			}
+			baseType, ok := varTypes[chain.Base]
+			if !ok {
+				continue
+			}
+			propType := kotlinFieldTypeOnType(baseType, chain.Property, from, symbolsByShortName)
+			if propType == "" {
+				continue
+			}
+			var target SymbolRecord
+			resolved := false
+			if sym, ok := firstTypeLikeNamedPreferFile(symbolsByShortName[propType], propType, from.FilePath); ok {
+				if method, _, ok := lookupMethodUpChain(sym.ID, chain.Method, methodsByContainer, superContainerByID); ok {
+					target, resolved = method, true
+				}
+			}
+			if !resolved {
+				if ext, typeDirected, ok := kotlinExtensionFunctionTarget(receiverCall{Method: chain.Method}, propType, from, symbolsByShortName); ok && typeDirected {
+					target, resolved = ext, true
+				}
+			}
+			if !resolved || target.ID == from.ID {
+				continue
+			}
+			methodResolved[key] = true
+			scope := "file"
+			if target.FilePath != from.FilePath {
+				scope = "module"
+			}
+			relations = append(relations, RelationRecord{
+				RecordType:    "relation",
+				FromID:        from.ID,
+				ToID:          target.ID,
+				Type:          "CALLS",
+				Confidence:    0.75,
+				Reason:        "method call resolved via typed property of chained receiver",
+				RelationScope: scope,
+				Resolution:    "type_inferred",
+				TargetKind:    "symbol",
+				Evidence: []Evidence{{
+					Kind:      "call_site",
+					FilePath:  from.FilePath,
+					StartLine: from.StartLine,
+					EndLine:   from.EndLine,
+					Detail:    chain.Detail,
+				}},
+				WarningCodes: []string{},
+			})
+		}
+	}
+	// Java fluent constructor chains (`new Retrofit.Builder().baseUrl(...)
+	// .build()`): every chained method resolves against the constructed type
+	// when the whole chain is defined on it (fluent builders return `this`);
+	// otherwise only the first call — dispatched on the constructed value
+	// itself — is trusted.
+	if from.Language == "Java" {
+		for _, chain := range javaChains {
+			sym, ok := javaResolveConstructedType(chain, from, symbolsByShortName)
+			if !ok {
+				continue
+			}
+			targets := make([]SymbolRecord, 0, len(chain.Methods))
+			for _, name := range chain.Methods {
+				method, _, ok := lookupMethodUpChain(sym.ID, name, methodsByContainer, superContainerByID)
+				if !ok {
+					break
+				}
+				targets = append(targets, method)
+			}
+			if len(targets) == 0 {
+				continue
+			}
+			if len(targets) < len(chain.Methods) {
+				targets = targets[:1]
+			}
+			for _, method := range targets {
+				if method.ID == from.ID {
+					continue
+				}
+				scope := "file"
+				if method.FilePath != from.FilePath {
+					scope = "module"
+				}
+				relations = append(relations, RelationRecord{
+					RecordType:    "relation",
+					FromID:        from.ID,
+					ToID:          method.ID,
+					Type:          "CALLS",
+					Confidence:    0.78,
+					Reason:        "method call resolved via fluent constructor chain type",
+					RelationScope: scope,
+					Resolution:    "type_inferred",
+					TargetKind:    "symbol",
+					Evidence: []Evidence{{
+						Kind:      "call_site",
+						FilePath:  from.FilePath,
+						StartLine: from.StartLine,
+						EndLine:   from.EndLine,
+						Detail:    chain.Detail,
+					}},
+					WarningCodes: []string{},
+				})
+			}
 		}
 	}
 	// Ruby receiver-less calls target implicit self: emit an edge when the bare

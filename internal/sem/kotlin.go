@@ -63,6 +63,17 @@ var (
 	// Extension-function signature: `fun Closeable.closeQuietly(`, including
 	// generic receivers (`fun <T> List<T>.foo(`) and nullable ones.
 	kotlinExtensionFunRe = regexp.MustCompile(`\bfun\s+(?:<[^>]*>\s+)?([A-Za-z_][\w.]*(?:<[^<>]*>)?\??)\s*\.\s*([A-Za-z_]\w*)\s*\(`)
+	// Chained receiver call `base.property.method(...)`, accepting the safe-call
+	// and non-null-asserted operators at each hop and a trailing-lambda `{`.
+	// Base and property must be lowercase (values, not type references); the
+	// leading guard keeps the match from starting mid-selector, so `a.b.c.m()`
+	// never binds b as a base.
+	kotlinChainedReceiverCallRe = regexp.MustCompile(`(?:^|[^\w.$])([a-z_]\w*)\s*(?:\?\.|!!\.|\.)\s*([a-z_]\w*)\s*(?:\?\.|!!\.|\.)\s*([A-Za-z_]\w*)\s*[({]`)
+	// A function-type parameter's type: `suspend (ApplicationCall, HttpStatusCode)
+	// -> Unit`, optionally with a lambda receiver (`suspend StatusContext.(...)`).
+	// Nested function types (parenthesized parameter types) intentionally fail
+	// the match: their positional binding is not worth guessing.
+	kotlinFunctionTypeRe = regexp.MustCompile(`^(?:suspend\s+)?(?:[A-Za-z_][\w.]*(?:<[^<>]*>)?\s*\.\s*)?\(([^()]*)\)\s*->`)
 )
 
 // kotlinLambdaKeywords are bare words before `{` that are never call sites:
@@ -425,4 +436,369 @@ func kotlinExtensionFunctionTarget(call receiverCall, receiverType string, from 
 		return extensions[0], false, true
 	}
 	return SymbolRecord{}, false, false
+}
+
+// kotlinFieldTypeOnType returns the declared type of member property prop on
+// typeName (or one of its spelled supertypes), read from the workspace's Kotlin
+// field symbols (`public val application: Application` on the ApplicationCall
+// interface -> Application). Field signatures are `name Type`; a property name
+// declared with two different types across the matching containers yields "".
+func kotlinFieldTypeOnType(typeName, prop string, from SymbolRecord, symbolsByShortName map[string][]SymbolRecord) string {
+	if typeName == "" || prop == "" {
+		return ""
+	}
+	receiverNames := kotlinReceiverTypeNames(typeName, from, symbolsByShortName)
+	unique := ""
+	for _, cand := range symbolsByShortName[prop] {
+		if cand.Kind != "field" || cand.Language != "Kotlin" {
+			continue
+		}
+		container := containerName(cand.QualifiedName)
+		if container == "" || !receiverNames[lastTypeSegment(container)] {
+			continue
+		}
+		parts := strings.Fields(cand.Signature)
+		if len(parts) < 2 {
+			continue
+		}
+		declared := kotlinTypeName(strings.TrimSuffix(stripGenerics(parts[1]), "?"))
+		if declared == "" {
+			continue
+		}
+		if unique == "" {
+			unique = declared
+		} else if unique != declared {
+			return ""
+		}
+	}
+	return unique
+}
+
+// kotlinChainedCall is a `base.property.method(...)` call site: the receiver is
+// itself a property access on a typed value (`call.application.resolveResource`).
+type kotlinChainedCall struct {
+	Base     string
+	Property string
+	Method   string
+	Detail   string
+}
+
+// kotlinChainedReceiverCalls extracts `base.property.method(...)` call sites,
+// which the flat receiver scanners misread as `property.method(...)` with an
+// unknown receiver.
+func kotlinChainedReceiverCalls(block string) []kotlinChainedCall {
+	stripped := stripKotlinCodeText(block)
+	var out []kotlinChainedCall
+	seen := map[string]bool{}
+	for _, m := range kotlinChainedReceiverCallRe.FindAllStringSubmatch(stripped, -1) {
+		base, property, method := m[1], m[2], m[3]
+		detail := base + "." + property + "." + method
+		if seen[detail] {
+			continue
+		}
+		seen[detail] = true
+		out = append(out, kotlinChainedCall{Base: base, Property: property, Method: method, Detail: detail})
+	}
+	return out
+}
+
+// kotlinImplicitReceiverCallTarget resolves a receiver-less call inside a
+// Kotlin extension function body: `fun ApplicationCall.respondResource(...)`
+// calling bare `resolveResource(...)` dispatches on the implicit extension
+// receiver. Resolution order mirrors the language: a member method of the
+// receiver type (walking its supertype chain), then a type-directed extension
+// function whose declared receiver matches the receiver type or one of its
+// spelled supertypes.
+func kotlinImplicitReceiverCallTarget(from SymbolRecord, name string, methodsByContainer map[string]map[string]SymbolRecord, superContainerByID map[string]string, symbolsByShortName map[string][]SymbolRecord) (SymbolRecord, string, bool) {
+	receiverType := kotlinExtensionReceiver(from.Signature, from.Name)
+	if receiverType == "" {
+		return SymbolRecord{}, "", false
+	}
+	if typeSym, ok := firstTypeLikeNamedPreferFile(symbolsByShortName[receiverType], receiverType, from.FilePath); ok {
+		if method, _, ok := lookupMethodUpChain(typeSym.ID, name, methodsByContainer, superContainerByID); ok && method.ID != from.ID {
+			return method, "receiver-less call in extension function resolved to a method of the extension receiver type", true
+		}
+	}
+	if target, typeDirected, ok := kotlinExtensionFunctionTarget(receiverCall{Method: name}, receiverType, from, symbolsByShortName); ok && typeDirected && target.ID != from.ID {
+		return target, "receiver-less call in extension function resolved to a Kotlin extension function on the receiver type", true
+	}
+	return SymbolRecord{}, "", false
+}
+
+// kotlinLambdaParam is one trailing-lambda parameter, with its explicit type
+// annotation when spelled (`{ call: ApplicationCall -> ... }`).
+type kotlinLambdaParam struct {
+	Name string
+	Type string
+}
+
+type kotlinLambdaSite struct {
+	Callee string
+	Params []kotlinLambdaParam
+}
+
+// kotlinTrailingLambdaSites scans stripped source for
+// `callee(args) { p1, p2 -> ...` / `callee { p -> ...` trailing-lambda call
+// sites and returns the callee with its lambda parameter list. Dotted callees
+// (`x.map { ... }`), destructured parameters, and lambdas without a parameter
+// list are skipped.
+func kotlinTrailingLambdaSites(stripped string) []kotlinLambdaSite {
+	var out []kotlinLambdaSite
+	for _, loc := range kotlinBareIdentifierLocations(stripped) {
+		callee := stripped[loc[0]:loc[1]]
+		if kotlinLambdaKeywords[callee] {
+			continue
+		}
+		pos := skipSpaces(stripped, loc[1])
+		if pos < len(stripped) && stripped[pos] == '(' {
+			close := matchingParen(stripped, pos)
+			if close < 0 {
+				continue
+			}
+			pos = skipSpaces(stripped, close+1)
+		}
+		if pos >= len(stripped) || stripped[pos] != '{' {
+			continue
+		}
+		params, ok := kotlinLambdaParamList(stripped, pos+1)
+		if !ok {
+			continue
+		}
+		out = append(out, kotlinLambdaSite{Callee: callee, Params: params})
+	}
+	return out
+}
+
+// kotlinBareIdentifierLocations returns the [start,end) spans of identifiers
+// not preceded by `.`/`?.`/`::` (receiver-qualified names resolve elsewhere).
+func kotlinBareIdentifierLocations(stripped string) [][]int {
+	var out [][]int
+	for _, loc := range kotlinBareLambdaIdentRe.FindAllStringIndex(stripped, -1) {
+		if start := loc[0]; start > 0 {
+			switch stripped[start-1] {
+			case '.', ':', '@', '$':
+				continue
+			}
+			if stripped[start-1] >= '0' && stripped[start-1] <= '9' {
+				continue
+			}
+		}
+		out = append(out, loc)
+	}
+	return out
+}
+
+var kotlinBareLambdaIdentRe = regexp.MustCompile(`[A-Za-z_]\w*`)
+
+// kotlinLambdaParamList parses the parameter list of a lambda body starting
+// just after its `{`: identifiers with optional `: Type` annotations separated
+// by commas, terminated by `->`. Anything else before the arrow (an expression
+// body, a destructuring pattern, an operator) reports no parameter list.
+func kotlinLambdaParamList(stripped string, start int) ([]kotlinLambdaParam, bool) {
+	end := start
+	for end < len(stripped) {
+		ch := stripped[end]
+		if ch == '-' && end+1 < len(stripped) && stripped[end+1] == '>' {
+			break
+		}
+		if ch == '_' || ch == ',' || ch == ':' || ch == '?' || ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' ||
+			('a' <= ch && ch <= 'z') || ('A' <= ch && ch <= 'Z') || ('0' <= ch && ch <= '9') {
+			end++
+			continue
+		}
+		return nil, false
+	}
+	if end >= len(stripped) {
+		return nil, false
+	}
+	var params []kotlinLambdaParam
+	for _, part := range strings.Split(stripped[start:end], ",") {
+		nameAndType := strings.SplitN(part, ":", 2)
+		name := strings.TrimSpace(nameAndType[0])
+		if !kotlinIdentifierOnly(name) {
+			return nil, false
+		}
+		param := kotlinLambdaParam{Name: name}
+		if len(nameAndType) == 2 {
+			param.Type = kotlinTypeName(strings.TrimSuffix(strings.TrimSpace(nameAndType[1]), "?"))
+		}
+		params = append(params, param)
+	}
+	if len(params) == 0 {
+		return nil, false
+	}
+	return params, true
+}
+
+func kotlinIdentifierOnly(value string) bool {
+	if value == "" || kotlinLambdaKeywords[value] {
+		return false
+	}
+	for i := 0; i < len(value); i++ {
+		ch := value[i]
+		if ch == '_' || ('a' <= ch && ch <= 'z') || ('A' <= ch && ch <= 'Z') || (i > 0 && '0' <= ch && ch <= '9') {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func skipSpaces(s string, pos int) int {
+	for pos < len(s) {
+		switch s[pos] {
+		case ' ', '\t', '\r', '\n':
+			pos++
+		default:
+			return pos
+		}
+	}
+	return pos
+}
+
+// kotlinLambdaParamVarTypes infers lambda parameter -> type bindings for
+// trailing-lambda call sites in the block. Explicitly annotated parameters bind
+// directly; untyped parameters bind through the callee's declared trailing
+// function-type parameter (`status(*code) { call, status -> }` against
+// `fun status(vararg status: HttpStatusCode, handler: suspend (ApplicationCall,
+// HttpStatusCode) -> Unit)` binds call: ApplicationCall). A name bound to two
+// different types anywhere in the block is dropped.
+func kotlinLambdaParamVarTypes(block string, from SymbolRecord, symbolsByShortName map[string][]SymbolRecord) map[string]string {
+	stripped := stripKotlinCodeText(block)
+	sites := kotlinTrailingLambdaSites(stripped)
+	if len(sites) == 0 {
+		return nil
+	}
+	out := map[string]string{}
+	conflicted := map[string]bool{}
+	record := func(name, typeName string) {
+		if name == "" || typeName == "" {
+			return
+		}
+		if existing, ok := out[name]; ok && existing != typeName {
+			conflicted[name] = true
+			return
+		}
+		out[name] = typeName
+	}
+	for _, site := range sites {
+		var untyped int
+		for _, p := range site.Params {
+			if p.Type == "" {
+				untyped++
+			}
+		}
+		var declared []string
+		if untyped > 0 {
+			declared = kotlinCalleeLambdaParamTypes(site.Callee, len(site.Params), from, symbolsByShortName)
+		}
+		for i, p := range site.Params {
+			switch {
+			case p.Type != "":
+				record(p.Name, p.Type)
+			case len(declared) == len(site.Params):
+				record(p.Name, declared[i])
+			}
+		}
+	}
+	for name := range conflicted {
+		delete(out, name)
+	}
+	return out
+}
+
+// kotlinCalleeLambdaParamTypes resolves the callee of a trailing-lambda call
+// against the enclosing scope (methods of the extension receiver type and its
+// spelled supertypes, or of the enclosing container) and returns the parameter
+// type names of its trailing function-type parameter when the arity matches.
+// Overloads are tolerated as long as exactly one distinct binding survives.
+func kotlinCalleeLambdaParamTypes(callee string, arity int, from SymbolRecord, symbolsByShortName map[string][]SymbolRecord) []string {
+	scopeNames := map[string]bool{}
+	if receiver := kotlinExtensionReceiver(from.Signature, from.Name); receiver != "" {
+		for name := range kotlinReceiverTypeNames(receiver, from, symbolsByShortName) {
+			scopeNames[name] = true
+		}
+	}
+	if container := lastTypeSegment(containerName(from.QualifiedName)); container != "" {
+		scopeNames[container] = true
+	}
+	var binding []string
+	for _, cand := range symbolsByShortName[callee] {
+		if cand.ID == from.ID || cand.Language != "Kotlin" || cand.Kind != "method" {
+			continue
+		}
+		if !scopeNames[lastTypeSegment(containerName(cand.QualifiedName))] {
+			continue
+		}
+		types := kotlinTrailingFunctionParamTypes(cand.Signature, cand.Name, arity)
+		if types == nil {
+			continue
+		}
+		if binding == nil {
+			binding = types
+			continue
+		}
+		if !stringSlicesEqual(binding, types) {
+			return nil
+		}
+	}
+	return binding
+}
+
+// kotlinTrailingFunctionParamTypes returns the parameter type names of the last
+// declared parameter of the named function when that parameter is a function
+// type with exactly arity parameters, all spelled as capitalized type names.
+func kotlinTrailingFunctionParamTypes(signature, name string, arity int) []string {
+	funRe := regexp.MustCompile(`\bfun\s+(?:<[^<>]*>\s+)?(?:[A-Za-z_][\w.]*(?:<[^<>]*>)?\??\s*\.\s*)?` + regexp.QuoteMeta(name) + `\s*\(`)
+	loc := funRe.FindStringIndex(signature)
+	if loc == nil {
+		return nil
+	}
+	open := loc[1] - 1
+	close := matchingParen(signature, open)
+	if close < 0 {
+		return nil
+	}
+	params := splitTopLevelCommas(signature[open+1 : close])
+	if len(params) == 0 {
+		return nil
+	}
+	last := params[len(params)-1]
+	colon := strings.Index(last, ":")
+	if colon < 0 {
+		return nil
+	}
+	typeText := strings.TrimSpace(last[colon+1:])
+	m := kotlinFunctionTypeRe.FindStringSubmatch(typeText)
+	if m == nil {
+		return nil
+	}
+	var out []string
+	for _, part := range splitTopLevelCommas(m[1]) {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		typeName := kotlinTypeName(strings.TrimSuffix(stripGenerics(part), "?"))
+		if typeName == "" {
+			return nil
+		}
+		out = append(out, typeName)
+	}
+	if len(out) != arity {
+		return nil
+	}
+	return out
+}
+
+func stringSlicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
