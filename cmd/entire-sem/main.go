@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/suhaanthayyil/entire-sem/internal/cli"
+	"github.com/entireio/entire-sem/internal/cli"
 )
 
 var version = "dev"

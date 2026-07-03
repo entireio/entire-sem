@@ -20,7 +20,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/suhaanthayyil/entire-sem/internal/gitutil"
+	"github.com/entireio/entire-sem/internal/gitutil"
 )
 
 const (

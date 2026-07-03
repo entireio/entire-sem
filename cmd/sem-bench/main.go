@@ -31,8 +31,8 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/suhaanthayyil/entire-sem/internal/bench"
-	"github.com/suhaanthayyil/entire-sem/internal/sem"
+	"github.com/entireio/entire-sem/internal/bench"
+	"github.com/entireio/entire-sem/internal/sem"
 )
 
 type manifest struct {

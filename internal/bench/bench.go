@@ -13,7 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/suhaanthayyil/entire-sem/internal/sem"
+	"github.com/entireio/entire-sem/internal/sem"
 )
 
 // RepoMetrics captures the performance and quality of analyzing one repository.
