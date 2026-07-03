@@ -5,7 +5,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/suhaanthayyil/entire-sem/internal/gitutil"
+	"github.com/entireio/entire-sem/internal/gitutil"
 )
 
 var identifierBoundary = regexp.MustCompile(`[A-Za-z0-9_$]+`)

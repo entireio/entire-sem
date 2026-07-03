@@ -1,4 +1,4 @@
-module github.com/suhaanthayyil/entire-sem
+module github.com/entireio/entire-sem
 
 go 1.24
 

@@ -70,7 +70,7 @@ Install the plugin binary with Go, then copy it into Entire's managed plugin
 directory:
 
 ```sh
-go install github.com/suhaanthayyil/entire-sem/cmd/entire-sem@latest
+go install github.com/entireio/entire-sem/cmd/entire-sem@latest
 entire plugin install "$(go env GOPATH)/bin/entire-sem" --force
 entire sem version
 ```
@@ -85,7 +85,7 @@ managed plugin directory or from `$PATH`.
 ## Install From Source
 
 ```sh
-git clone https://github.com/suhaanthayyil/entire-sem.git
+git clone https://github.com/entireio/entire-sem.git
 cd entire-sem
 mise run build
 entire plugin install ./entire-sem --force

@@ -6,7 +6,7 @@ import (
 	"math"
 	"sort"
 
-	"github.com/suhaanthayyil/entire-sem/internal/gitutil"
+	"github.com/entireio/entire-sem/internal/gitutil"
 )
 
 func AnalyzeGitRange(ctx context.Context, repo, base, head string, paths []string) (Result, error) {
