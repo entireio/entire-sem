@@ -1,0 +1,27 @@
+{
+  "cli_version": "0.7.8-nightly.202606290756.c457486ca",
+  "checkpoint_version": "branch-v1",
+  "checkpoint_id": "0e033399a938",
+  "strategy": "manual-commit",
+  "branch": "fix/csharp-php-extraction-gaps",
+  "checkpoints_count": 12,
+  "files_touched": [
+    "internal/sem/types.go"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0e/033399a938/0/metadata.json",
+      "transcript": "/0e/033399a938/0/full.jsonl",
+      "compact_transcript": "/0e/033399a938/0/transcript.jsonl",
+      "content_hash": "/0e/033399a938/0/content_hash.txt",
+      "prompt": "/0e/033399a938/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 58028,
+    "cache_creation_tokens": 699199,
+    "cache_read_tokens": 71368503,
+    "output_tokens": 231057,
+    "api_call_count": 306
+  }
+}
