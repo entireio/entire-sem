@@ -1,0 +1,37 @@
+{
+  "cli_version": "0.7.8-nightly.202606290756.c457486ca",
+  "checkpoint_id": "ca5a2d6e629c",
+  "session_id": "3535d4da-9e32-4c85-a203-63a84eabcd32",
+  "strategy": "manual-commit",
+  "created_at": "2026-07-03T07:56:36.873645Z",
+  "branch": "fix/csharp-php-extraction-gaps",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "internal/sem/provider_test.go",
+    "internal/sem/provider.go"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-fable-5",
+  "turn_id": "3c8ad07f4382",
+  "checkpoint_transcript_start": 643,
+  "transcript_lines_at_start": 643,
+  "token_usage": {
+    "input_tokens": 756,
+    "cache_creation_tokens": 28184,
+    "cache_read_tokens": 3734827,
+    "output_tokens": 15921,
+    "api_call_count": 26
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-07-03T07:56:36.836207Z",
+    "agent_lines": 101,
+    "agent_removed": 2,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 101,
+    "total_lines_changed": 103,
+    "agent_percentage": 100,
+    "metric_version": 2
+  }
+}
