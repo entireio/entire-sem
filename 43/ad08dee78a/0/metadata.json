@@ -1,0 +1,24 @@
+{
+  "cli_version": "0.7.8-nightly.202606290756.c457486ca",
+  "checkpoint_id": "43ad08dee78a",
+  "session_id": "3535d4da-9e32-4c85-a203-63a84eabcd32",
+  "strategy": "manual-commit",
+  "created_at": "2026-07-03T10:51:03.20217Z",
+  "branch": "fix/csharp-php-extraction-gaps",
+  "checkpoints_count": 12,
+  "save_step_count": 1,
+  "files_touched": [],
+  "agent": "Claude Code",
+  "model": "claude-fable-5",
+  "turn_id": "ed12f9bbdee6",
+  "token_usage": {
+    "input_tokens": 58028,
+    "cache_creation_tokens": 699199,
+    "cache_read_tokens": 71368503,
+    "output_tokens": 231057,
+    "api_call_count": 306
+  },
+  "session_metrics": {
+    "turn_count": 12
+  }
+}
