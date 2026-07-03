@@ -11181,46 +11181,6 @@ abstract mixin class BaseClient implements Client {
 	// globally ambiguous (dart-lang/http has a second Request in ok_http).
 	writeFile(t, repo, "other_pkg/lib/src/bindings.dart", `class Request {
   Request();
-func TestCSharpNullableAndOutVarReceiversResolveCrossFile(t *testing.T) {
-	// dotnet/runtime HttpConnectionPoolManager.SendAsyncCore: a local
-	// declared with a nullable annotation ('HttpConnectionPool? pool;'),
-	// assigned via 'out pool' / 'pool = new HttpConnectionPool(...)', then
-	// invoked ('pool.SendAsync(...)') must resolve to the method declared
-	// in another file, and the constructor call must emit CONSTRUCTS.
-	repo := t.TempDir()
-	writeFile(t, repo, "Net/HttpConnectionPool.cs", `namespace System.Net.Http
-{
-    internal sealed class HttpConnectionPool
-    {
-        public HttpConnectionPool(object owner) { }
-
-        public string SendAsync(string request, bool async) { return request; }
-    }
-}
-`)
-	writeFile(t, repo, "Net/HttpConnectionPoolManager.cs", `namespace System.Net.Http
-{
-    internal sealed class HttpConnectionPoolManager
-    {
-        public string SendAsyncCore(string request, bool async)
-        {
-            HttpConnectionPool? pool;
-            while (!_pools.TryGetValue(request, out pool))
-            {
-                pool = new HttpConnectionPool(this);
-            }
-            return pool.SendAsync(request, async);
-        }
-
-        public string SendViaOutDeclaration(string request)
-        {
-            if (_pools.TryGetValue(request, out HttpConnectionPool? cached))
-            {
-                return cached.SendAsync(request, false);
-            }
-            return request;
-        }
-    }
 }
 `)
 
@@ -11228,7 +11188,6 @@ func TestCSharpNullableAndOutVarReceiversResolveCrossFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-<<<<<<< HEAD
 
 	edges := map[string]RelationRecord{}
 	for _, r := range snapshot.Relations {
@@ -11956,7 +11915,56 @@ pub fn boot() -> u32 {
 	}
 	if !found {
 		t.Fatalf("Rust Type::method path call did not resolve to the method")
-=======
+	}
+}
+
+func TestCSharpNullableAndOutVarReceiversResolveCrossFile(t *testing.T) {
+	// dotnet/runtime HttpConnectionPoolManager.SendAsyncCore: a local
+	// declared with a nullable annotation ('HttpConnectionPool? pool;'),
+	// assigned via 'out pool' / 'pool = new HttpConnectionPool(...)', then
+	// invoked ('pool.SendAsync(...)') must resolve to the method declared
+	// in another file, and the constructor call must emit CONSTRUCTS.
+	repo := t.TempDir()
+	writeFile(t, repo, "Net/HttpConnectionPool.cs", `namespace System.Net.Http
+{
+    internal sealed class HttpConnectionPool
+    {
+        public HttpConnectionPool(object owner) { }
+
+        public string SendAsync(string request, bool async) { return request; }
+    }
+}
+`)
+	writeFile(t, repo, "Net/HttpConnectionPoolManager.cs", `namespace System.Net.Http
+{
+    internal sealed class HttpConnectionPoolManager
+    {
+        public string SendAsyncCore(string request, bool async)
+        {
+            HttpConnectionPool? pool;
+            while (!_pools.TryGetValue(request, out pool))
+            {
+                pool = new HttpConnectionPool(this);
+            }
+            return pool.SendAsync(request, async);
+        }
+
+        public string SendViaOutDeclaration(string request)
+        {
+            if (_pools.TryGetValue(request, out HttpConnectionPool? cached))
+            {
+                return cached.SendAsync(request, false);
+            }
+            return request;
+        }
+    }
+}
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !hasRelationByLastSegment(snapshot.Relations, "CALLS", "HttpConnectionPoolManager.SendAsyncCore", "HttpConnectionPool.SendAsync") {
 		t.Errorf("missing CALLS SendAsyncCore->HttpConnectionPool.SendAsync (nullable local + new assignment)")
 	}
@@ -11965,7 +11973,6 @@ pub fn boot() -> u32 {
 	}
 	if !hasRelationByLastSegment(snapshot.Relations, "CALLS", "HttpConnectionPoolManager.SendViaOutDeclaration", "HttpConnectionPool.SendAsync") {
 		t.Errorf("missing CALLS SendViaOutDeclaration->HttpConnectionPool.SendAsync (out Type? declaration)")
->>>>>>> 051bc95 (sem(csharp): infer receiver types from out-declarations and nullable locals)
 	}
 }
 
@@ -12037,4 +12044,158 @@ func relationsOfType(relations []RelationRecord, relationType string) []Relation
 		}
 	}
 	return out
+}
+
+func TestPHPClosureBodyCallsResolveToEnclosingClassViaReceiverName(t *testing.T) {
+	// laravel/framework Container.getClosure returns a closure whose body
+	// calls $container->build(...) and $container->resolve(...). The calls
+	// must be attributed to the enclosing named method, and the untyped
+	// $container receiver (named after the enclosing class) must resolve
+	// to the Container class's own methods.
+	repo := t.TempDir()
+	writeFile(t, repo, "src/Container.php", `<?php
+
+namespace Illuminate\Container;
+
+class Container
+{
+    protected function getClosure($abstract, $concrete)
+    {
+        return function ($container, $parameters = []) use ($abstract, $concrete) {
+            if ($abstract == $concrete) {
+                return $container->build($concrete);
+            }
+
+            return $container->resolve(
+                $concrete, $parameters, raiseEvents: false
+            );
+        };
+    }
+
+    public function build($concrete)
+    {
+        return $concrete;
+    }
+
+    public function resolve($abstract, $parameters = [], $raiseEvents = true)
+    {
+        return $abstract;
+    }
+}
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasRelationByLastSegment(snapshot.Relations, "CALLS", "Container.getClosure", "Container.resolve") {
+		t.Errorf("missing CALLS Container.getClosure->Container.resolve (closure body, receiver named after enclosing class)")
+	}
+	if !hasRelationByLastSegment(snapshot.Relations, "CALLS", "Container.getClosure", "Container.build") {
+		t.Errorf("missing CALLS Container.getClosure->Container.build (closure body, receiver named after enclosing class)")
+	}
+}
+
+func TestPHPAmbiguousBareCallEmitsCandidateEdges(t *testing.T) {
+	// WordPress declares apply_filters() three times (plugin.php canonical,
+	// a compat copy, and a wp-admin noop stub). The globally-unique gate
+	// dropped the call entirely; ambiguity must not mean silence — emit
+	// candidate edges to the same-name declarations instead.
+	repo := t.TempDir()
+	writeFile(t, repo, "src/wp-includes/plugin.php", `<?php
+
+function apply_filters( $hook_name, $value ) {
+    global $wp_filter;
+    if ( ! isset( $wp_filter[ $hook_name ] ) ) {
+        return $value;
+    }
+    return $wp_filter[ $hook_name ]->apply_filters( $value, func_get_args() );
+}
+`)
+	writeFile(t, repo, "src/wp-admin/includes/noop.php", `<?php
+
+function apply_filters( $hook_name, $value ) {
+    return $value;
+}
+`)
+	writeFile(t, repo, "src/wp-includes/rest-api/class-wp-rest-server.php", `<?php
+
+class WP_REST_Server
+{
+    public function dispatch( $request ) {
+        $result = apply_filters( 'rest_pre_dispatch', null, $this, $request );
+        return $result;
+    }
+}
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var toPlugin, toNoop bool
+	for _, relation := range snapshot.Relations {
+		if relation.Type != "CALLS" || !strings.Contains(relation.FromID, "WP_REST_Server.dispatch") {
+			continue
+		}
+		if strings.Contains(relation.ToID, "wp-includes/plugin.php") && strings.Contains(relation.ToID, "apply_filters") {
+			toPlugin = true
+		}
+		if strings.Contains(relation.ToID, "noop.php") && strings.Contains(relation.ToID, "apply_filters") {
+			toNoop = true
+		}
+	}
+	if !toPlugin {
+		t.Errorf("missing candidate CALLS edge to the canonical apply_filters in plugin.php: %#v", relationsOfType(snapshot.Relations, "CALLS"))
+	}
+	if !toNoop {
+		t.Errorf("missing candidate CALLS edge to the noop.php apply_filters (ambiguous calls emit all candidates): %#v", relationsOfType(snapshot.Relations, "CALLS"))
+	}
+}
+
+func TestPHPChainedCallResolvesViaDocblockReturnType(t *testing.T) {
+	// WordPress rest_do_request() calls rest_get_server()->dispatch($request).
+	// rest_get_server() has no native return hint, only a docblock
+	// '@return WP_REST_Server'; the chained call must resolve to
+	// WP_REST_Server::dispatch via that inferred receiver type.
+	repo := t.TempDir()
+	writeFile(t, repo, "src/wp-includes/rest-api.php", `<?php
+
+/**
+ * Do a REST request.
+ *
+ * @param WP_REST_Request $request Request.
+ * @return WP_REST_Response The response.
+ */
+function rest_do_request( $request ) {
+    return rest_get_server()->dispatch( $request );
+}
+
+/**
+ * Retrieves the current REST server instance.
+ *
+ * @return WP_REST_Server REST server instance.
+ */
+function rest_get_server() {
+    global $wp_rest_server;
+    return $wp_rest_server;
+}
+`)
+	writeFile(t, repo, "src/wp-includes/rest-api/class-wp-rest-server.php", `<?php
+
+class WP_REST_Server
+{
+    public function dispatch( $request ) {
+        return $request;
+    }
+}
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasRelationByLastSegment(snapshot.Relations, "CALLS", "rest_do_request", "WP_REST_Server.dispatch") {
+		t.Errorf("missing CALLS rest_do_request->WP_REST_Server.dispatch via docblock @return receiver type: %#v", relationsOfType(snapshot.Relations, "CALLS"))
+	}
 }

@@ -1920,6 +1920,8 @@ func splitSignatureTypes(language, signature string) (string, string) {
 		// prefix-scan below would misread `function name(` signatures.
 		if strings.HasPrefix(after, ":") {
 			after = strings.TrimSpace(strings.TrimPrefix(after, ":"))
+			// PHP nullable return hint (`: ?Foo`).
+			after = strings.TrimPrefix(after, "?")
 		} else {
 			after = ""
 		}
@@ -2454,13 +2456,13 @@ type typedMethodDeepChainCall struct {
 var (
 	newCtorMethodDeepChainCallRe = regexp.MustCompile(`\bnew\s+([A-Z][A-Za-z0-9_]*)\s*\([^)]*\)\s*\.\s*([A-Za-z_]\w*)\s*\([^)]*\)\s*\.\s*([A-Za-z_]\w*)\s*\([^)]*\)\s*\.\s*([A-Za-z_]\w*)\s*\(`)
 	ctorMethodDeepChainCallRe    = regexp.MustCompile(`\b([A-Z][A-Za-z0-9_]*)\s*\([^)]*\)\s*\.\s*([A-Za-z_]\w*)\s*\([^)]*\)\s*\.\s*([A-Za-z_]\w*)\s*\([^)]*\)\s*\.\s*([A-Za-z_]\w*)\s*\(`)
-	returnedMethodDeepChainRe    = regexp.MustCompile(`\b([A-Za-z_$][\w$]*)\s*\([^)]*\)\s*\.\s*([A-Za-z_]\w*)\s*\([^)]*\)\s*\.\s*([A-Za-z_]\w*)\s*\([^)]*\)\s*\.\s*([A-Za-z_]\w*)\s*\(`)
-	newCtorMethodChainCallRe     = regexp.MustCompile(`\bnew\s+([A-Z][A-Za-z0-9_]*)\s*\([^)]*\)\s*\.\s*([A-Za-z_]\w*)\s*\([^)]*\)\s*\.\s*([A-Za-z_]\w*)\s*\(`)
-	ctorMethodChainCallRe        = regexp.MustCompile(`\b([A-Z][A-Za-z0-9_]*)\s*\([^)]*\)\s*\.\s*([A-Za-z_]\w*)\s*\([^)]*\)\s*\.\s*([A-Za-z_]\w*)\s*\(`)
-	returnedMethodChainCallRe    = regexp.MustCompile(`\b([A-Za-z_$][\w$]*)\s*\([^)]*\)\s*\.\s*([A-Za-z_]\w*)\s*\([^)]*\)\s*\.\s*([A-Za-z_]\w*)\s*\(`)
-	newCtorMethodCallRe          = regexp.MustCompile(`\bnew\s+([A-Z][A-Za-z0-9_]*)\s*\([^)]*\)\s*\.\s*([A-Za-z_]\w*)\s*\(`)
-	ctorMethodCallRe             = regexp.MustCompile(`\b([A-Z][A-Za-z0-9_]*)\s*\([^)]*\)\s*\.\s*([A-Za-z_]\w*)\s*\(`)
-	returnedMethodCallRe         = regexp.MustCompile(`\b([A-Za-z_$][\w$]*)\s*\([^)]*\)\s*\.\s*([A-Za-z_]\w*)\s*\(`)
+	returnedMethodDeepChainRe    = regexp.MustCompile(`\b([A-Za-z_$][\w$]*)\s*\([^)]*\)\s*(?:->|\.)\s*([A-Za-z_]\w*)\s*\([^)]*\)\s*(?:->|\.)\s*([A-Za-z_]\w*)\s*\([^)]*\)\s*(?:->|\.)\s*([A-Za-z_]\w*)\s*\(`)
+	newCtorMethodChainCallRe     = regexp.MustCompile(`\bnew\s+([A-Z][A-Za-z0-9_]*)\s*\([^)]*\)\s*(?:->|\.)\s*([A-Za-z_]\w*)\s*\([^)]*\)\s*(?:->|\.)\s*([A-Za-z_]\w*)\s*\(`)
+	ctorMethodChainCallRe        = regexp.MustCompile(`\b([A-Z][A-Za-z0-9_]*)\s*\([^)]*\)\s*(?:->|\.)\s*([A-Za-z_]\w*)\s*\([^)]*\)\s*(?:->|\.)\s*([A-Za-z_]\w*)\s*\(`)
+	returnedMethodChainCallRe    = regexp.MustCompile(`\b([A-Za-z_$][\w$]*)\s*\([^)]*\)\s*(?:->|\.)\s*([A-Za-z_]\w*)\s*\([^)]*\)\s*(?:->|\.)\s*([A-Za-z_]\w*)\s*\(`)
+	newCtorMethodCallRe          = regexp.MustCompile(`\bnew\s+([A-Z][A-Za-z0-9_]*)\s*\([^)]*\)\s*(?:->|\.)\s*([A-Za-z_]\w*)\s*\(`)
+	ctorMethodCallRe             = regexp.MustCompile(`\b([A-Z][A-Za-z0-9_]*)\s*\([^)]*\)\s*(?:->|\.)\s*([A-Za-z_]\w*)\s*\(`)
+	returnedMethodCallRe         = regexp.MustCompile(`\b([A-Za-z_$][\w$]*)\s*\([^)]*\)\s*(?:->|\.)\s*([A-Za-z_]\w*)\s*\(`)
 )
 
 func chainedConstructorCalls(block string) []typedMethodCall {
@@ -3129,4 +3131,50 @@ func goFirstResultTypeForCallable(name string, from SymbolRecord, symbolsByShort
 		return agreed
 	}
 	return ""
+}
+
+// phpDocblockFuncRe pairs a docblock with the PHP function/method declared
+// immediately after it; phpDocReturnTagRe pulls the '@return' type out of
+// the docblock body.
+var (
+	phpDocblockFuncRe  = regexp.MustCompile(`(?s)/\*\*(.*?)\*/\s*(?:(?:abstract|final|public|protected|private|static)\s+)*function\s+&?([A-Za-z_]\w*)\s*\(`)
+	phpDocReturnTagRe  = regexp.MustCompile(`@return\s+([\\\w|]+)`)
+	phpDocPrimitiveSet = map[string]bool{
+		"array": true, "bool": true, "boolean": true, "callable": true,
+		"false": true, "float": true, "int": true, "integer": true,
+		"iterable": true, "mixed": true, "never": true, "null": true,
+		"object": true, "resource": true, "self": true, "static": true,
+		"string": true, "true": true, "void": true, "this": true,
+	}
+)
+
+// phpDocblockReturnTypes maps each PHP function/method name in a file to the
+// class-like '@return' type of its docblock. WordPress-era PHP declares
+// return types in docblocks rather than native hints, so this is the only
+// source for factory-return receiver inference there ('@return
+// WP_REST_Server' lets rest_get_server()->dispatch() resolve). Union types
+// take their first class-like member; FQCNs reduce to the short class name.
+func phpDocblockReturnTypes(content string) map[string]string {
+	out := map[string]string{}
+	for _, m := range phpDocblockFuncRe.FindAllStringSubmatch(content, -1) {
+		doc, name := m[1], m[2]
+		tag := phpDocReturnTagRe.FindStringSubmatch(doc)
+		if tag == nil {
+			continue
+		}
+		for _, alt := range strings.Split(tag[1], "|") {
+			alt = strings.TrimPrefix(alt, "\\")
+			if i := strings.LastIndex(alt, "\\"); i >= 0 {
+				alt = alt[i+1:]
+			}
+			if alt == "" || phpDocPrimitiveSet[strings.ToLower(alt)] || !isCapitalized(alt) {
+				continue
+			}
+			if _, exists := out[name]; !exists {
+				out[name] = alt
+			}
+			break
+		}
+	}
+	return out
 }
