@@ -163,7 +163,7 @@ Initial snapshot header:
 
 ```json
 {
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "provider": "entire-sem",
   "provider_version": "0.1.0",
   "repo_root": "/path/to/repo",
