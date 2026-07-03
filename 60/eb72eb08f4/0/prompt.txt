@@ -1,0 +1,185 @@
+Implement this plan:
+# Fix entire-sem call/definition extraction gaps found by the brain-bench C#/PHP batch
+
+## Context
+
+- **Tool source:** `~/Projects/entire-sem` (Go). Check the current working branch before starting
+  (`competitive-eval-manifest.json` in brain-bench pins branch `codex/full-plan-implementation`;
+  recent fixes also landed on `feat/relation-scaling` — inspect `git log` and pick the active one).
+- **Benchmark:** `~/Projects/brain-bench`, artifacts under `competitive-eval/`. The deployed binary
+  under test is `/tmp/entire-sem` (rebuild and replace it to re-measure).
+- Five bugs below were diagnosed from the snapshot NDJSONs of dotnet/runtime, dotnet/roslyn,
+  laravel/framework, and WordPress/wordpress-develop (checkouts under
+  `~/Projects/brain-bench/competitive-eval/repos/`). Each has a minimal repro in those checkouts.
+
+## Integrity rules (non-negotiable)
+
+- Fix the TOOL only. Do NOT edit anything in brain-bench: no task JSONs under
+  `competitive-eval/tasks/`, cance.py`, no committed scoreartifacts.
+- Benchmark scores may only my improved. After tool fixes,re-snapshot
+  and re-score via the existiificance.{json,md}` in the same PR that
+  updates score artifacts (brate that enforces this).
+- Add a regression test in entire-sem for every fix.
+
+## Bug 1 — C# grammar too old for C# 13; ERROR nodes swallow whole declarations (HIGHEST
+IMPACT)
+
+**Repro:** `competitive-eval/ystem.Private.CoreLib/src/System/Threading/Tasks/Task.cs`
+(7,755 lines). Snapshot reporing ? at line 4911 column 61near                                                                                     "public static void WaitAll(ps)"` — C# 13 params-collections syntax.                                                                                  Effects: only 177 symbols emiline 5479; the top-level`public partial                                                                          class Task` symbol is never eerloads (lines 6092+) are lost.
+**Blast radius:** parse-failure counts across C# corpus repos: runtime 3920, roslyn 1593,efcore 945, aspnetcore 544.
+                                                                                         **Fix (two independent parts,
+1. Upgrade the vendored/pinned `tree-sitter-c-sharp` grammar to a version that parses C# 13
+   (params collections, collection expressions, `field` keyword, etc.). Verify `Task.cs` parses
+   with zero ERROR nodes.
+2. Resilience regardless of gontains ERROR nodes, still emit symbols
+   from every well-formed subst never suppress the enclosing
+   class/namespace declaration or later well-formed members. (Consider extracting the    type
+   declaration header even when a member inside it errors.)                              
+**Acceptance:** entire-sem snapshot of the runtime checkout emits `Task` (kind class) and`WhenAll`
+(kind method) in `.../Tasks/Task.cs`; runtime parse-failure count drops substantially.   
+## Bug 2 — C# static type-qualified calls emit no edge                                   
+**Repro:** `competitive-eval/repos/roslyn/src/Workspaces/Core/Portable/Workspace/Workspace_Editor.cs`,
+method `UpdateCurrentContextMapping_NoLock` (line 797). Body calls
+`Contract.ThrowIfFalse(...)` ontracts/Contract.cs:82`).
+Snapshot has NO relation of any type for these calls — while `docIds.Contains(id)` /
+`docIds.Add(id)` in the same`src/Dependencies/Collections/OneOrMany.cs`
+with resolution `type_inferreypeName.Method()`) are beingdropped
+instead of resolved via the t
+
+**Acceptance:** snapshot emit`Workspace.UpdateCurrentContextMapping_NoLock` to
+`Contract.ThrowIfFalse` in `stract.cs`.
+
+## Bug 3 — C# nullable-annotar receivers lose their type
+
+**Repro:** `competitive-eval/ystem.Net.Http/src/System/Net/Http/SocketsHttpHandler/HttpConnectionPoolManager.cs`,
+method `SendAsyncCore` (line , out HttpConnectionPool?pool)` then
+`pool.SendAsync(request, asynnToken)` (line 368, targetdeclared in
+`.../ConnectionPool/HttpConneemits NO edge for`pool.SendAsync` (not
+even an external fallback), wn the same body resolve`exact`.
+Contrast with roslyn's `out v — suspect the nullable `?`annotation
+and/or the explicitly-typed osing: `CONSTRUCTS` for
+`new HttpConnectionPool(...)` (line 339) — check cross-file constructor edges while
+there.
+
+**Acceptance:** snapshot emitfrom`HttpConnectionPoolManager.SendAsyncCore`
+to `HttpConnectionPool.SendAs `HttpConnectionPool` ctor.
+
+## Bug 4 — PHP: calls inside buted; closure/param typeinference missing
+
+**Repro:** `competitive-eval/repos/framework/src/Illuminate/Container/Container.php`,
+`getClosure` (line 403) returrameters = []) use ($abstract,$concrete)
+{ ... return $container->resoaiseEvents: false); }`.
+Snapshot has NO edge from anything in `Container.php` for that `resolve` call (inbound
+edges to
+`Container.resolve` exist only from `make`, `get`, `resolveVariadicClass`).
+
+**Fix:** attribute closure-body calls to the enclosing named function/method (that is the
+semantics
+consumers and the benchmark expect: "getClosure calls resolve"). For the untyped
+`$container`
+receiver, add inference: docblock hints, `use`-scope, and how the closure is invoked in
+the same
+class (`build($concrete)` invokes it with `$this`).
+
+**Acceptance:** snapshot emits `CALLS` from `Container.getClosure` to `Container.resolve`
+(and
+`Container.build`).
+
+## Bug 5 — PHP: ambiguous name-only calls dropped; no return-type inference for
+function-call receivers
+
+**Repro A (ambiguity drop):**press-develop/src/wp-includes/rest-api/class-wp-rest-server.php`,
+`WP_REST_Server::dispatch` (ls('rest_pre_dispatch', ...)`(line 1073).
+`apply_filters` has 3 same-na(`src/wp-includes/plugin.php:174` —
+canonical; `src/wp-includes/c`src/wp-admin/includes/noop.php:40` stub).
+Snapshot emits NO edge for it the same body (`is_wp_error`,
+`rest_ensure_response`) correctly get `name_only` edges. Ambiguity must not mean silence:
+emit
+candidate edges to all same-name declarations (flagged ambiguous), or rank the canonical
+declaration (prefer non-stub,for bare-function call syntax).
+
+**Repro B (return-type receiv-api.php:602`,`rest_do_request()` calls
+`rest_get_server()->dispatch( (unique, declared same file,docblock
+`@return WP_REST_Server`) — sst -> WP_REST_Server.dispatch`edge.
+Infer receiver type from the cblock return type.
+
+**Acceptance:** snapshot emitr.dispatch` to `apply_filters`in
+`src/wp-includes/plugin.php` and from `rest_do_request` to
+`WP_REST_Server.dispatch`.
+
+## Suggested order
+
+Bug 1 (grammar + salvage) → Bug 3 → Bug 2 (both in the C# resolver, share test
+scaffolding) →
+Bug 4 → Bug 5 (both PHP resolver). Run entire-sem's full test suite after each; don't
+regress the
+recent scaling fixes (SIMILAR_TO per-bucket caps, minified-file skip, Rust workspace
+imports,
+Unicode-masking panic — see brain-bench `competitive-eval/results/breadth-status.md`).
+
+## Verification loop (per fix and at the end)
+
+```sh
+cd ~/Projects/entire-sem && gcmd/entire-sem && go test ./...
+
+cd ~/Projects/brain-bench
+# Re-snapshot ONLY the four batch repos (entire side; CBM artifacts are untouched):
+# runtime is C# offset 0, rosoffset 0, wordpress offset 2.
+python3 competitive-eval/tools/run_measurements.py --language C#  --offset 0 --limit 1
+--force
+python3 competitive-eval/tools/run_measurements.py --language C#  --offset 2 --limit 1
+--force
+python3 competitive-eval/tools/run_measurements.py --language PHP --offset 0 --limit 1
+--force
+python3 competitive-eval/tools/run_measurements.py --language PHP --offset 2 --limit 1
+--force
+# CAUTION: --force also re-runs the CBM index for that repo (cold). That is fine — the
+CBM
+# search/trace artifacts used by scorers are separate files and stay frozen unless you
+re-run
+# the run_cbm_*.py runners. Do NOT re-run those.
+
+# Re-score with the FROZEN task files (definitions + callgraph, per repo slug):
+for L_S in "csharp runtime" "" "php wordpress-develop"; do
+  set -- $L_S
+  python3 competitive-eval/to
+    --task competitive-eval/tasks/$1/$2.definitions.json \
+    --entire-ndjson competiti.full.ndjson \
+    --cbm-search-dir competitive-eval/results \
+    --out-json competitive-evre.json \
+    --out-md  competitive-eval/results/$2.definitions.score.md || true   # exit 2 =
+"entire not perfect", not an
+  python3 competitive-eval/tools/score_callgraph.py \
+    --task competitive-eval/t
+    --entire-ndjson competitive-eval/results/$2.entire-sem.full.ndjson \
+    --cbm-trace-dir competiti
+    --out-json competitive-eval/results/$2.callgraph.score.json \
+    --out-md  competitive-evamd || true
+done
+python3 competitive-eval/toolegeneratessignificance.{json,md}
+python3 tests/test_fixes.py   (untracked repos/,oracle-rust/) are OK; CI passes clean
+```
+
+Note: the big NDJSONs (runtimn take a couple of minutes —use
+generous timeouts / backgroun
+
+**Expected if all five bugs aore moves 71/78 → 78/78
+(runtime 16→19 of 19, roslyn 17→18 of 18, framework 20→21 of 21, wordpress-develop 18→20
+of 20).
+Report whatever actually happens — including any item that does NOT flip and why. Then
+commit the
+regenerated score artifacts + significance report together (brain-bench, separate PR from
+the
+entire-sem PR), and note in the PR body that scores moved due to tool fixes, with the
+entire-sem
+PR/commits linked. Before committing brain-bench artifacts, strip the machine path prefix
+from any
+CBM qualified_name fields if new ones appear
+(`Users-thomi-Projects-brain-` → `competitive-eval-repos-`,precedent
+commit 9917574) — score JSONs` or `Users-thomi` strings.
+
+Longer term (separate PR, optorpus with the fixed binary —the grammar
+bump should cut "degraded" pa C# repos and may flip otherrepos'
+items; the same regenerate-ans.
+
+Two notes on using it: give tboth checkouts(~/Projects/entire-sem and ~/Projects/brain-bench), and keep the two PRs separate as the plan says — tool fixes in entk artifacts in brain-bench — so the audit trail stays clean. The expected-outcome line is a prediction, not a target; if an item doesn't flip, that's p to force.
