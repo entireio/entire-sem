@@ -1,0 +1,136 @@
+<task-notification>
+<task-id>bd2l054fh</task-id>
+<summary>Monitor event: "brain-bench re-measurement of runtime/roslyn/framework/wordpress"</summary>
+<event>=== C# offset 2 (roslyn) Fri Jul  3 10:38:15 CEST 2026</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bd2l054fh</task-id>
+<summary>Monitor event: "brain-bench re-measurement of runtime/roslyn/framework/wordpress"</summary>
+<event>{"codebase_memory_mcp": {"artifact": "/Users/thomi/Projects/brain-bench/competitive-eval/results/roslyn.cbm.index.json", "cache_state": "cold", "edges": 2096111, "excluded": {"count": 3, "dirs": [".git", ".vscode", "src/Razor/src/Compiler/.vscode"], "truncated": false}, "nodes": 395872, "status": "indexed", "time": {"logged_peak_mb": 2075, "max_rss_bytes": 6534578176, "time_line": "306.55 real      1762.00 user        41.60 sys"}}, "commit": "2482b0fb93ad521e88c76b65472a2ccebe0b54f5", "entire_se...(truncated)
+=== PHP offset 0 (framework) Fri Jul  3 11:01:51 CEST 2026</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bd2l054fh</task-id>
+<summary>Monitor event: "brain-bench re-measurement of runtime/roslyn/framework/wordpress"</summary>
+<event>=== PHP offset 2 (wordpress) Fri Jul  3 11:02:52 CEST 2026</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bd2l054fh</task-id>
+<summary>Monitor event: "brain-bench re-measurement of runtime/roslyn/framework/wordpress"</summary>
+<event>=== ALL DONE Fri Jul  3 11:05:23 CEST 2026</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+Progress update?
+
+---
+
+The research paper linked in the CBM repo - https://github.com/DeusData/codebase-memory-mcp - mentions that CBM was evaluated against 31 repos. Which are those?
+
+---
+
+How about we add the repos from BENCHMARK.md to our bench?
+
+---
+
+<task-notification>
+<task-id>a4105c1c345e1c75a</task-id>
+<tool-use-id>toolu_016LHWCstNoCucHNUv7u79Ug</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-thomi-Projects-entire-sem/3535d4da-9e32-4c85-a203-63a84eabcd32/tasks/a4105c1c345e1c75a.output</output-file>
+<status>completed</status>
+<summary>Agent "Curate jq C ground truth" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>All symbols verified unique. Here is the ground-truth report.
+
+# jq C Ground-Truth Report
+Repo: `~/Projects/brain-bench/competitive-eval/repos/jq` @ `579e6f76cffd7643ba4002a2c3618a5ea710589a`
+
+## 1. DEFINITIONS (12)
+Format: name | file | line | kind
+
+1. `jv_get_kind` | src/jv.c | 102 | function
+2. `jv_true` | src/jv.c | 126 | function
+3. `jv_number` | src/jv.c | 673 | function
+4. `jv_array` | src/jv.c | 986 | function
+5. `jv_string` | src/jv.c | 1323 | function
+6. `jv_object` | src/jv.c | 1849 | function
+7. `jv_copy` | src/jv.c | 2002 | function
+8. `jv_free` | src/jv.c | 2014 | function
+9. `jq_init` | src/execute.c | 1054 | function
+10. `jq_compile` | src/execute.c | 1260 | function
+11. `jv_dump` | src/jv_print.c | 393 | function
+12. `jv_parse` | src/jv_parse.c | 913 | function
+
+All 12 confirmed defined in exactly one .c file (grep of line-start definitions returned a single file each).
+
+## 2. CALLGRAPH — focus: `jq_next`
+- focus: `jq_next` | src/execute.c | 340 | function (signature `jv jq_next(jq_state *jq)`)
+
+### expected_inbound (callers of jq_next) — caller | file | call-site line
+1. `process` | src/main.c | 179  (`while (jv_is_valid(result = jq_next(jq)))`; func defined main.c:175)
+2. `run_jq_tests` | src/jq_test.c | 201  (func defined jq_test.c:91; also calls at 232)
+3. `test_jq_start_resets_state` | src/jq_test.c | 316  (func defined jq_test.c:302; also 343,347)
+4. `run_jq_recompile_tests` | src/jq_test.c | 410  (func defined jq_test.c:401; repeated 414–454)
+5. `run_jq_exhaust_and_reuse_tests` | src/jq_test.c | 475  (func defined jq_test.c:464; repeated 480–510)
+
+(No in-repo callers reside in execute.c itself; all callers are in main.c and jq_test.c.)
+
+### expected_outbound (direct calls in jq_next body) — callee | definition file | call line
+1. `stack_restore` | src/execute.c | (def 270) | called at 343
+2. `frame_current` | src/execute.c | (def 77) | called at 361 (and 406, 412)
+3. `set_error` | src/execute.c | (def 332) | called at 407
+4. `stack_pop` | src/execute.c | (def 169) | called at 414
+5. `stack_push` | src/execute.c | (def 162) | called at 415
+6. `jv_array_get` | src/jv.c | (def 997) | called at 406 (and 412)
+7. `jv_free` | src/jv.c | (def 2014) | called at 414
+
+(Mix of same-file execute.c helpers and cross-file jv.c calls; all same-repo, no libc.)
+
+### forbidden_outbound_names (identifiers in jq_next body that are NOT function calls)
+1. `pc` — local `uint16_t*` (line 343)
+2. `raising` — local `int` (line 346)
+3. `backtracking` — local `int` (line 347)
+4. `opcode` — local `uint16_t` (line 357)
+5. `jq-&gt;halted` — struct member (line 352)
+6. `jq-&gt;initial_execution` — struct member (line 347/349)
+7. `jq-&gt;subexp_nest` — struct member (line 451/456)
+
+Both ends of every listed edge were verified against the cited line numbers.</result>
+<usage><subagent_tokens>21771</subagent_tokens><tool_uses>12</tool_uses><duration_ms>94181</duration_ms></usage>
+</task-notification>
+
+---
+
+Any way to accelerate it?
+
+---
+
+<task-notification>
+<task-id>byq04txqz</task-id>
+<summary>Monitor event: "expansion measurements (8 CBM-corpus repos)"</summary>
+<event>=== cbm artifacts go/entire-sem Fri Jul  3 12:12:21 CEST 2026</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>byq04txqz</task-id>
+<summary>Monitor event: "expansion measurements (8 CBM-corpus repos)"</summary>
+<event>=== measure C offset 11 (codebase-memory-mcp) Fri Jul  3 12:12:23 CEST 2026</event>
+If this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.
+</task-notification>
