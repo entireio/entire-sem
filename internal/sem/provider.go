@@ -1616,6 +1616,32 @@ func resolveCallTargets(name string, from SymbolRecord, candidates, sameFile []S
 			Scope:        "workspace",
 		}}
 	}
+	if from.Language == "PHP" && len(remaining) > 1 {
+		// PHP repos commonly re-declare bare functions (WordPress ships
+		// apply_filters in plugin.php plus compat/noop stubs), and PHP has
+		// no import statements for functions to disambiguate through.
+		// Ambiguity must not mean silence: emit candidate edges to the
+		// same-name declarations, largest declaration first (the canonical
+		// implementation dwarfs its stubs), capped to keep noise bounded.
+		ranked := append([]SymbolRecord(nil), remaining...)
+		sort.SliceStable(ranked, func(i, j int) bool {
+			return ranked[i].EndLine-ranked[i].StartLine > ranked[j].EndLine-ranked[j].StartLine
+		})
+		if len(ranked) > 4 {
+			ranked = ranked[:4]
+		}
+		out := make([]resolvedCallTarget, 0, len(ranked))
+		for _, cand := range ranked {
+			out = append(out, resolvedCallTarget{
+				SymbolRecord: cand,
+				Confidence:   0.55,
+				Reason:       fmt.Sprintf("ambiguous bare call: candidate among %d same-name declarations", len(remaining)),
+				Resolution:   "name_only",
+				Scope:        "workspace",
+			})
+		}
+		return out
+	}
 	if cFamilyOverloadResolutionEnabled(from.Language) {
 		if overloads, ok := sameFileOverloadSet(remaining); ok {
 			out := make([]resolvedCallTarget, 0, len(overloads))
@@ -1964,6 +1990,29 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 						returnTypesBySymbolNameAndDir[symbol.Name][dir] = append(returnTypesBySymbolNameAndDir[symbol.Name][dir], typeName)
 					}
 				}
+			}
+		}
+	}
+	// PHP declares return types in docblocks far more often than in native
+	// hints (WordPress uses docblocks exclusively), and the signature pass
+	// above cannot see them. Harvest '@return Type' from the docblock
+	// directly above each PHP function/method so factory-return and
+	// chained-call receiver inference work (rest_get_server()->dispatch()
+	// must resolve through '@return WP_REST_Server').
+	if needsReceiverCalls {
+		for _, file := range files {
+			if file.Language != "PHP" {
+				continue
+			}
+			content, ok := readContent(file.Path)
+			if !ok {
+				continue
+			}
+			for name, typeName := range phpDocblockReturnTypes(content) {
+				if returnTypesBySymbolNameAndFile[name] == nil {
+					returnTypesBySymbolNameAndFile[name] = map[string][]string{}
+				}
+				returnTypesBySymbolNameAndFile[name][file.Path] = append(returnTypesBySymbolNameAndFile[name][file.Path], typeName)
 			}
 		}
 	}
@@ -3459,6 +3508,16 @@ func receiverCallRelations(from SymbolRecord, block string, methodsByContainer m
 				targetID = sym.ID
 				confidence = 0.8
 				reason = "method call resolved via typed property receiver"
+			} else if from.ContainerID != "" && strings.EqualFold(call.Receiver, enclosingTypeShortName(from)) {
+				// An untyped receiver named after the enclosing type resolves
+				// to it: laravel/framework's Container.getClosure returns a
+				// closure whose $container parameter is (by convention) the
+				// container itself, so $container->resolve(...) is a call on
+				// the enclosing class. The method-existence check below keeps
+				// this honest — no edge unless the type defines the method.
+				targetID = from.ContainerID
+				confidence = 0.62
+				reason = "method call receiver named after the enclosing type"
 			} else {
 				continue
 			}
@@ -7225,6 +7284,19 @@ func firstTypeLikeNamed(records []SymbolRecord, name string) (SymbolRecord, bool
 // Same-file preference matters when a repo vendors a mirror copy of its sources
 // (e.g. a Deno build alongside src/): without it a class-qualified call could
 // bind to the twin in the wrong file.
+// enclosingTypeShortName extracts the short name of a symbol's enclosing
+// type from its container ID (".../class:Outer.Inner" -> "Inner").
+func enclosingTypeShortName(from SymbolRecord) string {
+	id := from.ContainerID
+	if idx := strings.LastIndex(id, ":"); idx >= 0 {
+		id = id[idx+1:]
+	}
+	if idx := strings.LastIndex(id, "."); idx >= 0 {
+		id = id[idx+1:]
+	}
+	return id
+}
+
 // typeLikeNamedWithMethod resolves a type name to the declaration that
 // actually defines the called method. C# partial classes declare the same
 // type in several files, and the lexically-first declaration may not hold
