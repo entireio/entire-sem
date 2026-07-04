@@ -819,6 +819,7 @@ func maskCSharpUnsupportedSyntax(content string) string {
 			// dictionary index initializers with non-literal keys
 			// (`{ [key] = value }`).
 			text = maskPointerDerefCasts(text)
+			text = maskBareAsyncArguments(text)
 			lines[i] = replacePatternSameLength(text, cSharpDictionaryIndexInitializerPattern, "{}") + newline
 		}
 	}
@@ -856,6 +857,21 @@ var ocamlValStartKeywords = map[string]struct{}{
 // ocamlContinuesValSignature reports whether a line continues the multi-line
 // type of the preceding `val` (i.e. it is non-blank, not a comment, and does
 // not begin a new top-level signature item).
+// maskBareAsyncArguments rewrites a bare `async` identifier in argument
+// position (`F(request, async, this)`) into `true ` (same byte length).
+// tree-sitter-c-sharp reads argument-position `async` as the start of an
+// async lambda and the resulting ERROR can swallow the enclosing class
+// declaration (dotnet/runtime HttpConnectionPool.cs lost its class symbol
+// and every member's qualification). Lambda forms (`async x => ...`,
+// `async () => ...`) never match: the token must be followed directly by
+// `,` or `)`. Applied twice because adjacent matches share delimiters.
+func maskBareAsyncArguments(text string) string {
+	for i := 0; i < 2; i++ {
+		text = cSharpBareAsyncArgumentPattern.ReplaceAllString(text, "${1}true $2")
+	}
+	return text
+}
+
 func ocamlContinuesValSignature(line string) bool {
 	t := strings.TrimSpace(line)
 	if t == "" || strings.HasPrefix(t, "(*") {
@@ -1142,6 +1158,7 @@ func maskSwiftOptionalBindingShorthand(text string) (string, bool) {
 
 var (
 	cSharpPointerDerefCastPattern               = regexp.MustCompile(`\*+\(\s*[A-Za-z_@][\w<>,.\s]*?\*+\s*\)`)
+	cSharpBareAsyncArgumentPattern              = regexp.MustCompile(`([(,]\s*)async(\s*[,)])`)
 	cSharpDictionaryIndexInitializerPattern     = regexp.MustCompile(`\{\s*\[[^\]\n]+\]\s*=\s*[^{}\n]+\}`)
 	swiftTypedThrowsPattern                     = regexp.MustCompile(`throws\([A-Za-z_][A-Za-z0-9_.<>]*\)`)
 	swiftOptionalBindingShorthandPattern        = regexp.MustCompile(`\bif\s+let\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{`)

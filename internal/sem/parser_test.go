@@ -3201,3 +3201,44 @@ typedef struct {
 		}
 	}
 }
+
+func TestTreeSitterParserCSharpBareAsyncArgumentMasked(t *testing.T) {
+	// dotnet/runtime passes `async` (a bool parameter) as a plain argument:
+	// `AuthenticationHelper.SendWithRequestAuthAsync(request, async, ...)`.
+	// tree-sitter-c-sharp reads argument-position `async` as an async-lambda
+	// head; the ERROR swallowed HttpConnectionPool's class declaration and
+	// left every member unqualified. The masker rewrites the token to a
+	// same-length literal so the file parses.
+	entities, language, status := TreeSitterParser{}.ParseWithStatus("Pool.cs", `internal sealed class HttpConnectionPool
+{
+    public string SendAsync(string request, bool async)
+    {
+        return Helper.F(request, async, this);
+    }
+
+    public string SendWithProxyAuthAsync(string request, bool async)
+    {
+        return G(async);
+    }
+}
+`)
+	if language != "C#" {
+		t.Fatalf("language = %q", language)
+	}
+	if status.ParseError {
+		t.Fatalf("bare async argument must be masked into parseable form, got: %#v", status)
+	}
+	seen := map[string]string{}
+	for _, entity := range entities {
+		seen[entity.Name] = entity.Kind
+	}
+	for name, kind := range map[string]string{
+		"HttpConnectionPool":                        "class",
+		"HttpConnectionPool.SendAsync":              "method",
+		"HttpConnectionPool.SendWithProxyAuthAsync": "method",
+	} {
+		if seen[name] != kind {
+			t.Fatalf("%s kind = %q, want %q in %#v", name, seen[name], kind, seen)
+		}
+	}
+}
