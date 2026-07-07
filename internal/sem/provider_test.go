@@ -11929,8 +11929,9 @@ sub stash { return {} }
 
 sub url_for {
   my ($self, $target) = (shift, shift // '');
+  my $url  = Mojo::URL->new;
   my $req  = $self->req;
-  my $base = $self->base;
+  my $base = $url->base($req->url->base->clone)->base->userinfo(undef);
 
   if (defined(my $prefix = $self->stash->{path})) {
     my $real = $req->url->path->to_route;
@@ -11947,8 +11948,26 @@ sub to_route {
 `)
 	writeFile(t, repo, "lib/Mojo/URL.pm", `package Mojo::URL;
 
+sub new {
+  return bless {}, shift;
+}
+
+sub base {
+  return shift;
+}
+
+sub userinfo {
+  return shift;
+}
+
 sub protocol {
   return 'http';
+}
+`)
+	writeFile(t, repo, "lib/Mojo/Transaction/WebSocket.pm", `package Mojo::Transaction::WebSocket;
+
+sub protocol {
+  return 'websocket';
 }
 `)
 	snapshot, err := BuildProviderSnapshotWithOptions(t.Context(), repo, "test-version", ProviderSnapshotOptions{Worktree: true})
@@ -11965,20 +11984,23 @@ sub protocol {
 			calls[lastSegment(r.FromID)+"->"+lastSegment(r.ToID)] = r
 		}
 	}
-	for _, want := range []string{
-		"url_for->stash",
-		"url_for->to_route",
-		"url_for->protocol",
-	} {
+	for _, want := range []string{"url_for->stash", "url_for->to_route", "url_for->protocol"} {
 		r, ok := calls[want]
 		if !ok {
 			t.Fatalf("missing Perl receiver call %s in %#v", want, calls)
 		}
-		if got := r.Reason; got != "Perl receiver call matched globally unique subroutine name" {
-			t.Fatalf("%s reason = %q", want, got)
+		wantReason := "Perl receiver call matched globally unique subroutine name"
+		if want == "url_for->protocol" {
+			wantReason = "Perl receiver call resolved via inferred package receiver type"
+		}
+		if got := r.Reason; got != wantReason {
+			t.Fatalf("%s reason = %q, want %q", want, got, wantReason)
 		}
 		if symbolsByID[r.ToID].Language != "Perl" {
 			t.Fatalf("%s resolved to non-Perl target: %#v", want, symbolsByID[r.ToID])
+		}
+		if want == "url_for->protocol" && symbolsByID[r.ToID].FilePath != "lib/Mojo/URL.pm" {
+			t.Fatalf("%s resolved to wrong Perl protocol target: %#v", want, symbolsByID[r.ToID])
 		}
 	}
 }

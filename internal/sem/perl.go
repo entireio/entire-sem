@@ -1,6 +1,7 @@
 package sem
 
 import (
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -8,6 +9,8 @@ import (
 var (
 	perlReceiverChainRe   = regexp.MustCompile(`(?:\$?[A-Za-z_]\w*|[A-Za-z_]\w*(?:::[A-Za-z_]\w*)*)[ \t]*(?:->[ \t]*[A-Za-z_]\w*[ \t]*(?:\([^()\n]*\))?[ \t]*)+`)
 	perlReceiverSegmentRe = regexp.MustCompile(`->[ \t]*([A-Za-z_]\w*)`)
+	perlCtorAssignRe      = regexp.MustCompile(`\b(?:my|our|state)?\s*\$([A-Za-z_]\w*)\s*=\s*([A-Z][A-Za-z0-9_]*(?:::[A-Za-z_]\w*)*)\s*->[ \t]*new\b`)
+	perlChainAssignRe     = regexp.MustCompile(`(?m)\b(?:my|our|state)?\s*\$([A-Za-z_]\w*)\s*=\s*\$([A-Za-z_]\w*)([^\n;]*)`)
 )
 
 // perlReceiverCalls extracts terminal `$obj->method` call sites. Perl commonly
@@ -40,4 +43,75 @@ func perlReceiverCalls(block string) []receiverCall {
 		out = append(out, receiverCall{Receiver: receiver, Method: method})
 	}
 	return out
+}
+
+func perlLocalVarTypes(block string) map[string]string {
+	stripped := stripCodeLiteralsAndComments(block)
+	out := map[string]string{}
+	for _, m := range perlCtorAssignRe.FindAllStringSubmatch(stripped, -1) {
+		if len(m) != 3 {
+			continue
+		}
+		out[m[1]] = m[2]
+	}
+	for changed := true; changed; {
+		changed = false
+		for _, m := range perlChainAssignRe.FindAllStringSubmatch(stripped, -1) {
+			if len(m) != 4 {
+				continue
+			}
+			dst, receiver, chain := m[1], m[2], m[3]
+			if _, exists := out[dst]; exists {
+				continue
+			}
+			receiverType := out[receiver]
+			if receiverType == "" {
+				continue
+			}
+			// Treat multi-hop chains on a typed Perl receiver as fluent
+			// same-object assignments. This covers idioms such as
+			// `$base = $url->base(...)->base->userinfo(...)` without typing
+			// single-hop value getters like `$path = $url->path`.
+			if len(perlReceiverSegmentRe.FindAllStringSubmatch(chain, -1)) < 2 {
+				continue
+			}
+			out[dst] = receiverType
+			changed = true
+		}
+	}
+	return out
+}
+
+func perlCallableForType(typeName, method string, candidates []SymbolRecord) (SymbolRecord, bool) {
+	var matches []SymbolRecord
+	for _, candidate := range candidates {
+		if candidate.Language != "Perl" || candidate.Name != method {
+			continue
+		}
+		if candidate.Kind != "function" && candidate.Kind != "method" {
+			continue
+		}
+		if perlSymbolFileMatchesType(candidate.FilePath, typeName) {
+			matches = append(matches, candidate)
+		}
+	}
+	if len(matches) == 1 {
+		return matches[0], true
+	}
+	return SymbolRecord{}, false
+}
+
+func perlSymbolFileMatchesType(filePath, typeName string) bool {
+	filePath = filepath.ToSlash(filePath)
+	typePath := strings.ReplaceAll(strings.TrimSpace(typeName), "::", "/")
+	if typePath == "" {
+		return false
+	}
+	if strings.HasSuffix(filePath, typePath+".pm") {
+		return true
+	}
+	if strings.Contains(typeName, "::") {
+		return false
+	}
+	return filepath.Base(filePath) == typeName+".pm"
 }

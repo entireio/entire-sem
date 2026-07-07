@@ -3572,6 +3572,13 @@ func receiverCallRelations(from SymbolRecord, block string, methodsByContainer m
 			localTypes[name] = typeName
 		}
 	}
+	if from.Language == "Perl" {
+		for name, typeName := range perlLocalVarTypes(block) {
+			if _, exists := localTypes[name]; !exists {
+				localTypes[name] = typeName
+			}
+		}
+	}
 	if from.Language == "Kotlin" {
 		// Declared-type locals (`val writerToClose: WebSocketWriter?`), which
 		// the generic constructor-assignment scan cannot type.
@@ -3798,6 +3805,45 @@ func receiverCallRelations(from SymbolRecord, block string, methodsByContainer m
 			WarningCodes: []string{},
 		})
 		methodResolved[call.Receiver+"."+call.Method] = true
+	}
+	if from.Language == "Perl" {
+		for _, call := range calls {
+			if methodResolved[call.Receiver+"."+call.Method] {
+				continue
+			}
+			typeName := varTypes[call.Receiver]
+			if typeName == "" {
+				continue
+			}
+			target, ok := perlCallableForType(typeName, call.Method, symbolsByShortName[call.Method])
+			if !ok || target.ID == from.ID {
+				continue
+			}
+			scope := "file"
+			if target.FilePath != from.FilePath {
+				scope = "module"
+			}
+			relations = append(relations, RelationRecord{
+				RecordType:    "relation",
+				FromID:        from.ID,
+				ToID:          target.ID,
+				Type:          "CALLS",
+				Confidence:    0.76,
+				Reason:        "Perl receiver call resolved via inferred package receiver type",
+				RelationScope: scope,
+				Resolution:    "type_inferred",
+				TargetKind:    "symbol",
+				Evidence: []Evidence{{
+					Kind:      "call_site",
+					FilePath:  from.FilePath,
+					StartLine: from.StartLine,
+					EndLine:   from.EndLine,
+					Detail:    call.Receiver + "." + call.Method,
+				}},
+				WarningCodes: []string{},
+			})
+			methodResolved[call.Receiver+"."+call.Method] = true
+		}
 	}
 	for _, call := range calls {
 		var targetID string
