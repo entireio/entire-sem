@@ -409,6 +409,57 @@ func haskellApplied(s string, start, end int) bool {
 	return op || haskellArgumentFollows(s, end)
 }
 
+func haskellFirstArgHigherOrder(word string) bool {
+	switch word {
+	case "all", "any", "filter", "find", "foldl", "foldl'", "foldr",
+		"fmap", "map", "mapM", "mapM_", "sortOn", "traverse", "traverse_":
+		return true
+	}
+	return false
+}
+
+func haskellHigherOrderArgSite(s string, end int, inBinder func(int) bool, binderNames map[string]bool) (haskellCallSite, bool) {
+	i := skipHaskellSpace(s, end)
+	if i >= len(s) {
+		return haskellCallSite{}, false
+	}
+	paren := false
+	if s[i] == '(' {
+		paren = true
+		i = skipHaskellSpace(s, i+1)
+	}
+	if i >= len(s) || inBinder(i) {
+		return haskellCallSite{}, false
+	}
+	if m := haskellQualifiedRe.FindStringSubmatchIndex(s[i:]); m != nil && m[0] == 0 {
+		absEnd := i + m[1]
+		if paren {
+			j := skipHaskellSpace(s, absEnd)
+			if j >= len(s) || s[j] != ')' {
+				return haskellCallSite{}, false
+			}
+		}
+		return haskellCallSite{Path: s[i+m[2] : i+m[3]], Name: s[i+m[4] : i+m[5]]}, true
+	}
+	if m := haskellIdentRe.FindStringIndex(s[i:]); m != nil && m[0] == 0 {
+		name := s[i : i+m[1]]
+		if name[0] >= 'A' && name[0] <= 'Z' {
+			return haskellCallSite{}, false
+		}
+		if haskellKeyword(name) || binderNames[name] {
+			return haskellCallSite{}, false
+		}
+		if paren {
+			j := skipHaskellSpace(s, i+m[1])
+			if j >= len(s) || s[j] != ')' {
+				return haskellCallSite{}, false
+			}
+		}
+		return haskellCallSite{Name: name}, true
+	}
+	return haskellCallSite{}, false
+}
+
 // haskellCallSites scans a Haskell block for application expressions,
 // deduplicated and in deterministic order. Qualified applications
 // (`Alias.fn args`) are matched anywhere in expression position; bare
@@ -434,6 +485,28 @@ func haskellCallSites(block string) []haskellCallSite {
 			continue // value reference or operator operand, not an application
 		}
 		seen[haskellCallSite{Path: stripped[m[2]:m[3]], Name: stripped[m[4]:m[5]]}] = true
+	}
+	for _, m := range haskellIdentRe.FindAllStringIndex(stripped, -1) {
+		start, end := m[0], m[1]
+		word := stripped[start:end]
+		if !haskellFirstArgHigherOrder(word) || qualifiedAt[start] {
+			continue
+		}
+		if inBinder(start) || binderNames[word] {
+			continue
+		}
+		if start > 0 {
+			switch stripped[start-1] {
+			case '.', '\'', '@', '~', '#', '\\':
+				continue
+			}
+		}
+		if !haskellApplied(stripped, start, end) {
+			continue
+		}
+		if site, ok := haskellHigherOrderArgSite(stripped, end, inBinder, binderNames); ok {
+			seen[site] = true
+		}
 	}
 	for _, m := range haskellIdentRe.FindAllStringIndex(stripped, -1) {
 		start, end := m[0], m[1]

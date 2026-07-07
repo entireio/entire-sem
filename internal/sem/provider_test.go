@@ -1128,6 +1128,40 @@ def request():
 	}
 }
 
+func TestPythonDottedImportedModuleCallsResolveToLocalSymbols(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "src/acme_pkg/__init__.py", "")
+	writeFile(t, repo, "src/acme_pkg/service.py", `def run():
+    return "ok"
+`)
+	writeFile(t, repo, "src/acme_pkg/consumer.py", `import acme_pkg.service
+
+def call_service():
+    return acme_pkg.service.run()
+`)
+	writeFile(t, repo, "Lib/genericpath.py", `def isdir(path):
+    return False
+`)
+	writeFile(t, repo, "Lib/shutil.py", `import os
+
+def copy2(src, dst):
+    if os.path.isdir(dst):
+        return dst
+    return src
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasRelationBySymbolNameAndFile(snapshot, "CALLS", "call_service", "src/acme_pkg/consumer.py", "run", "src/acme_pkg/service.py") {
+		t.Fatalf("missing package.module.function dotted Python call: %#v", relationsOfType(snapshot.Relations, "CALLS"))
+	}
+	if !hasRelationBySymbolNameAndFile(snapshot, "CALLS", "copy2", "Lib/shutil.py", "isdir", "Lib/genericpath.py") {
+		t.Fatalf("missing os.path.isdir -> genericpath.isdir call: %#v", relationsOfType(snapshot.Relations, "CALLS"))
+	}
+}
+
 func TestSetupCFGNameParsingNormalizesPythonPackage(t *testing.T) {
 	name := parseSetupCFGName(`[metadata]
 Name = acme-tools
@@ -11441,6 +11475,7 @@ abstract mixin class BaseClient implements Client {
       {Object? body, Encoding? encoding}) async {
     var request = Request(method, url);
     if (headers != null) request.headers.addAll(headers);
+    if (body is Map<String, String>) request.bodyFields = body;
     return Response.fromStream(await send(request));
   }
 
@@ -11449,6 +11484,8 @@ abstract mixin class BaseClient implements Client {
 `)
 	writeFile(t, repo, "lib/src/request.dart", `class Request extends BaseRequest {
   Request(super.method, super.url);
+
+  set bodyFields(Map<String, String> fields) {}
 }
 `)
 	writeFile(t, repo, "lib/src/response.dart", `class Response extends BaseResponse {
@@ -11497,6 +11534,9 @@ abstract mixin class BaseClient implements Client {
 	if _, ok := edges["CALLS BaseClient._sendUnstreamed->Response.fromStream"]; !ok {
 		t.Fatalf("missing _sendUnstreamed->Response.fromStream call: %#v", edges)
 	}
+	if _, ok := edges["CALLS BaseClient._sendUnstreamed->Request.bodyFields"]; !ok {
+		t.Fatalf("missing _sendUnstreamed->Request.bodyFields setter call: %#v", edges)
+	}
 	// Constructor call to a class in another file: a call to a type-like symbol
 	// is recorded as CONSTRUCTS (the convention shared with Go/TS), the name
 	// Request must not be dropped by the JS-builtin ignore list in Dart, and the
@@ -11536,6 +11576,10 @@ Person <- R6::R6Class("Person", public = list(
   greet = function() cat("hi")
 ))
 
+build_ggplot <- S7::method(plot_theme, class_theme) <- function(x, y) {
+  helper(x)
+}
+
 render <- function(x) {
   helper(x)
 }
@@ -11561,6 +11605,9 @@ render <- function(x) {
 	}
 	if kinds["Person"] != "class" {
 		t.Fatalf("R R6 class not extracted: %#v", kinds)
+	}
+	if kinds["build_ggplot"] != "function" {
+		t.Fatalf("R chained assignment function not extracted: %#v", kinds)
 	}
 	// Anonymous function_definition nodes must not invent symbols named after
 	// their first parameter.

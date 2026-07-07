@@ -2584,6 +2584,18 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 						callNames[name] = struct{}{}
 					}
 				}
+				callImportsByName := importsByName
+				dottedPythonCallNames := map[string]bool{}
+				if file.Language == "Python" {
+					if dottedImports := pythonDottedCallImportedNames(callBlock, importsByName); len(dottedImports) > 0 {
+						callImportsByName = cloneStringSliceMap(importsByName)
+						for name, modules := range dottedImports {
+							callNames[name] = struct{}{}
+							dottedPythonCallNames[name] = true
+							callImportsByName[name] = uniqueStrings(append(callImportsByName[name], modules...))
+						}
+					}
+				}
 				for _, name := range sortedKeysOf(callNames) {
 					if name == from.Name {
 						continue
@@ -2595,7 +2607,7 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 					if childNamesByContainer[from.ID][name] {
 						continue
 					}
-					targets := resolveCallTargets(name, from, symbolsByShortName[name], currentFileSymbols, importsByName, false)
+					targets := resolveCallTargets(name, from, symbolsByShortName[name], currentFileSymbols, callImportsByName, false)
 					for _, to := range targets {
 						// Call to a type (class/struct/...) is a constructor/conversion, not a
 						// callable->callable call: keep it as CONSTRUCTS for agents, out of CALLS.
@@ -2657,7 +2669,10 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 						}
 					}
 					if len(targets) == 0 {
-						for _, relation := range importedExternalCallRelationsForName(from, name, importsByName[name]) {
+						if dottedPythonCallNames[name] {
+							continue
+						}
+						for _, relation := range importedExternalCallRelationsForName(from, name, callImportsByName[name]) {
 							emit(relation)
 						}
 					}
@@ -3426,6 +3441,12 @@ func receiverCallRelations(from SymbolRecord, block string, methodsByContainer m
 	}
 	calls := receiverCalls(block)
 	allReceiverCalls := calls
+	if from.Language == "Dart" {
+		// Dart property assignment invokes a setter method when one exists
+		// (`request.bodyFields = bodyFields` calls `set bodyFields(...)`), but
+		// the generic receiver scanner only sees parenthesized calls.
+		calls = mergeReceiverCalls(calls, dartSetterAssignmentCalls(block))
+	}
 	if from.Language == "C#" {
 		// Chain tails (`Dependencies.MigrationsSqlGenerator.Generate(`) look
 		// like `MigrationsSqlGenerator.Generate(` to the generic scanner, and

@@ -6646,21 +6646,46 @@ func rAssignmentEntity(node *sitter.Node, src []byte, scope string) (string, str
 	if name == "" {
 		return "", "", false
 	}
+	kind, ok := rAssignedValueKind(value, src)
+	if !ok {
+		return "", "", false
+	}
+	if kind == "function" && scope != "" {
+		return "method", qualify(scope, name), true
+	}
+	return kind, name, true
+}
+
+func rAssignedValueKind(value *sitter.Node, src []byte) (string, bool) {
+	if !validNode(value) {
+		return "", false
+	}
 	switch value.Type() {
 	case "function_definition":
-		if scope != "" {
-			return "method", qualify(scope, name), true
-		}
-		return "function", name, true
+		return "function", true
 	case "call":
 		if fn := value.ChildByFieldName("function"); validNode(fn) {
 			callee := strings.TrimSpace(fn.Content(src))
 			if callee == "R6Class" || callee == "R6::R6Class" || callee == "setRefClass" || callee == "methods::setRefClass" {
-				return "class", name, true
+				return "class", true
 			}
 		}
+	case "binary_operator":
+		operator := value.ChildByFieldName("operator")
+		if !validNode(operator) {
+			return "", false
+		}
+		assigned := value.ChildByFieldName("rhs")
+		switch operator.Type() {
+		case "<-", "<<-", "=":
+		case "->", "->>":
+			assigned = value.ChildByFieldName("lhs")
+		default:
+			return "", false
+		}
+		return rAssignedValueKind(assigned, src)
 	}
-	return "", "", false
+	return "", false
 }
 
 // rAssignmentTargetName returns the defined name from the target side of an R

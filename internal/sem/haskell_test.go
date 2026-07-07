@@ -56,6 +56,10 @@ func TestHaskellCallSites(t *testing.T) {
   case res of
     Just cfg -> useConfig cfg
     Nothing -> pure ()
+  pure (map tshow res)
+  pure (map Text.pack labels)
+  let shadowed = id
+  pure (map shadowed res)
   pure $ combine res ` + "`orElse`" + ` fallback
   where
     i = interpretSymbolicPath mbWorkDir
@@ -86,6 +90,10 @@ func TestHaskellCallSites(t *testing.T) {
 		// Calls on the right-hand side of where bindings.
 		{Name: "interpretSymbolicPath"},
 		{Name: "localPackage"},
+		// Higher-order library calls can apply a function supplied as an
+		// argument, as in `map tshow xs`.
+		{Name: "tshow"},
+		{Path: "Text", Name: "pack"},
 	} {
 		if !got[want] {
 			t.Fatalf("missing call site %+v in %+v", want, sites)
@@ -107,6 +115,7 @@ func TestHaskellCallSites(t *testing.T) {
 		{Name: "i"},
 		{Name: "pkgId"},
 		{Name: "fallback"},
+		{Name: "shadowed"},
 	} {
 		if got[bogus] {
 			t.Fatalf("bogus call site %+v in %+v", bogus, sites)
