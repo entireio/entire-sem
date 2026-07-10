@@ -154,10 +154,47 @@ func perlHashStartsComment(bytes []byte, pos int) bool {
 	if bytes[pos-1] == '$' {
 		return false
 	}
+	if perlHashInHashDelimitedRegex(bytes, pos) {
+		return false
+	}
 	if perlHashStartsRegexLiteral(bytes, pos) {
 		return false
 	}
 	return true
+}
+
+func perlHashInHashDelimitedRegex(bytes []byte, pos int) bool {
+	lineStart := pos
+	for lineStart > 0 && bytes[lineStart-1] != '\n' && bytes[lineStart-1] != '\r' {
+		lineStart--
+	}
+	line := string(bytes[lineStart : pos+1])
+	for i := 0; i < len(line); i++ {
+		for _, operator := range []string{"qr", "tr", "s", "m", "y"} {
+			if !strings.HasPrefix(line[i:], operator+"#") {
+				continue
+			}
+			if i > 0 && perlIdentByte(line[i-1]) {
+				continue
+			}
+			segment := line[i:]
+			if semi := strings.IndexByte(segment, ';'); semi >= 0 && i+semi < pos-lineStart {
+				continue
+			}
+			hashes := strings.Count(segment, "#")
+			if hashes == 0 {
+				continue
+			}
+			limit := 2
+			if operator == "s" || operator == "tr" || operator == "y" {
+				limit = 3
+			}
+			if hashes <= limit {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func perlHashStartsRegexLiteral(bytes []byte, pos int) bool {

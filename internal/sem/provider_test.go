@@ -12107,7 +12107,9 @@ func TestPerlCommentStrippingPreservesHashSyntax(t *testing.T) {
 	stripped := stripPerlCodeLiteralsAndComments(`my $last = $#items;
 $value =~ s/#/x/;
 $value =~ s{#}{x}; $obj->method;
+$value =~ s#foo#bar#; $obj->hashSub;
 $value =~ m{#};
+$value =~ m#foo#; $obj->hashMatch;
 $value =~ /#/;
 /#/; $obj->implicit;
 if (/#/) { $obj->grouped; }
@@ -12124,8 +12126,14 @@ $base = $url->base # ->userinfo
 	if !strings.Contains(stripped, "s{#}{x}; $obj->method") {
 		t.Fatalf("Perl brace-delimited regex hash masked following code: %q", stripped)
 	}
+	if !strings.Contains(stripped, "$obj->hashSub") {
+		t.Fatalf("Perl hash-delimited substitution masked following code: %q", stripped)
+	}
 	if !strings.Contains(stripped, "m{#}") {
 		t.Fatalf("Perl match regex hash was masked: %q", stripped)
+	}
+	if !strings.Contains(stripped, "$obj->hashMatch") {
+		t.Fatalf("Perl hash-delimited match masked following code: %q", stripped)
 	}
 	if !strings.Contains(stripped, "/#/") {
 		t.Fatalf("Perl binding regex hash was masked: %q", stripped)
