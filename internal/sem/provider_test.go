@@ -12044,6 +12044,22 @@ sub protocol {
 	}
 }
 
+func TestPerlCommentArrowsDoNotAffectReceiverTypeInference(t *testing.T) {
+	block := `my $url = Mojo::URL->new;
+my $path = $url->path # ->base->userinfo
+;
+# $path->protocol
+`
+	types := perlLocalVarTypes(block)
+	if got := types["path"]; got != "" {
+		t.Fatalf("commented receiver chain inferred path type %q from %#v", got, types)
+	}
+	calls := perlReceiverCalls(block)
+	if len(calls) != 1 || calls[0].Receiver != "url" || calls[0].Method != "path" {
+		t.Fatalf("commented receiver call should be ignored while real call remains, got %#v", calls)
+	}
+}
+
 func TestHaskellSemanticExtraction(t *testing.T) {
 	// Haskell was promoted from inventory to the semantic tier (vendored
 	// grammar); it must now extract top-level function bindings (one symbol

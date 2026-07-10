@@ -31,6 +31,8 @@ func pythonDottedCallImportedNames(block string, importsByName map[string][]stri
 		for _, module := range pythonDottedCallModules(alias, tail, imported) {
 			out[name] = append(out[name], module)
 		}
+	}
+	for name := range out {
 		out[name] = uniqueStrings(out[name])
 	}
 	return out

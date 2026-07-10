@@ -17,7 +17,7 @@ var (
 // omits parentheses for method calls (`$self->stash`, `$base->protocol`), so the
 // generic receiver scanner only sees a subset of real call sites.
 func perlReceiverCalls(block string) []receiverCall {
-	stripped := stripCodeLiteralsAndComments(block)
+	stripped := stripPerlCodeLiteralsAndComments(block)
 	var out []receiverCall
 	seen := map[string]bool{}
 	for _, loc := range perlReceiverChainRe.FindAllStringIndex(stripped, -1) {
@@ -46,7 +46,7 @@ func perlReceiverCalls(block string) []receiverCall {
 }
 
 func perlLocalVarTypes(block string) map[string]string {
-	stripped := stripCodeLiteralsAndComments(block)
+	stripped := stripPerlCodeLiteralsAndComments(block)
 	out := map[string]string{}
 	for _, m := range perlCtorAssignRe.FindAllStringSubmatch(stripped, -1) {
 		if len(m) != 3 {
@@ -80,6 +80,22 @@ func perlLocalVarTypes(block string) map[string]string {
 		}
 	}
 	return out
+}
+
+func stripPerlCodeLiteralsAndComments(content string) string {
+	bytes := []byte(stripCodeLiteralsAndComments(content))
+	for i := 0; i < len(bytes); i++ {
+		if bytes[i] != '#' {
+			continue
+		}
+		j := i + 1
+		for j < len(bytes) && bytes[j] != '\n' && bytes[j] != '\r' {
+			j++
+		}
+		maskBytes(bytes, i, j)
+		i = j
+	}
+	return string(bytes)
 }
 
 func perlCallableForType(typeName, method string, candidates []SymbolRecord) (SymbolRecord, bool) {
