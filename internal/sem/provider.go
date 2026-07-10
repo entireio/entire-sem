@@ -2585,13 +2585,11 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 					}
 				}
 				callImportsByName := importsByName
-				dottedPythonCallNames := map[string]bool{}
 				if file.Language == "Python" {
 					if dottedImports := pythonDottedCallImportedNames(callBlock, importsByName); len(dottedImports) > 0 {
 						callImportsByName = cloneStringSliceMap(importsByName)
 						for name, modules := range dottedImports {
 							callNames[name] = struct{}{}
-							dottedPythonCallNames[name] = true
 							callImportsByName[name] = uniqueStrings(append(callImportsByName[name], modules...))
 						}
 					}
@@ -2669,9 +2667,6 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 						}
 					}
 					if len(targets) == 0 {
-						if dottedPythonCallNames[name] {
-							continue
-						}
 						for _, relation := range importedExternalCallRelationsForName(from, name, callImportsByName[name]) {
 							emit(relation)
 						}

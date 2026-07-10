@@ -1128,6 +1128,13 @@ def request():
 	}
 }
 
+func TestPythonDottedCallModulesDoesNotDuplicateResolvedTail(t *testing.T) {
+	got := pythonDottedCallModules("acme_pkg", []string{"service"}, []string{"acme_pkg.service"})
+	if want := []string{"acme_pkg.service"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("pythonDottedCallModules resolved tail = %#v, want %#v", got, want)
+	}
+}
+
 func TestPythonDottedImportedModuleCallsResolveToLocalSymbols(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "src/acme_pkg/__init__.py", "")
@@ -7296,9 +7303,13 @@ func Clean(value string) string {
 }
 `)
 	writeFile(t, repo, "encode.py", `import json
+import requests.sessions
 
 def encode(value):
     return json.dumps(value)
+
+def open_session():
+    return requests.sessions.session()
 `)
 	writeFile(t, repo, "read.ts", `import { readFileSync } from "fs"
 import * as path from "path"
@@ -7341,6 +7352,7 @@ export function readConfig(name: string): string {
 	}{
 		{from: "Clean", target: "strings.TrimSpace", detail: "strings.TrimSpace"},
 		{from: "encode", target: "json.dumps", detail: "json.dumps"},
+		{from: "open_session", target: "requests.sessions.session", detail: "session"},
 		{from: "readConfig", target: "fs.readFileSync", detail: "readFileSync"},
 		{from: "readConfig", target: "path.join", detail: "path.join"},
 		{from: "readConfig", target: "axios.get", detail: "axios.get"},

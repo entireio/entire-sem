@@ -25,6 +25,9 @@ func pythonDottedCallImportedNames(block string, importsByName map[string][]stri
 		}
 		name := parts[len(parts)-1]
 		tail := parts[1 : len(parts)-1]
+		if len(tail) == 0 {
+			continue
+		}
 		for _, module := range pythonDottedCallModules(alias, tail, imported) {
 			out[name] = append(out[name], module)
 		}
@@ -70,9 +73,8 @@ func pythonDottedCallModules(alias string, tail []string, imported []string) []s
 		add(module)
 		if len(tail) > 0 && !strings.Contains(module, "/") {
 			tailSpec := strings.Join(tail, ".")
-			add(module + "." + tailSpec)
-			if module == alias || strings.HasSuffix(module, "."+tailSpec) {
-				add(module)
+			if module == alias || !strings.HasSuffix(module, "."+tailSpec) {
+				add(module + "." + tailSpec)
 			}
 		}
 		if pythonOSPathDottedCall(alias, tail, module) {
