@@ -12060,6 +12060,18 @@ my $path = $url->path # ->base->userinfo
 	}
 }
 
+func TestPerlLocalVarTypesAllowKeywordlessAssignments(t *testing.T) {
+	types := perlLocalVarTypes(`$url = Mojo::URL->new;
+$base = $url->base->userinfo;
+`)
+	if got := types["url"]; got != "Mojo::URL" {
+		t.Fatalf("keywordless constructor inferred url type %q from %#v", got, types)
+	}
+	if got := types["base"]; got != "Mojo::URL" {
+		t.Fatalf("keywordless fluent assignment inferred base type %q from %#v", got, types)
+	}
+}
+
 func TestHaskellSemanticExtraction(t *testing.T) {
 	// Haskell was promoted from inventory to the semantic tier (vendored
 	// grammar); it must now extract top-level function bindings (one symbol

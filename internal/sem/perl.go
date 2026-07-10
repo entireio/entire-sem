@@ -9,8 +9,8 @@ import (
 var (
 	perlReceiverChainRe   = regexp.MustCompile(`(?:\$?[A-Za-z_]\w*|[A-Za-z_]\w*(?:::[A-Za-z_]\w*)*)[ \t]*(?:->[ \t]*[A-Za-z_]\w*[ \t]*(?:\([^()\n]*\))?[ \t]*)+`)
 	perlReceiverSegmentRe = regexp.MustCompile(`->[ \t]*([A-Za-z_]\w*)`)
-	perlCtorAssignRe      = regexp.MustCompile(`\b(?:my|our|state)?\s*\$([A-Za-z_]\w*)\s*=\s*([A-Z][A-Za-z0-9_]*(?:::[A-Za-z_]\w*)*)\s*->[ \t]*new\b`)
-	perlChainAssignRe     = regexp.MustCompile(`(?m)\b(?:my|our|state)?\s*\$([A-Za-z_]\w*)\s*=\s*\$([A-Za-z_]\w*)([^\n;]*)`)
+	perlCtorAssignRe      = regexp.MustCompile(`(?m)(?:^|[^\S\n])(?:(?:my|our|state)\s+)?\$([A-Za-z_]\w*)\s*=\s*([A-Z][A-Za-z0-9_]*(?:::[A-Za-z_]\w*)*)\s*->[ \t]*new\b`)
+	perlChainAssignRe     = regexp.MustCompile(`(?m)(?:^|[^\S\n])(?:(?:my|our|state)\s+)?\$([A-Za-z_]\w*)\s*=\s*\$([A-Za-z_]\w*)([^\n;]*)`)
 )
 
 // perlReceiverCalls extracts terminal `$obj->method` call sites. Perl commonly
