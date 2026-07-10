@@ -12072,6 +12072,22 @@ $base = $url->base->userinfo;
 	}
 }
 
+func TestPerlCommentStrippingPreservesHashSyntax(t *testing.T) {
+	stripped := stripPerlCodeLiteralsAndComments(`my $last = $#items;
+$value =~ s/#/x/;
+$base = $url->base # ->userinfo
+`)
+	if !strings.Contains(stripped, "$#items") {
+		t.Fatalf("Perl array-last-index token was masked: %q", stripped)
+	}
+	if !strings.Contains(stripped, "s/#/x/") {
+		t.Fatalf("Perl regex hash was masked: %q", stripped)
+	}
+	if strings.Contains(stripped, "userinfo") {
+		t.Fatalf("Perl line comment was not masked: %q", stripped)
+	}
+}
+
 func TestHaskellSemanticExtraction(t *testing.T) {
 	// Haskell was promoted from inventory to the semantic tier (vendored
 	// grammar); it must now extract top-level function bindings (one symbol

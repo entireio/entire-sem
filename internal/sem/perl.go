@@ -85,7 +85,7 @@ func perlLocalVarTypes(block string) map[string]string {
 func stripPerlCodeLiteralsAndComments(content string) string {
 	bytes := []byte(stripCodeLiteralsAndComments(content))
 	for i := 0; i < len(bytes); i++ {
-		if bytes[i] != '#' {
+		if bytes[i] != '#' || !perlHashStartsComment(bytes, i) {
 			continue
 		}
 		j := i + 1
@@ -96,6 +96,19 @@ func stripPerlCodeLiteralsAndComments(content string) string {
 		i = j
 	}
 	return string(bytes)
+}
+
+func perlHashStartsComment(bytes []byte, pos int) bool {
+	if pos == 0 {
+		return true
+	}
+	prev := bytes[pos-1]
+	switch prev {
+	case '\n', '\r', ' ', '\t', ';', '{', '}', '(', ')':
+		return true
+	default:
+		return false
+	}
 }
 
 func perlCallableForType(typeName, method string, candidates []SymbolRecord) (SymbolRecord, bool) {
