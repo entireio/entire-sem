@@ -145,6 +145,8 @@ func pythonDottedCallModules(alias string, tail []string, imported []string) []s
 					add(module + "." + tailSpec)
 				}
 			}
+		} else if module == "os" && alias == "path" && len(tail) == 0 {
+			add("os.path")
 		} else {
 			add(module)
 		}

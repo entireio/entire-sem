@@ -1525,25 +1525,7 @@ func resolveCallTargets(name string, from SymbolRecord, candidates, sameFile []S
 		return []resolvedCallTarget{best}
 	}
 
-	var imported []resolvedCallTarget
-	for _, to := range candidates {
-		if to.ID == from.ID || to.Kind == "field" || (to.Kind == "method" && !nameCallMayTargetMethod(from.Language) && !allowMethodTargets) || !localReachable(from, to) {
-			continue
-		}
-		if importedNameMatchesFile(importsByName[name], from.FilePath, to.FilePath) {
-			imported = append(imported, resolvedCallTarget{
-				SymbolRecord: to,
-				Confidence:   0.86,
-				Reason:       "direct call expression resolved through import path",
-				Resolution:   "import_resolved",
-				Scope:        "module",
-			})
-		}
-	}
-	if len(imported) == 0 {
-		imported = jsExportedImportFallbackTargets(name, from, candidates, importsByName[name], allowMethodTargets)
-	}
-	if len(imported) > 0 {
+	if imported := resolveImportedCallTargets(name, from, candidates, importsByName, allowMethodTargets); len(imported) > 0 {
 		return imported
 	}
 
@@ -1661,6 +1643,28 @@ func resolveCallTargets(name string, from SymbolRecord, candidates, sameFile []S
 		}
 	}
 	return nil
+}
+
+func resolveImportedCallTargets(name string, from SymbolRecord, candidates []SymbolRecord, importsByName map[string][]string, allowMethodTargets bool) []resolvedCallTarget {
+	var imported []resolvedCallTarget
+	for _, to := range candidates {
+		if to.ID == from.ID || to.Kind == "field" || (to.Kind == "method" && !nameCallMayTargetMethod(from.Language) && !allowMethodTargets) || !localReachable(from, to) {
+			continue
+		}
+		if importedNameMatchesFile(importsByName[name], from.FilePath, to.FilePath) {
+			imported = append(imported, resolvedCallTarget{
+				SymbolRecord: to,
+				Confidence:   0.86,
+				Reason:       "direct call expression resolved through import path",
+				Resolution:   "import_resolved",
+				Scope:        "module",
+			})
+		}
+	}
+	if len(imported) == 0 {
+		imported = jsExportedImportFallbackTargets(name, from, candidates, importsByName[name], allowMethodTargets)
+	}
+	return imported
 }
 
 func jsExportedImportFallbackTargets(name string, from SymbolRecord, candidates []SymbolRecord, modules []string, allowMethodTargets bool) []resolvedCallTarget {
@@ -2585,13 +2589,10 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 					}
 				}
 				callImportsByName := importsByName
+				var dottedCallImportsByName map[string][]string
 				if file.Language == "Python" {
 					if dottedImports := pythonDottedCallImportedNames(callBlock, importsByName); len(dottedImports) > 0 {
-						callImportsByName = cloneStringSliceMap(importsByName)
-						for name, modules := range dottedImports {
-							callNames[name] = struct{}{}
-							callImportsByName[name] = uniqueStrings(append(callImportsByName[name], modules...))
-						}
+						dottedCallImportsByName = dottedImports
 					}
 				}
 				for _, name := range sortedKeysOf(callNames) {
@@ -2669,6 +2670,45 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 					if len(targets) == 0 {
 						for _, relation := range importedExternalCallRelationsForName(from, name, callImportsByName[name]) {
 							emit(relation)
+						}
+					}
+				}
+				if len(dottedCallImportsByName) > 0 {
+					for _, name := range sortedKeysOf(dottedCallImportsByName) {
+						if name == from.Name {
+							continue
+						}
+						dottedImports := map[string][]string{name: dottedCallImportsByName[name]}
+						targets := resolveImportedCallTargets(name, from, symbolsByShortName[name], dottedImports, false)
+						for _, to := range targets {
+							relType := "CALLS"
+							if typeLikeKind(to.Kind) {
+								relType = "CONSTRUCTS"
+							}
+							emit(RelationRecord{
+								RecordType:    "relation",
+								FromID:        from.ID,
+								ToID:          to.ID,
+								Type:          relType,
+								Confidence:    to.Confidence,
+								Reason:        to.Reason,
+								RelationScope: to.Scope,
+								Resolution:    to.Resolution,
+								TargetKind:    "symbol",
+								Evidence: []Evidence{{
+									Kind:      "call_site",
+									FilePath:  from.FilePath,
+									StartLine: from.StartLine,
+									EndLine:   from.EndLine,
+									Detail:    name,
+								}},
+								WarningCodes: []string{},
+							})
+						}
+						if len(targets) == 0 {
+							for _, relation := range importedExternalCallRelationsForName(from, name, dottedImports[name]) {
+								emit(relation)
+							}
 						}
 					}
 				}

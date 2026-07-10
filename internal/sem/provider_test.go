@@ -1164,6 +1164,9 @@ func TestPythonDottedImportedCallsAllowSingleSelectorAlias(t *testing.T) {
 	if !slices.Contains(got["isdir"], "genericpath") {
 		t.Fatalf("path.isdir() did not include genericpath hint: %#v", got)
 	}
+	if slices.Contains(got["isdir"], "os") {
+		t.Fatalf("path.isdir() emitted bare os module hint: %#v", got)
+	}
 	if !slices.Contains(got["run"], "acme_pkg.service") {
 		t.Fatalf("svc.run() did not include imported module hint: %#v", got)
 	}
@@ -1203,6 +1206,33 @@ def copy2(src, dst):
 	}
 	if !hasRelationBySymbolNameAndFile(snapshot, "CALLS", "copy2", "Lib/shutil.py", "isdir", "Lib/genericpath.py") {
 		t.Fatalf("missing os.path.isdir -> genericpath.isdir call: %#v", relationsOfType(snapshot.Relations, "CALLS"))
+	}
+}
+
+func TestPythonDottedImportedCallsDoNotResolveToSameFileBareName(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "src/pkg/__init__.py", "")
+	writeFile(t, repo, "src/pkg/sub.py", `def fn():
+    return "remote"
+`)
+	writeFile(t, repo, "src/consumer.py", `import pkg.sub
+
+def fn():
+    return "local"
+
+def call_remote():
+    return pkg.sub.fn()
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasRelationBySymbolNameAndFile(snapshot, "CALLS", "call_remote", "src/consumer.py", "fn", "src/pkg/sub.py") {
+		t.Fatalf("missing dotted imported call to remote fn: %#v", relationsOfType(snapshot.Relations, "CALLS"))
+	}
+	if hasRelationBySymbolNameAndFile(snapshot, "CALLS", "call_remote", "src/consumer.py", "fn", "src/consumer.py") {
+		t.Fatalf("dotted imported call resolved to same-file bare fn: %#v", relationsOfType(snapshot.Relations, "CALLS"))
 	}
 }
 
