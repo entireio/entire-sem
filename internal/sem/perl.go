@@ -124,7 +124,7 @@ func perlHashStartsComment(bytes []byte, pos int) bool {
 	}
 	prev := bytes[pos-1]
 	switch prev {
-	case '\n', '\r', ' ', '\t', ';', '{', '}', '(', ')':
+	case '\n', '\r', ' ', '\t', ';':
 		return true
 	default:
 		return false
