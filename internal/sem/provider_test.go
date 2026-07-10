@@ -1137,9 +1137,10 @@ func TestPythonDottedCallModulesDoesNotDuplicateResolvedTail(t *testing.T) {
 
 func TestPythonDottedImportedCallsAllowSingleSelectorAlias(t *testing.T) {
 	got := pythonDottedCallImportedNames(
-		"json.dumps({})\nok = path.isdir(dst)\nsvc.run()\n",
+		"json.dumps({})\nok = path.isdir(dst)\nsvc.run()\n# leak.call()\n\"\"\"leak.call()\"\"\"\n",
 		map[string][]string{
 			"json": {"json"},
+			"leak": {"bad.module"},
 			"path": {"os"},
 			"svc":  {"acme_pkg.service"},
 		},
@@ -1152,6 +1153,9 @@ func TestPythonDottedImportedCallsAllowSingleSelectorAlias(t *testing.T) {
 	}
 	if !slices.Contains(got["run"], "acme_pkg.service") {
 		t.Fatalf("svc.run() did not include imported module hint: %#v", got)
+	}
+	if _, ok := got["call"]; ok {
+		t.Fatalf("comment/docstring dotted call synthesized import hints: %#v", got)
 	}
 }
 
@@ -12075,6 +12079,7 @@ $base = $url->base->userinfo;
 func TestPerlCommentStrippingPreservesHashSyntax(t *testing.T) {
 	stripped := stripPerlCodeLiteralsAndComments(`my $last = $#items;
 $value =~ s/#/x/;
+$value = $maybe // $fallback;
 $base = $url->base # ->userinfo
 `)
 	if !strings.Contains(stripped, "$#items") {
@@ -12082,6 +12087,9 @@ $base = $url->base # ->userinfo
 	}
 	if !strings.Contains(stripped, "s/#/x/") {
 		t.Fatalf("Perl regex hash was masked: %q", stripped)
+	}
+	if !strings.Contains(stripped, "// $fallback") {
+		t.Fatalf("Perl defined-or operator was masked: %q", stripped)
 	}
 	if strings.Contains(stripped, "userinfo") {
 		t.Fatalf("Perl line comment was not masked: %q", stripped)

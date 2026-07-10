@@ -83,17 +83,37 @@ func perlLocalVarTypes(block string) map[string]string {
 }
 
 func stripPerlCodeLiteralsAndComments(content string) string {
-	bytes := []byte(stripCodeLiteralsAndComments(content))
+	bytes := []byte(content)
 	for i := 0; i < len(bytes); i++ {
-		if bytes[i] != '#' || !perlHashStartsComment(bytes, i) {
-			continue
+		switch bytes[i] {
+		case '"', '\'', '`':
+			quote := bytes[i]
+			for j := i + 1; j < len(bytes); j++ {
+				if bytes[j] == '\n' || bytes[j] == '\r' {
+					i = j
+					break
+				}
+				if bytes[j] == '\\' {
+					j++
+					continue
+				}
+				if bytes[j] == quote {
+					maskBytes(bytes, i, j+1)
+					i = j
+					break
+				}
+			}
+		case '#':
+			if !perlHashStartsComment(bytes, i) {
+				continue
+			}
+			j := i + 1
+			for j < len(bytes) && bytes[j] != '\n' && bytes[j] != '\r' {
+				j++
+			}
+			maskBytes(bytes, i, j)
+			i = j
 		}
-		j := i + 1
-		for j < len(bytes) && bytes[j] != '\n' && bytes[j] != '\r' {
-			j++
-		}
-		maskBytes(bytes, i, j)
-		i = j
 	}
 	return string(bytes)
 }
