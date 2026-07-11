@@ -2251,6 +2251,32 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 	}
 	manifestImports := buildManifestImportResolver(files, readContent)
 
+	// pythonModuleExists reports whether the repo contains a Python file that the
+	// strict dotted-module matcher resolves `module` to (the module's own source
+	// file or that package's __init__). It disambiguates a `from pkg import sub`
+	// submodule import from an `import pkg as sub` alias rename — both record the
+	// identical importsByName entry — by asking whether the submodule actually
+	// exists. Results are memoized; the scan is restricted to Python files so a
+	// same-stem file in another language is never mistaken for a module.
+	pythonModuleFileExists := map[string]bool{}
+	pythonModuleExists := func(module string) bool {
+		if v, ok := pythonModuleFileExists[module]; ok {
+			return v
+		}
+		found := false
+		for p := range knownFiles {
+			if ext := path.Ext(p); ext != ".py" && ext != ".pyi" {
+				continue
+			}
+			if dottedModuleMatchesFileStrict(module, p) {
+				found = true
+				break
+			}
+		}
+		pythonModuleFileExists[module] = found
+		return found
+	}
+
 	// Package-level vars of package-qualified types, keyed by directory. A Go
 	// package spans every file in a directory and a var is commonly declared in
 	// one file but called in another, so this must be built before the per-file
@@ -2364,6 +2390,15 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 		}
 		importsByName := importedNamesFor(file.Path, content)
 		importsByName = resolvedImportedNameModules(file.Path, importsByName, manifestImports, knownFiles, readContent)
+		// The Python dotted-call composer resolves `alias.<tail>.fn()` from the
+		// syntactic form each import binding was recorded with (plain, alias
+		// rename, or from-import), keyed by [local name][module]. resolvedImported-
+		// NameModules only appends resolved file paths, so the original dotted
+		// modules the form map keys on survive in importsByName.
+		var pythonImportForms map[string]map[string]pythonImportForm
+		if file.Language == "Python" {
+			pythonImportForms = importedPythonImportForms(content)
+		}
 		if skipFastProfilePerSymbolScan(spec, file.Language) {
 			continue
 		}
@@ -2589,10 +2624,15 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 					}
 				}
 				callImportsByName := importsByName
-				var dottedCallImportsByName map[string][]string
+				// Python module-qualified dotted calls (`pkg.mod.fn()`) are resolved
+				// by a dedicated, strictly module-scoped path (emitted after the
+				// generic loop below): the generic resolver ignores the module
+				// qualifier and would mis-resolve to an unrelated same-named symbol.
+				var pythonDottedRelations []RelationRecord
 				if file.Language == "Python" {
-					if dottedImports := pythonDottedCallImportedNames(callBlock, importsByName); len(dottedImports) > 0 {
-						dottedCallImportsByName = dottedImports
+					allDotted, externalDotted := pythonDottedCallImportedNames(callBlock, importsByName, pythonImportForms, pythonModuleExists)
+					if len(allDotted) > 0 {
+						pythonDottedRelations = pythonDottedCallRelations(from, allDotted, externalDotted, importsByName, symbolsByShortName, childNamesByContainer[from.ID])
 					}
 				}
 				for _, name := range sortedKeysOf(callNames) {
@@ -2673,45 +2713,8 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 						}
 					}
 				}
-				if len(dottedCallImportsByName) > 0 {
-					dottedImports := make(map[string][]string, len(dottedCallImportsByName))
-					for _, name := range sortedKeysOf(dottedCallImportsByName) {
-						if name == from.Name {
-							continue
-						}
-						dottedImports[name] = dottedCallImportsByName[name]
-						targets := resolveImportedCallTargets(name, from, symbolsByShortName[name], dottedImports, false)
-						for _, to := range targets {
-							relType := "CALLS"
-							if typeLikeKind(to.Kind) {
-								relType = "CONSTRUCTS"
-							}
-							emit(RelationRecord{
-								RecordType:    "relation",
-								FromID:        from.ID,
-								ToID:          to.ID,
-								Type:          relType,
-								Confidence:    to.Confidence,
-								Reason:        to.Reason,
-								RelationScope: to.Scope,
-								Resolution:    to.Resolution,
-								TargetKind:    "symbol",
-								Evidence: []Evidence{{
-									Kind:      "call_site",
-									FilePath:  from.FilePath,
-									StartLine: from.StartLine,
-									EndLine:   from.EndLine,
-									Detail:    name,
-								}},
-								WarningCodes: []string{},
-							})
-						}
-						if len(targets) == 0 {
-							for _, relation := range importedExternalCallRelationsForName(from, name, dottedImports[name]) {
-								emit(relation)
-							}
-						}
-					}
+				for _, relation := range pythonDottedRelations {
+					emit(relation)
 				}
 			}
 			callableSymbol := !typeLikeKind(from.Kind)
@@ -3593,6 +3596,11 @@ func receiverCallRelations(from SymbolRecord, block string, methodsByContainer m
 		}
 	}
 	localTypes := localVarTypes(block)
+	// perlVarTypes holds Perl-inferred receiver types. They are kept OUT of the
+	// shared localTypes/varTypes maps so a Perl package name can never resolve a
+	// receiver call in another language's context (and vice versa); only the
+	// language-gated Perl resolution loop below (perlCallableForType) reads them.
+	perlVarTypes := map[string]string{}
 	if from.Language == "Ruby" {
 		for name, typeName := range rubyLocalVarTypes(block) {
 			if _, exists := localTypes[name]; !exists {
@@ -3609,10 +3617,25 @@ func receiverCallRelations(from SymbolRecord, block string, methodsByContainer m
 		}
 	}
 	if from.Language == "Perl" {
-		for name, typeName := range perlLocalVarTypes(block) {
-			if _, exists := localTypes[name]; !exists {
-				localTypes[name] = typeName
+		// A hop resolves within a package when some Perl sub of that name lives in
+		// the package's own file (perlSymbolFileMatchesType), which is how the
+		// fluent gate distinguishes a same-object chain from getter navigation.
+		hopResolvable := func(hop, pkgType string) bool {
+			for _, candidate := range symbolsByShortName[hop] {
+				if candidate.Language != "Perl" {
+					continue
+				}
+				if candidate.Kind != "function" && candidate.Kind != "method" {
+					continue
+				}
+				if perlSymbolFileMatchesType(candidate.FilePath, pkgType) {
+					return true
+				}
 			}
+			return false
+		}
+		for name, typeName := range perlLocalVarTypes(block, hopResolvable) {
+			perlVarTypes[name] = typeName
 		}
 	}
 	if from.Language == "Kotlin" {
@@ -3847,7 +3870,21 @@ func receiverCallRelations(from SymbolRecord, block string, methodsByContainer m
 			if methodResolved[call.Receiver+"."+call.Method] {
 				continue
 			}
-			typeName := varTypes[call.Receiver]
+			// Type-inferred resolution attributes call.Method to the package of
+			// call.Receiver's inferred type, which is only sound when Method is
+			// invoked directly on Receiver. perlReceiverCalls flattens multi-hop
+			// chains (`$url->path->to_string`) to {head-receiver, terminal-method}
+			// with Hops>=2, where the terminal method actually runs on the
+			// intermediate object; resolving those here would emit a wrong CALLS
+			// edge to a same-named sub in the head receiver's package. Restrict to
+			// genuine single-hop calls (Hops<=1; the generic scanner's structurally
+			// single-hop calls carry the zero default).
+			if call.Hops > 1 {
+				continue
+			}
+			// Read ONLY the Perl-isolated map: the shared varTypes never carries
+			// Perl entries, so a same-named local of another language cannot leak in.
+			typeName := perlVarTypes[call.Receiver]
 			if typeName == "" {
 				continue
 			}
@@ -3963,6 +4000,16 @@ func receiverCallRelations(from SymbolRecord, block string, methodsByContainer m
 			}
 		}
 		method, inherited, ok := lookupMethodUpChain(targetID, call.Method, methodsByContainer, superContainerByID)
+		if ok && call.SetterAssign && from.Language == "Dart" {
+			// A property-assignment call invokes the SETTER. For a read-write
+			// property the container's short-name method index holds only the
+			// last-declared accessor (getter or setter), so resolve the setter
+			// explicitly and prefer it — otherwise the edge lands on the getter
+			// about half the time (declaration-order dependent).
+			if setter, setterInherited, found := dartSetterAccessor(targetID, call.Method, symbolsByShortName[call.Method], superContainerByID); found {
+				method, inherited = setter, setterInherited
+			}
+		}
 		if !ok && from.Language == "Ruby" && call.Method == "new" {
 			// Ruby spells construction `Klass.new`; the constructor that runs is
 			// the class's initialize method.
@@ -11618,8 +11665,53 @@ func javascriptImportNames(item string) (string, string) {
 	return imported, local
 }
 
+// pythonImportForm records the syntactic shape of a Python import binding so the
+// dotted-call composer can resolve `alias.<tail>.fn()` from the form the binding
+// was written with instead of guessing it back from the recorded module string.
+// `from pkg import name` and `import pkg as name` record string-identical
+// importsByName entries but mean different things; the form disambiguates them.
+type pythonImportForm int
+
+const (
+	// pythonPlainImport: `import a.b` — the local name is the module's leading
+	// segment, so the literal dotted call path `local.<tail>` names the module.
+	// This is the zero value, so a nil/absent form map composes as a plain import
+	// (the pure-string unit tests rely on that default).
+	pythonPlainImport pythonImportForm = iota
+	// pythonAliasRename: `import a.b as c` — the local name IS the module a.b, so
+	// the terminal lives in module.<tail>.
+	pythonAliasRename
+	// pythonFromImport: `from pkg import name` — name is a member of pkg (a class,
+	// function, or module-level value) unless pkg.name is a real submodule.
+	pythonFromImport
+)
+
 func importedPythonNames(content string) map[string][]string {
+	names, _ := importedPythonNamesAndForms(content)
+	return names
+}
+
+// importedPythonImportForms returns the syntactic form of each Python import
+// binding, keyed by the local binding name and then by the recorded module
+// string (the same module strings importedPythonNames records), so the
+// dotted-call composer can look up forms[local][module].
+func importedPythonImportForms(content string) map[string]map[string]pythonImportForm {
+	_, forms := importedPythonNamesAndForms(content)
+	return forms
+}
+
+// importedPythonNamesAndForms is the single parser shared by importedPythonNames
+// and importedPythonImportForms, so the module strings and their recorded forms
+// can never drift apart.
+func importedPythonNamesAndForms(content string) (map[string][]string, map[string]map[string]pythonImportForm) {
 	imports := map[string][]string{}
+	forms := map[string]map[string]pythonImportForm{}
+	recordForm := func(local, module string, form pythonImportForm) {
+		if forms[local] == nil {
+			forms[local] = map[string]pythonImportForm{}
+		}
+		forms[local][module] = form
+	}
 	importRe := regexp.MustCompile(`^\s*import\s+(.+)$`)
 	fromRe := regexp.MustCompile(`^\s*from\s+(\.*(?:[A-Za-z_][A-Za-z0-9_\.]*)?)\s+import\s+(.+)$`)
 	scanner := bufio.NewScanner(strings.NewReader(content))
@@ -11635,10 +11727,13 @@ func importedPythonNames(content string) map[string][]string {
 					continue
 				}
 				local := alias
+				form := pythonAliasRename
 				if local == "" {
 					local = strings.Split(module, ".")[0]
+					form = pythonPlainImport
 				}
 				imports[local] = append(imports[local], module)
+				recordForm(local, module, form)
 			}
 			continue
 		}
@@ -11655,10 +11750,11 @@ func importedPythonNames(content string) map[string][]string {
 				}
 				importedModule := pythonFromImportModuleSpec(module, name)
 				imports[local] = append(imports[local], importedModule)
+				recordForm(local, importedModule, pythonFromImport)
 			}
 		}
 	}
-	return imports
+	return imports, forms
 }
 
 func parsePythonImportItem(item string) (name, alias string) {

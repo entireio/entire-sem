@@ -36,10 +36,38 @@ var (
 	// `Mod.fn`, `Mod.Sub.fn`. An Uppercase terminal is a constructor or module
 	// reference, not a value, and is deliberately not matched.
 	haskellQualifiedRe = regexp.MustCompile(`([A-Z][A-Za-z0-9_']*(?:\.[A-Z][A-Za-z0-9_']*)*)\.([a-z_][A-Za-z0-9_']*)`)
-	haskellIdentRe     = regexp.MustCompile(`[A-Za-z_][A-Za-z0-9_']*`)
-	haskellModuleRe    = regexp.MustCompile(`[A-Z][A-Za-z0-9_']*(?:\.[A-Z][A-Za-z0-9_']*)*`)
-	haskellLowerRe     = regexp.MustCompile(`\b[a-z_][A-Za-z0-9_']*`)
-	haskellImportRe    = regexp.MustCompile(`(?m)^import[ \t]`)
+	// Anchored variant used when only a match at the start of the slice matters:
+	// unanchored FindStringSubmatchIndex would scan to the next qualified name
+	// anywhere ahead (potentially to EOF) before the caller discards it for not
+	// starting at 0. Anchoring makes the negative case O(1) and is otherwise
+	// identical (the caller already requires m[0] == 0).
+	haskellQualifiedAnchoredRe = regexp.MustCompile(`^([A-Z][A-Za-z0-9_']*(?:\.[A-Z][A-Za-z0-9_']*)*)\.([a-z_][A-Za-z0-9_']*)`)
+	haskellIdentRe             = regexp.MustCompile(`[A-Za-z_][A-Za-z0-9_']*`)
+	haskellModuleRe            = regexp.MustCompile(`[A-Z][A-Za-z0-9_']*(?:\.[A-Z][A-Za-z0-9_']*)*`)
+	haskellLowerRe             = regexp.MustCompile(`\b[a-z_][A-Za-z0-9_']*`)
+	haskellImportRe            = regexp.MustCompile(`(?m)^import[ \t]`)
+	// The first identifier after a `let` keyword is always the name being
+	// bound (a value/function binding LHS or a do/list-comp `let`), never a
+	// call. Requiring whitespace after `let` avoids matching primed names such
+	// as `let'`; the brace form `let { name = ... }` puts a `{` between the
+	// keyword and the leading binder, so it needs its own pattern.
+	haskellLetBinderRe      = regexp.MustCompile(`\blet[ \t\r\n]+([a-z_][A-Za-z0-9_']*)`)
+	haskellLetBraceBinderRe = regexp.MustCompile(`\blet[ \t\r\n]*\{[ \t\r\n]*([a-z_][A-Za-z0-9_']*)`)
+	// Subsequent bindings in a single-line group are `; name =` (let/where) or
+	// `; name <-` (do-bind); both bind name. The `=` guard excludes `==`.
+	haskellSemiBinderRe = regexp.MustCompile(`;[ \t]*([a-z_][A-Za-z0-9_']*)[ \t]*(?:<-|=(?:[^=]|$))`)
+	// A let/where group's pattern LHS runs from the keyword up to its binding
+	// `=` and is entirely binders, so every lowercase identifier in that chunk
+	// is a bound name — covering tuple/list/constructor destructuring
+	// (`let (a, render) = ...`, `let [g] = ...`, `let (Just x) = ...`) that the
+	// single-leading-identifier patterns above cannot reach. `[^=\n]` keeps the
+	// chunk on one line and stops before the binding `=`.
+	haskellLetPatternBinderRe = regexp.MustCompile(`\b(?:let|where)\b([^=\n]*)=`)
+	// A `;`-separated continuation of a let/where group (`; (a, b) = ...`) with
+	// the same whole-chunk-is-binders rule. `[^=\n<]` also excludes a
+	// `;`-separated do-bind (`; x <- ...`), whose LHS is handled by the do-bind
+	// pattern.
+	haskellSemiPatternBinderRe = regexp.MustCompile(`;([^=\n<]*)=(?:[^=]|$)`)
 )
 
 // haskellKeyword reports Haskell reserved words. `_` is included: it matches
@@ -207,15 +235,162 @@ func haskellBinderRegions(stripped string) (func(int) bool, map[string]bool) {
 		}
 		lineStart = i + 1
 	}
+	// The spans are appended in increasing lineStart order and never overlap
+	// (one span per physical line), so a binary search on the sorted starts
+	// finds the only span that could contain `at` — O(log spans) per query
+	// instead of a linear scan, which the two block-wide identifier sweeps call
+	// once per identifier.
+	starts := make([]int, len(spans))
+	ends := make([]int, len(spans))
+	for i, s := range spans {
+		starts[i] = s.start
+		ends[i] = s.end
+	}
 	inBinder := func(at int) bool {
-		for _, s := range spans {
-			if s.start <= at && at < s.end {
-				return true
-			}
-		}
-		return false
+		idx := sort.Search(len(starts), func(i int) bool { return starts[i] > at }) - 1
+		return idx >= 0 && at < ends[idx]
 	}
 	return inBinder, names
+}
+
+// haskellHigherOrderBinderNames extends the block-wide binder set with the
+// locally-bound names the physical-line binder scan cannot reach, for the sole
+// use of the higher-order argument pass. A function handed as the first
+// argument of `map`/`mapM_`/`filter`/… is reported as a call site, so a local
+// that shadows a same-named top-level function must be excluded even when it is
+// the leading binder of a braced or single-line `do`/`let` block
+// (`do { fn <- ...; mapM_ fn }`, `let { f = ...; ... } in map f xs`) that the
+// line-head scan steps over. This set is deliberately kept out of the
+// bare-application resolver: registering these names block-wide there would
+// suppress a genuine head-position call to a same-named imported function
+// elsewhere in the block. Over-suppressing inside the higher-order pass only
+// costs a higher-order edge, which the precision-first policy prefers to a
+// wrong one.
+func haskellHigherOrderBinderNames(stripped string, base map[string]bool) map[string]bool {
+	names := make(map[string]bool, len(base))
+	for name := range base {
+		names[name] = true
+	}
+	add := func(name string) {
+		if !haskellKeyword(name) {
+			names[name] = true
+		}
+	}
+	// `let`-group `=` binders: inline `let x = ... in`, the leading binder of a
+	// brace-let `let { x = ...`, and `;`-separated continuations of a let/where
+	// group.
+	for _, m := range haskellLetBinderRe.FindAllStringSubmatch(stripped, -1) {
+		add(m[1])
+	}
+	for _, m := range haskellLetBraceBinderRe.FindAllStringSubmatch(stripped, -1) {
+		add(m[1])
+	}
+	for _, m := range haskellSemiBinderRe.FindAllStringSubmatch(stripped, -1) {
+		add(m[1])
+	}
+	// Pattern-destructuring `=` binders (`let (a, render) = ...`, `let [g] = ...`,
+	// `; (a, b) = ...`): the whole LHS chunk is binders, so add every lowercase
+	// identifier in it. Over-inclusion here only costs a higher-order edge, never
+	// emits a wrong one.
+	addAll := func(chunk string) {
+		for _, name := range haskellLowerRe.FindAllString(chunk, -1) {
+			add(name)
+		}
+	}
+	for _, m := range haskellLetPatternBinderRe.FindAllStringSubmatch(stripped, -1) {
+		addAll(m[1])
+	}
+	for _, m := range haskellSemiPatternBinderRe.FindAllStringSubmatch(stripped, -1) {
+		addAll(m[1])
+	}
+	// Arrow-preceded binding forms — do/list-comprehension generators
+	// (`(fn, ys) <- pairs`), lambda parameters (`\(a, b) ->`), and
+	// case/`\case`/multi-way-if alternatives (`case x of { Just f -> ... }`) —
+	// bind their pattern variables on the LEFT of a `<-` or `->` at a bracket
+	// depth the line-head scan cannot reach in the single-line brace form.
+	// haskellArrowBinders collects them all in one linear pass.
+	haskellArrowBinders(stripped, add)
+	return names
+}
+
+// haskellArrowBinders reports, via add, every lowercase identifier bound on the
+// LEFT of a `<-` or `->` arrow anywhere in the stripped block. It replaces the
+// former per-arrow backward walk — which re-scanned a growing prefix for every
+// arrow and so ran in O(n^2) on a long single-line span of arrows (a wide
+// `foo :: A -> B -> ... -> Z` type signature) — with a single linear pass.
+//
+// The block is split into segments at the binder boundaries `;`, `{`, `|`, `\`,
+// and newline (an arrow never binds a name across one of those). Within a
+// segment an identifier is a binder iff the nearest arrow-or-`case`/`of` token
+// to its right is an arrow: an intervening `case`/`of` marks the identifier as
+// part of a case scrutinee (`case x of Pat -> …` — `x` is not a binder), not a
+// pattern. That is exactly the union of the old per-arrow left-walk spans (with
+// the scrutinee trimmed), computed in O(n). Over-inclusion only costs a
+// higher-order edge, never emits a wrong one.
+func haskellArrowBinders(stripped string, add func(string)) {
+	flushSegment := func(seg string) {
+		// One left-to-right tokenization into arrows, `case`/`of` markers, and
+		// lowercase identifiers, then a right-to-left sweep so each identifier
+		// sees its nearest following token in O(1).
+		type htoken struct {
+			arrow bool
+			caseK bool
+			name  string
+		}
+		var toks []htoken
+		for i := 0; i < len(seg); {
+			c := seg[i]
+			switch {
+			case (c == '-' && i+1 < len(seg) && seg[i+1] == '>') ||
+				(c == '<' && i+1 < len(seg) && seg[i+1] == '-'):
+				toks = append(toks, htoken{arrow: true})
+				i += 2
+			case c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'):
+				j := i + 1
+				for j < len(seg) {
+					d := seg[j]
+					if d == '_' || d == '\'' || (d >= 'a' && d <= 'z') || (d >= 'A' && d <= 'Z') || (d >= '0' && d <= '9') {
+						j++
+						continue
+					}
+					break
+				}
+				word := seg[i:j]
+				switch {
+				case word == "case" || word == "of":
+					toks = append(toks, htoken{caseK: true})
+				case word[0] == '_' || (word[0] >= 'a' && word[0] <= 'z'):
+					toks = append(toks, htoken{name: word})
+				}
+				i = j
+			default:
+				i++
+			}
+		}
+		nextIsArrow := false
+		for k := len(toks) - 1; k >= 0; k-- {
+			switch {
+			case toks[k].arrow:
+				nextIsArrow = true
+			case toks[k].caseK:
+				nextIsArrow = false
+			case toks[k].name != "" && nextIsArrow:
+				add(toks[k].name)
+			}
+		}
+	}
+	segStart := 0
+	for i := 0; i <= len(stripped); i++ {
+		if i == len(stripped) {
+			flushSegment(stripped[segStart:i])
+			break
+		}
+		switch stripped[i] {
+		case ';', '{', '|', '\\', '\n':
+			flushSegment(stripped[segStart:i])
+			segStart = i + 1
+		}
+	}
 }
 
 // haskellBinderHeadEnd scans one physical line for the earliest stand-alone
@@ -431,7 +606,7 @@ func haskellHigherOrderArgSite(s string, end int, inBinder func(int) bool, binde
 	if i >= len(s) || inBinder(i) {
 		return haskellCallSite{}, false
 	}
-	if m := haskellQualifiedRe.FindStringSubmatchIndex(s[i:]); m != nil && m[0] == 0 {
+	if m := haskellQualifiedAnchoredRe.FindStringSubmatchIndex(s[i:]); m != nil && m[0] == 0 {
 		absEnd := i + m[1]
 		if paren {
 			j := skipHaskellSpace(s, absEnd)
@@ -466,9 +641,20 @@ func haskellHigherOrderArgSite(s string, end int, inBinder func(int) bool, binde
 // applications are reported for any lowercase identifier in application
 // position that is not a keyword, a binder, or a use of a shadowing local
 // binder — resolution decides which of them name real symbols.
-func haskellCallSites(block string) []haskellCallSite {
+//
+// The higher-order first-argument pass (which treats `map f xs` as a call to
+// `f`) fires only for the library combinator names in
+// haskellFirstArgHigherOrder. hofUserDefined reports whether the workspace
+// defines its own function/bind of that name; when it does, the name is
+// suppressed from the HOF pass — the combinator heuristic must not run on a
+// user function whose first argument is ordinary data (`find db key` would
+// otherwise fabricate a call to `db`). It may be nil (pure-string unit tests),
+// which forgoes the suppression. The bare/qualified passes are unaffected, so a
+// call to the user's own combinator-named function still resolves normally.
+func haskellCallSites(block string, hofUserDefined func(name string) bool) []haskellCallSite {
 	stripped := stripHaskellCodeText(block)
 	inBinder, binderNames := haskellBinderRegions(stripped)
+	hoBinderNames := haskellHigherOrderBinderNames(stripped, binderNames)
 	seen := map[haskellCallSite]bool{}
 	qualifiedAt := map[int]bool{}
 	for _, m := range haskellQualifiedRe.FindAllStringSubmatchIndex(stripped, -1) {
@@ -492,7 +678,14 @@ func haskellCallSites(block string) []haskellCallSite {
 		if !haskellFirstArgHigherOrder(word) || qualifiedAt[start] {
 			continue
 		}
-		if inBinder(start) || binderNames[word] {
+		if hofUserDefined != nil && hofUserDefined(word) {
+			// The workspace defines its own `word`, so this application is a call
+			// to the user function, not the library combinator; its first argument
+			// is data, not a callback. Skip the HOF site (the bare pass still
+			// resolves the call to the user's function).
+			continue
+		}
+		if inBinder(start) || hoBinderNames[word] {
 			continue
 		}
 		if start > 0 {
@@ -504,7 +697,7 @@ func haskellCallSites(block string) []haskellCallSite {
 		if !haskellApplied(stripped, start, end) {
 			continue
 		}
-		if site, ok := haskellHigherOrderArgSite(stripped, end, inBinder, binderNames); ok {
+		if site, ok := haskellHigherOrderArgSite(stripped, end, inBinder, hoBinderNames); ok {
 			seen[site] = true
 		}
 	}
@@ -696,7 +889,18 @@ func haskellCallableKind(kind string) bool {
 // skipped.
 func haskellCallRelations(from SymbolRecord, block string, sameFile []SymbolRecord, symbolsByShortName map[string][]SymbolRecord, imports haskellFileImports) []RelationRecord {
 	var relations []RelationRecord
-	for _, site := range haskellCallSites(block) {
+	// A combinator name the workspace defines itself (`find`, `map`, ...) must
+	// not trigger the higher-order first-argument pass: on the user's own
+	// function the first argument is data, not a callback.
+	hofUserDefined := func(name string) bool {
+		for _, s := range symbolsByShortName[name] {
+			if s.Language == "Haskell" && haskellCallableKind(s.Kind) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, site := range haskellCallSites(block, hofUserDefined) {
 		var targets []resolvedCallTarget
 		if site.Path != "" {
 			module := imports.aliases[site.Path]

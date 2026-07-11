@@ -2379,6 +2379,23 @@ type receiverCall struct {
 	Receiver string
 	Method   string
 	Args     string
+	// Hops is the number of `->`/`.` method segments in the flattened receiver
+	// chain that produced this call. It is set only by perlReceiverCalls, which
+	// flattens a whole chain (`$url->path->to_string`) to {head-receiver,
+	// terminal-method}: a value of 2 or more means Method is NOT invoked directly
+	// on Receiver but on an intermediate object, so type-inferred receiver
+	// resolution must not attribute Method to Receiver's package. Every other
+	// extractor leaves Hops at its zero value 0, which denotes a structurally
+	// single-hop `receiver.method` call — receiverCallRe and the language
+	// scanners capture adjacent receiver/method tokens — and is treated as
+	// single-hop-eligible.
+	Hops int
+	// SetterAssign marks a call synthesized from a property-assignment
+	// (`obj.prop = x`), set only by dartSetterAssignmentCalls. Such a call
+	// invokes the SETTER accessor; for a read-write property (same-named getter
+	// and setter) the shared short-name method index collapses to one accessor,
+	// so the resolver consults this flag to prefer the setter deterministically.
+	SetterAssign bool
 }
 
 var receiverCallRe = regexp.MustCompile(`([A-Za-z_$][\w$]*)\s*(?:->|\.)\s*([A-Za-z_]\w*)\s*(?:<[^>\n;{}()]*>)?\(`)

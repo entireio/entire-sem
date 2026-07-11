@@ -3523,8 +3523,25 @@ func walkEntitiesScoped(node *sitter.Node, src []byte, language, scope string, i
 			childScope = entity.Name
 		}
 		if entity.Kind == "function" || entity.Kind == "method" {
-			childInFunc = true // descendants of this callable are function-local
+			// In R a callable is named by assignment (a binary_operator), and a
+			// chained assignment `a <- b <- function() ...` binds every target
+			// name at THIS scope — a and b are peers, not nested. The terminal
+			// function_definition is the only real body; the intermediate
+			// binary_operator/identifier nodes are sibling bindings. Flagging the
+			// whole binary_operator subtree function-local would mis-mark those
+			// inner targets Local and hide them from cross-scope resolution, so
+			// for R defer the flag to the function_definition node (below).
+			if language != "R" || node.Type() != "binary_operator" {
+				childInFunc = true // descendants of this callable are function-local
+			}
 		}
+	}
+	// In R the function body lives under the anonymous function_definition node
+	// (the name is on the enclosing assignment, handled above). Entering it marks
+	// descendants function-local — matching the generic named-callable-body rule
+	// while leaving chained-assignment sibling targets at the outer scope.
+	if language == "R" && node.Type() == "function_definition" {
+		childInFunc = true
 	}
 	// A Rust `impl Foo {}` / `impl Trait for Foo {}` block is not a symbol itself,
 	// but it scopes its functions to the implementing type: without this they'd be
@@ -6625,6 +6642,13 @@ func scopesChildren(kind string) bool {
 // function; an R6Class/setRefClass call value yields a class (the trivial
 // S4/R6 idiom). The name side may be an identifier or a string, as in
 // syntactic names like `"myop<-" <- function(x, value) ...`.
+//
+// The value classification (rAssignedValueKind) recurses through a chained
+// assignment: when the value side is itself a binary_operator over the same
+// `<-`/`<<-`/`=`/`->`/`->>` operator set (`a <- b <- function() ...`, or the
+// right-assign `function() ... -> b -> a`), it unwraps the inner assignment's
+// value — rhs, or lhs for the right-assign forms — until it reaches the
+// terminal function/class definition, so the outer name inherits that kind.
 func rAssignmentEntity(node *sitter.Node, src []byte, scope string) (string, string, bool) {
 	operator := node.ChildByFieldName("operator")
 	if !validNode(operator) {
