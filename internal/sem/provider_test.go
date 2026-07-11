@@ -1129,16 +1129,50 @@ def request():
 }
 
 func TestPythonDottedCallModulesDoesNotDuplicateResolvedTail(t *testing.T) {
-	got := pythonDottedCallModules("acme_pkg", []string{"service"}, []string{"acme_pkg.service"})
+	got, _ := pythonDottedCallModules("acme_pkg", []string{"service"}, []string{"acme_pkg.service"}, nil, nil)
 	if want := []string{"acme_pkg.service"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("pythonDottedCallModules resolved tail = %#v, want %#v", got, want)
 	}
 }
 
+// When the imported module is a proper prefix shorter than the call's dotted
+// tail (`import pkg.a` binds pkg -> pkg.a, then `pkg.a.b.fn()`), the composed
+// candidate must be the full literal call path (pkg.a.b) with the shared `a`
+// segment stripped — never the doubled pkg.a.a.b, and never the too-short pkg.a.
+func TestPythonDottedCallModulesStripsSharedPrefixOverlap(t *testing.T) {
+	cases := []struct {
+		name  string
+		alias string
+		tail  []string
+		imp   []string
+		want  []string
+	}{
+		// The finding's repro: import pkg.a + pkg.a.b.fn().
+		{"prefix-overlap", "pkg", []string{"a", "b"}, []string{"pkg.a"}, []string{"pkg.a.b"}},
+		// module == alias (plain `import a`): full literal path.
+		{"module-eq-alias", "a", []string{"b", "c"}, []string{"a"}, []string{"a.b.c"}},
+		// module == "a.b", tail = [b, c]: strip the shared `b`.
+		{"one-segment-overlap", "a", []string{"b", "c"}, []string{"a.b"}, []string{"a.b.c"}},
+		// module == "a.b.c" but the call only reaches a.b: the literal call path
+		// (a.b) is authoritative, no `a.b.c.b` doubling.
+		{"module-deeper-than-call", "a", []string{"b"}, []string{"a.b.c"}, []string{"a.b"}},
+	}
+	for _, c := range cases {
+		all, external := pythonDottedCallModules(c.alias, c.tail, c.imp, nil, nil)
+		if !reflect.DeepEqual(all, c.want) {
+			t.Errorf("%s: pythonDottedCallModules(%q, %v, %v) all = %#v, want %#v", c.name, c.alias, c.tail, c.imp, all, c.want)
+		}
+		if !reflect.DeepEqual(external, c.want) {
+			t.Errorf("%s: pythonDottedCallModules(%q, %v, %v) external = %#v, want %#v", c.name, c.alias, c.tail, c.imp, external, c.want)
+		}
+	}
+}
+
 func TestPythonDottedCallModulesUseAddressedParentForDeepImports(t *testing.T) {
-	got := pythonDottedCallImportedNames(
+	got, _ := pythonDottedCallImportedNames(
 		"pkg.sub.fn()\npkg.sub.mod.call()\n",
 		map[string][]string{"pkg": {"pkg.sub.mod"}},
+		nil, nil,
 	)
 	if want := []string{"pkg.sub"}; !reflect.DeepEqual(got["fn"], want) {
 		t.Fatalf("pkg.sub.fn() modules = %#v, want %#v", got["fn"], want)
@@ -1149,7 +1183,7 @@ func TestPythonDottedCallModulesUseAddressedParentForDeepImports(t *testing.T) {
 }
 
 func TestPythonDottedImportedCallsAllowSingleSelectorAlias(t *testing.T) {
-	got := pythonDottedCallImportedNames(
+	got, _ := pythonDottedCallImportedNames(
 		"json.dumps({})\nok = path.isdir(dst)\nsvc.run()\n# leak.call()\n\"\"\"leak.call()\"\"\"\n",
 		map[string][]string{
 			"json": {"json"},
@@ -1157,6 +1191,7 @@ func TestPythonDottedImportedCallsAllowSingleSelectorAlias(t *testing.T) {
 			"path": {"os"},
 			"svc":  {"acme_pkg.service"},
 		},
+		nil, nil,
 	)
 	if _, ok := got["dumps"]; ok {
 		t.Fatalf("plain import json; json.dumps() should not synthesize a bare dumps hint: %#v", got)
@@ -12111,7 +12146,7 @@ my $path = $url->path # ->base->userinfo
 ;
 # $path->protocol
 `
-	types := perlLocalVarTypes(block)
+	types := perlLocalVarTypes(block, func(hop, pkgType string) bool { return true })
 	if got := types["path"]; got != "" {
 		t.Fatalf("commented receiver chain inferred path type %q from %#v", got, types)
 	}
@@ -12124,7 +12159,7 @@ my $path = $url->path # ->base->userinfo
 func TestPerlLocalVarTypesAllowKeywordlessAssignments(t *testing.T) {
 	types := perlLocalVarTypes(`$url = Mojo::URL->new;
 $base = $url->base->userinfo;
-`)
+`, func(hop, pkgType string) bool { return true })
 	if got := types["url"]; got != "Mojo::URL" {
 		t.Fatalf("keywordless constructor inferred url type %q from %#v", got, types)
 	}
@@ -12209,7 +12244,7 @@ func TestPerlLocalVarTypesIgnoreArgumentReceiverChains(t *testing.T) {
 $path = $url->base($req->url->base->clone);
 $base = $url->base($req->url)->userinfo;
 $mixed = $url->base($req) + $other->x;
-`)
+`, func(hop, pkgType string) bool { return true })
 	if got := types["path"]; got != "" {
 		t.Fatalf("single outer receiver call with nested argument chain inferred path type %q from %#v", got, types)
 	}
@@ -13617,5 +13652,857 @@ func runProviderRecords(repo string) error {
 	}
 	if !hasRelationByLastSegment(snapshot.Relations, "CALLS", "runProviderRecords", "StreamSnapshot") {
 		t.Errorf("missing CALLS runProviderRecords->StreamSnapshot via self-module import: %#v", relationsOfType(snapshot.Relations, "CALLS"))
+	}
+}
+
+// A module-qualified dotted call (`acme.mod.run()`) must resolve to the named
+// submodule ONLY. A sibling submodule (acme/service.py) that defines the same
+// terminal name must NOT receive an edge via any parent-directory fallback: the
+// dedicated dotted path uses a strict module-file matcher (the module's own
+// source file or that package's __init__), so exactly one edge — to acme/mod.py
+// — is emitted.
+func TestPythonDottedSubmoduleCallDoesNotResolveToSibling(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "acme/__init__.py", "")
+	writeFile(t, repo, "acme/mod.py", `def run():
+    return 1
+`)
+	writeFile(t, repo, "acme/service.py", `def run():
+    return 2
+`)
+	writeFile(t, repo, "consumer.py", `import acme.mod
+
+
+def call_it():
+    return acme.mod.run()
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	symbolsByID := map[string]SymbolRecord{}
+	for _, s := range snapshot.Symbols {
+		symbolsByID[s.ID] = s
+	}
+	var runTargets []string
+	for _, r := range snapshot.Relations {
+		if r.Type != "CALLS" || lastSegment(r.FromID) != "call_it" {
+			continue
+		}
+		if to, ok := symbolsByID[r.ToID]; ok && to.Name == "run" {
+			runTargets = append(runTargets, to.FilePath)
+		}
+	}
+	if len(runTargets) != 1 || runTargets[0] != "acme/mod.py" {
+		t.Fatalf("call_it run targets = %#v, want exactly [acme/mod.py]", runTargets)
+	}
+}
+
+// callItTargetsNamed collects the file paths of every CALLS target of `call_it`
+// whose terminal name matches `name`, for the from-import composition tests.
+func callItTargetsNamed(t *testing.T, snapshot ProviderSnapshot, name string) []string {
+	t.Helper()
+	symbolsByID := map[string]SymbolRecord{}
+	for _, s := range snapshot.Symbols {
+		symbolsByID[s.ID] = s
+	}
+	var targets []string
+	for _, r := range snapshot.Relations {
+		if r.Type != "CALLS" || lastSegment(r.FromID) != "call_it" {
+			continue
+		}
+		if to, ok := symbolsByID[r.ToID]; ok && to.Name == name {
+			targets = append(targets, to.FilePath)
+		}
+	}
+	return targets
+}
+
+// `from pkg import service` records importsByName["service"]=["pkg"] (the
+// submodule name is dropped), identical to `import pkg as service`. When the
+// repo actually contains the submodule pkg/service/, the from-import reading is
+// authoritative: `service.helper.fn()` must resolve to pkg/service/helper.py,
+// never to the sibling pkg/helper.py that the alias-rename reading would name.
+func TestPythonFromImportSubmoduleDottedCallResolvesToSubmodule(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "pkg/__init__.py", "")
+	writeFile(t, repo, "pkg/helper.py", `def fn():
+    return 1
+`)
+	writeFile(t, repo, "pkg/service/__init__.py", "")
+	writeFile(t, repo, "pkg/service/helper.py", `def fn():
+    return 2
+`)
+	writeFile(t, repo, "consumer.py", `from pkg import service
+
+
+def call_it():
+    return service.helper.fn()
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	targets := callItTargetsNamed(t, snapshot, "fn")
+	if len(targets) != 1 || targets[0] != "pkg/service/helper.py" {
+		t.Fatalf("call_it fn targets = %#v, want exactly [pkg/service/helper.py]", targets)
+	}
+}
+
+// `import pkg as service` is an alias rename: `service.helper.fn()` means
+// pkg.helper.fn. With only pkg/helper.py present, the edge resolves there.
+func TestPythonAliasRenameDottedCallResolvesToRenamedModule(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "pkg/__init__.py", "")
+	writeFile(t, repo, "pkg/helper.py", `def fn():
+    return 1
+`)
+	writeFile(t, repo, "consumer.py", `import pkg as service
+
+
+def call_it():
+    return service.helper.fn()
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	targets := callItTargetsNamed(t, snapshot, "fn")
+	if len(targets) != 1 || targets[0] != "pkg/helper.py" {
+		t.Fatalf("call_it fn targets = %#v, want exactly [pkg/helper.py]", targets)
+	}
+}
+
+// The genuinely ambiguous case: `import pkg as service` where BOTH pkg/helper.py
+// and pkg/service/helper.py exist, but there is NO submodule marker for
+// pkg.service (no pkg/service/__init__.py, no pkg/service.py). The from-import
+// reading has no repo grounding, so the alias-rename reading wins and the edge
+// resolves to pkg/helper.py — never the pkg/service/helper.py that a bare
+// both-candidates composition would also (wrongly) match.
+func TestPythonAliasRenameWinsWithoutSubmoduleMarker(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "pkg/__init__.py", "")
+	writeFile(t, repo, "pkg/helper.py", `def fn():
+    return 1
+`)
+	// A pkg/service/ directory with a same-named submodule file but NO __init__:
+	// not a package the discriminator recognizes.
+	writeFile(t, repo, "pkg/service/helper.py", `def fn():
+    return 2
+`)
+	writeFile(t, repo, "consumer.py", `import pkg as service
+
+
+def call_it():
+    return service.helper.fn()
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	targets := callItTargetsNamed(t, snapshot, "fn")
+	if len(targets) != 1 || targets[0] != "pkg/helper.py" {
+		t.Fatalf("call_it fn targets = %#v, want exactly [pkg/helper.py]", targets)
+	}
+}
+
+// A Python dotted call (`acme.mod.run()`) must resolve only to a Python symbol.
+// symbolsByShortName is a workspace-wide, cross-language index and the strict
+// module matcher trims the file extension, so a same-stem file in another
+// language (acme/mod.go with `func run`) also matches the module path; without a
+// language gate the dotted call would fabricate a cross-language edge to the Go
+// `run`. The gate keeps resolution on the Python acme/mod.py target.
+func TestPythonDottedCallDoesNotResolveCrossLanguage(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "acme/__init__.py", "")
+	writeFile(t, repo, "acme/mod.py", `def run():
+    return "py"
+`)
+	writeFile(t, repo, "acme/mod.go", `package acme
+
+func run() string {
+	return "go"
+}
+`)
+	writeFile(t, repo, "consumer.py", `import acme.mod
+
+
+def call_it():
+    return acme.mod.run()
+`)
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasRelationBySymbolNameAndFile(snapshot, "CALLS", "call_it", "consumer.py", "run", "acme/mod.go") {
+		t.Fatalf("dotted Python call fabricated cross-language edge to Go run: %#v", relationsOfType(snapshot.Relations, "CALLS"))
+	}
+	if !hasRelationBySymbolNameAndFile(snapshot, "CALLS", "call_it", "consumer.py", "run", "acme/mod.py") {
+		t.Fatalf("missing dotted Python call to acme/mod.py run: %#v", relationsOfType(snapshot.Relations, "CALLS"))
+	}
+}
+
+// In an ordinary repo (no vendored CPython stdlib) os.path.* calls must emit
+// only the os.path external edge — never a bare os.<name> edge, nor a
+// genericpath/posixpath/ntpath fan-out edge.
+func TestPythonOSPathDottedCallsEmitOnlyOSPathExternals(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "app.py", `import os
+
+
+def use(x):
+    if os.path.isdir(x):
+        return os.path.join(x, "y")
+    return x
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, r := range snapshot.Relations {
+		if r.Type != "CALLS" || lastSegment(r.FromID) != "use" {
+			continue
+		}
+		if strings.HasPrefix(r.ToID, "external:symbol:") {
+			got[strings.TrimPrefix(r.ToID, "external:symbol:")] = true
+		}
+	}
+	want := map[string]bool{"os.path.isdir": true, "os.path.join": true}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("os.path external CALLS edges = %#v, want %#v", got, want)
+	}
+}
+
+// A bare imported call (`from mymod import run; run(y)`) must keep its external
+// edge even when a dotted call in the same block (`acme.mod.run()`) shares the
+// terminal name and resolves locally. The name-keyed dotted merge must not
+// steal the bare call's resolution.
+func TestPythonDottedCallCollisionKeepsBareExternalEdge(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "acme/__init__.py", "")
+	writeFile(t, repo, "acme/mod.py", `def run():
+    return 1
+`)
+	// A second run() elsewhere makes the name non-globally-unique, so the bare
+	// call relies on the external fallback rather than a unique-name match.
+	writeFile(t, repo, "other/thing.py", `def run():
+    return 2
+`)
+	writeFile(t, repo, "app.py", `import acme.mod
+from mymod import run
+
+
+def f(x, y):
+    acme.mod.run()
+    return run(y)
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, r := range snapshot.Relations {
+		if r.Type == "CALLS" && lastSegment(r.FromID) == "f" && r.ToID == externalID("symbol", "mymod.run") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("missing external CALLS f -> mymod.run: %#v", relationsOfType(snapshot.Relations, "CALLS"))
+	}
+}
+
+// A submodule-qualified dotted call (`acme_pkg.service.run()`) targets the
+// submodule only. If the package __init__.py also defines the terminal name it
+// must not receive an edge via the parent-directory fallback.
+func TestPythonDottedSubmoduleCallDoesNotResolveToPackageInit(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "acme_pkg/__init__.py", `def run():
+    return "init"
+`)
+	writeFile(t, repo, "acme_pkg/service.py", `def run():
+    return "service"
+`)
+	writeFile(t, repo, "consumer.py", `import acme_pkg.service
+
+
+def call_service():
+    return acme_pkg.service.run()
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	symbolsByID := map[string]SymbolRecord{}
+	for _, s := range snapshot.Symbols {
+		symbolsByID[s.ID] = s
+	}
+	var runTargets []string
+	for _, r := range snapshot.Relations {
+		if r.Type != "CALLS" || lastSegment(r.FromID) != "call_service" {
+			continue
+		}
+		if to, ok := symbolsByID[r.ToID]; ok && to.Name == "run" {
+			runTargets = append(runTargets, to.FilePath)
+		}
+	}
+	if len(runTargets) != 1 || runTargets[0] != "acme_pkg/service.py" {
+		t.Fatalf("call_service run targets = %#v, want exactly [acme_pkg/service.py]", runTargets)
+	}
+}
+
+// A module-qualified dotted call (`acme.mod.helper()`) resolves through the
+// imported module only. A same-file function of the same name must NOT capture
+// it: the dedicated dotted-call path never consults same-file symbols unless
+// the file matches the imported module, so the module target wins.
+func TestPythonDottedImportedCallPrefersModuleOverSameFileDef(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "acme/__init__.py", "")
+	writeFile(t, repo, "acme/mod.py", `def helper():
+    return "remote"
+`)
+	writeFile(t, repo, "app.py", `import acme.mod
+
+
+def helper():
+    return "local"
+
+
+def caller():
+    return acme.mod.helper()
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasRelationBySymbolNameAndFile(snapshot, "CALLS", "caller", "app.py", "helper", "acme/mod.py") {
+		t.Fatalf("dotted call must resolve to acme/mod.py:helper: %#v", relationsOfType(snapshot.Relations, "CALLS"))
+	}
+	if hasRelationBySymbolNameAndFile(snapshot, "CALLS", "caller", "app.py", "helper", "app.py") {
+		t.Fatalf("dotted call wrongly captured by same-file app.py:helper: %#v", relationsOfType(snapshot.Relations, "CALLS"))
+	}
+}
+
+// A submodule-qualified dotted call (`acme.service.zonk()`) whose terminal name
+// is NOT defined in the imported submodule must not fabricate an edge to a
+// globally unique same-named symbol elsewhere in the workspace (here the
+// package __init__.py). The dedicated path never reaches the globally-unique
+// fallback; with no module-scoped local target it emits only the external edge.
+func TestPythonDottedCallDoesNotFabricateGloballyUniqueEdge(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "acme/__init__.py", `def zonk():
+    return "init"
+`)
+	writeFile(t, repo, "acme/service.py", `def other():
+    return 1
+`)
+	writeFile(t, repo, "consumer.py", `import acme.service
+
+
+def call_it():
+    return acme.service.zonk()
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	symbolsByID := map[string]SymbolRecord{}
+	for _, s := range snapshot.Symbols {
+		symbolsByID[s.ID] = s
+	}
+	for _, r := range snapshot.Relations {
+		if r.Type != "CALLS" || lastSegment(r.FromID) != "call_it" {
+			continue
+		}
+		if to, ok := symbolsByID[r.ToID]; ok && to.Name == "zonk" {
+			t.Fatalf("dotted call fabricated wrong edge call_it -> zonk @ %s (service.py has no zonk)", to.FilePath)
+		}
+	}
+	found := false
+	for _, r := range snapshot.Relations {
+		if r.Type == "CALLS" && lastSegment(r.FromID) == "call_it" && r.ToID == externalID("symbol", "acme.service.zonk") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("missing external CALLS call_it -> acme.service.zonk: %#v", relationsOfType(snapshot.Relations, "CALLS"))
+	}
+}
+
+// A chained R assignment `a <- b <- function() ...` binds BOTH names at the
+// same scope: a and b are peers, not nested. Emitting the outer name must not
+// walk the inner assignment target as if it lived inside a function body — that
+// mis-marked the inner binding Local and hid it from cross-file resolution,
+// rerouting its callers to an unrelated same-named decoy.
+func TestRChainedAssignmentInnerBindingTopLevel(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "R/a.R", `helper <- validate <- function(x) x + 1
+
+g <- function() {
+  validate(10)
+}
+`)
+	// A same-named decoy in another file: if `validate@a.R` is wrongly marked
+	// Local, g's call reroutes here (name_only) instead of resolving in-file.
+	writeFile(t, repo, "R/b.R", `validate <- function(x) x * 999
+`)
+	snapshot, err := BuildProviderSnapshotWithOptions(t.Context(), repo, "test-version", ProviderSnapshotOptions{Worktree: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	symByNameFile := map[string]SymbolRecord{}
+	for _, s := range snapshot.Symbols {
+		if s.Language == "R" {
+			symByNameFile[s.Name+"@"+s.FilePath] = s
+		}
+	}
+	for _, key := range []string{"helper@R/a.R", "validate@R/a.R"} {
+		s, ok := symByNameFile[key]
+		if !ok {
+			t.Fatalf("R chained-assignment symbol %s not extracted: %#v", key, symByNameFile)
+		}
+		if s.Kind != "function" {
+			t.Fatalf("R chained-assignment symbol %s should be a function, got %q", key, s.Kind)
+		}
+		// Both names bind at top level; neither may be Local (which would exclude
+		// it from cross-scope/cross-file name-match resolution).
+		if s.Local {
+			t.Fatalf("R chained-assignment symbol %s wrongly marked Local (hidden from resolution)", key)
+		}
+	}
+
+	var toSameFile, toDecoy bool
+	for _, r := range snapshot.Relations {
+		if r.Type != "CALLS" || lastSegment(r.FromID) != "g" || lastSegment(r.ToID) != "validate" {
+			continue
+		}
+		switch {
+		case strings.Contains(r.ToID, "R/a.R"):
+			toSameFile = true
+			if r.Resolution != "exact" {
+				t.Fatalf("g -> validate@a.R should resolve exact, got %q", r.Resolution)
+			}
+		case strings.Contains(r.ToID, "R/b.R"):
+			toDecoy = true
+		}
+	}
+	if !toSameFile {
+		t.Fatalf("expected g -> validate@a.R (exact same-file CALLS edge), got none: %#v", snapshot.Relations)
+	}
+	if toDecoy {
+		t.Fatalf("g must not resolve to the decoy validate@b.R; the in-file binding was wrongly hidden")
+	}
+}
+
+// A three-level chain `x <- y <- z <- function() ...` must leave every
+// plain-identifier target non-Local (all bind at the same top-level scope).
+func TestRChainedAssignmentThreeLevelTopLevel(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "R/chain.R", `x <- y <- z <- function() {
+  1
+}
+`)
+	snapshot, err := BuildProviderSnapshotWithOptions(t.Context(), repo, "test-version", ProviderSnapshotOptions{Worktree: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]SymbolRecord{}
+	for _, s := range snapshot.Symbols {
+		if s.Language == "R" {
+			seen[s.Name] = s
+		}
+	}
+	for _, name := range []string{"x", "y", "z"} {
+		s, ok := seen[name]
+		if !ok {
+			t.Fatalf("three-level chain target %q not extracted: %#v", name, seen)
+		}
+		if s.Kind != "function" {
+			t.Fatalf("three-level chain target %q should be a function, got %q", name, s.Kind)
+		}
+		if s.Local {
+			t.Fatalf("three-level chain target %q wrongly marked Local", name)
+		}
+	}
+}
+
+// A constructor immediately chained into a type-escaping hop
+// (`my $x = Session->new->request`) must not type $x as the constructor class:
+// $x is really an HTTP::Request (what `->request` returns), so `$x->send` must
+// not resolve to Session::send. Because `send` is defined in two packages there
+// is no globally-unique fallback either, so the correct outcome is NO send edge.
+func TestPerlChainedConstructorDoesNotMistypeReceiver(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "lib/App.pm", `package App;
+
+sub run {
+  my $x = Session->new->request;
+  $x->send;
+}
+`)
+	writeFile(t, repo, "lib/Session.pm", `package Session;
+
+sub new { return bless {}, shift }
+
+sub request { return HTTP::Request->new }
+
+sub send { return 1 }
+`)
+	writeFile(t, repo, "lib/HTTP/Request.pm", `package HTTP::Request;
+
+sub new { return bless {}, shift }
+
+sub send { return 2 }
+`)
+	snapshot, err := BuildProviderSnapshotWithOptions(t.Context(), repo, "test-version", ProviderSnapshotOptions{Worktree: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	symbolsByID := map[string]SymbolRecord{}
+	for _, s := range snapshot.Symbols {
+		symbolsByID[s.ID] = s
+	}
+	for _, r := range snapshot.Relations {
+		if r.Type != "CALLS" || lastSegment(r.FromID) != "run" {
+			continue
+		}
+		if to, ok := symbolsByID[r.ToID]; ok && to.Name == "send" {
+			t.Fatalf("chained-constructor mistype fabricated CALLS run -> send @ %s (reason %q)", to.FilePath, r.Reason)
+		}
+	}
+}
+
+// A constructor-typed local that is reassigned through an untracked call
+// (`my $x = Foo->new; $x = build_widget(); $x->go`) must not keep the stale
+// constructor type: $x really holds a Widget, so `$x->go` must not resolve to
+// Foo::go. With go defined in both Foo and Widget there is no globally-unique
+// fallback either, so the correct outcome is NO run -> go edge.
+func TestPerlReassignedLocalDoesNotResolveViaStaleType(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "lib/App.pm", `package App;
+
+sub run {
+  my $x = Foo->new;
+  $x = build_widget();
+  $x->go;
+}
+`)
+	writeFile(t, repo, "lib/Foo.pm", `package Foo;
+
+sub new { return bless {}, shift }
+
+sub go { return 1 }
+`)
+	writeFile(t, repo, "lib/Widget.pm", `package Widget;
+
+sub new { return bless {}, shift }
+
+sub go { return 2 }
+
+sub build_widget { return Widget->new }
+`)
+	snapshot, err := BuildProviderSnapshotWithOptions(t.Context(), repo, "test-version", ProviderSnapshotOptions{Worktree: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	symbolsByID := map[string]SymbolRecord{}
+	for _, s := range snapshot.Symbols {
+		symbolsByID[s.ID] = s
+	}
+	for _, r := range snapshot.Relations {
+		if r.Type != "CALLS" || lastSegment(r.FromID) != "run" {
+			continue
+		}
+		if to, ok := symbolsByID[r.ToID]; ok && to.Name == "go" {
+			t.Fatalf("stale-type reassignment fabricated CALLS run -> go @ %s (reason %q)", to.FilePath, r.Reason)
+		}
+	}
+}
+
+// A constructor-typed local reassigned through a list assignment
+// (`my $x = Foo->new; ($x, $y) = fetch(); $x->greet`) must not keep the stale
+// constructor type: $x really holds fetch()'s first return value, not a Foo, so
+// `$x->greet` must not resolve to Foo::greet. With greet defined in both Foo and
+// Bar there is no globally-unique name-only fallback either, so the correct
+// outcome is NO run -> greet edge. This is the exact end-to-end repro that the
+// scalar-only reassignment scan missed (list-assignment LHS has no bare `$x =`).
+func TestPerlListReassignedLocalDoesNotResolveViaStaleType(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "lib/App.pm", `package App;
+
+sub run {
+  my $x = Foo->new;
+  ($x, $y) = fetch();
+  return $x->greet;
+}
+
+sub fetch { return (1, 2); }
+`)
+	writeFile(t, repo, "lib/Foo.pm", `package Foo;
+
+sub new { return bless {}, shift }
+
+sub greet { return 1 }
+`)
+	writeFile(t, repo, "lib/Bar.pm", `package Bar;
+
+sub greet { return 2 }
+`)
+	snapshot, err := BuildProviderSnapshotWithOptions(t.Context(), repo, "test-version", ProviderSnapshotOptions{Worktree: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	symbolsByID := map[string]SymbolRecord{}
+	for _, s := range snapshot.Symbols {
+		symbolsByID[s.ID] = s
+	}
+	for _, r := range snapshot.Relations {
+		if r.Type != "CALLS" || lastSegment(r.FromID) != "run" {
+			continue
+		}
+		if to, ok := symbolsByID[r.ToID]; ok && to.Name == "greet" {
+			t.Fatalf("list-assignment stale-type fabricated CALLS run -> greet @ %s (reason %q)", to.FilePath, r.Reason)
+		}
+	}
+}
+
+// A multi-hop getter chain (`$url->path->to_string`) must not have its terminal
+// method attributed to the head receiver's package. perlReceiverCalls flattens
+// the chain to {url, to_string}, but to_string is invoked on the Mojo::Path
+// returned by $url->path, not on $url, so type-inferred resolution must skip it.
+// With to_string defined in both Mojo::URL and Mojo::Path there is no
+// globally-unique fallback either, so the correct outcome is NO to_string edge.
+// A genuine single-hop `$url->clone` in the same sub (clone also duplicated
+// across both packages, so only type inference can resolve it) is the positive
+// control that the head-receiver type is still used for real single-hop calls.
+func TestPerlMultiHopChainDoesNotAttributeTerminalToHead(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "lib/App.pm", `package App;
+
+sub build {
+  my $url = Mojo::URL->new;
+  $url->clone;
+  return $url->path->to_string;
+}
+`)
+	writeFile(t, repo, "lib/Mojo/URL.pm", `package Mojo::URL;
+
+sub new { return bless {}, shift }
+
+sub path { return Mojo::Path->new }
+
+sub clone { return shift }
+
+sub to_string { return 'url' }
+`)
+	writeFile(t, repo, "lib/Mojo/Path.pm", `package Mojo::Path;
+
+sub new { return bless {}, shift }
+
+sub clone { return shift }
+
+sub to_string { return 'path' }
+`)
+	snapshot, err := BuildProviderSnapshotWithOptions(t.Context(), repo, "test-version", ProviderSnapshotOptions{Worktree: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	symbolsByID := map[string]SymbolRecord{}
+	for _, s := range snapshot.Symbols {
+		symbolsByID[s.ID] = s
+	}
+	sawClone := false
+	for _, r := range snapshot.Relations {
+		if r.Type != "CALLS" || lastSegment(r.FromID) != "build" {
+			continue
+		}
+		to, ok := symbolsByID[r.ToID]
+		if !ok {
+			continue
+		}
+		if to.Name == "to_string" {
+			t.Fatalf("multi-hop terminal misattributed: CALLS build -> to_string @ %s (reason %q)", to.FilePath, r.Reason)
+		}
+		if to.Name == "clone" {
+			if to.FilePath != "lib/Mojo/URL.pm" || r.Resolution != "type_inferred" {
+				t.Fatalf("single-hop $url->clone resolved wrong: %s (%s)", to.FilePath, r.Resolution)
+			}
+			sawClone = true
+		}
+	}
+	if !sawClone {
+		t.Fatal("genuine single-hop CALLS build -> clone @ lib/Mojo/URL.pm was dropped")
+	}
+}
+
+// Minimal reproduction of the multi-hop misattribution: `$w->child->name` with
+// name defined in both Widget and Container must not fabricate run -> name in
+// the head receiver Widget's package (the real target is Container::name).
+func TestPerlMultiHopChainMinimalReproNoEdge(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "lib/Run.pm", `package Run;
+
+sub run {
+  my $w = Widget->new;
+  $w->child->name;
+}
+`)
+	writeFile(t, repo, "lib/Widget.pm", `package Widget;
+
+sub new { return bless {}, shift }
+
+sub child { return Container->new }
+
+sub name { return 'widget' }
+`)
+	writeFile(t, repo, "lib/Container.pm", `package Container;
+
+sub new { return bless {}, shift }
+
+sub name { return 'container' }
+`)
+	snapshot, err := BuildProviderSnapshotWithOptions(t.Context(), repo, "test-version", ProviderSnapshotOptions{Worktree: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	symbolsByID := map[string]SymbolRecord{}
+	for _, s := range snapshot.Symbols {
+		symbolsByID[s.ID] = s
+	}
+	for _, r := range snapshot.Relations {
+		if r.Type != "CALLS" || lastSegment(r.FromID) != "run" {
+			continue
+		}
+		if to, ok := symbolsByID[r.ToID]; ok && to.Name == "name" {
+			t.Fatalf("multi-hop terminal misattributed: CALLS run -> name @ %s (reason %q)", to.FilePath, r.Reason)
+		}
+	}
+}
+
+// A bare receiver type (`Foo`) must resolve only to a top-level package file
+// (lib/Foo.pm), never to a same-basename file in a deeper namespace
+// (lib/Deep/Foo.pm is package Deep::Foo). A `::` type must still match its
+// full namespaced path.
+func TestPerlSymbolFileMatchesTypeRequiresPathBoundary(t *testing.T) {
+	if perlSymbolFileMatchesType("lib/Deep/Foo.pm", "Foo") {
+		t.Fatal("bare type Foo must not match namespaced lib/Deep/Foo.pm")
+	}
+	if !perlSymbolFileMatchesType("lib/Mojo/URL.pm", "Mojo::URL") {
+		t.Fatal("type Mojo::URL must match lib/Mojo/URL.pm")
+	}
+	if !perlSymbolFileMatchesType("lib/Foo.pm", "Foo") {
+		t.Fatal("bare type Foo must match top-level lib/Foo.pm")
+	}
+}
+
+func TestPerlBareReceiverTypeDoesNotMatchNamespacedFile(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "lib/App.pm", `package App;
+
+sub run {
+  my $x = Foo->new;
+  $x->render;
+}
+`)
+	writeFile(t, repo, "lib/Foo.pm", `package Foo;
+
+sub new {
+  return bless {}, shift;
+}
+`)
+	writeFile(t, repo, "lib/Deep/Foo.pm", `package Deep::Foo;
+
+sub render {
+  return 1;
+}
+`)
+	writeFile(t, repo, "lib/Other.pm", `package Other;
+
+sub render {
+  return 2;
+}
+`)
+
+	snapshot, err := BuildProviderSnapshotWithOptions(t.Context(), repo, "test-version", ProviderSnapshotOptions{Worktree: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	symbolsByID := map[string]SymbolRecord{}
+	for _, s := range snapshot.Symbols {
+		symbolsByID[s.ID] = s
+	}
+	for _, r := range snapshot.Relations {
+		if r.Type != "CALLS" || lastSegment(r.FromID) != "run" {
+			continue
+		}
+		if to, ok := symbolsByID[r.ToID]; ok && to.Name == "render" {
+			t.Fatalf("emitted wrong CALLS run -> render @ %s (Foo has no render sub)", to.FilePath)
+		}
+	}
+}
+
+// A multi-hop getter-navigation chain (`$tx->req->url`) returns a different
+// object than the receiver, so its assignment target must NOT inherit the
+// receiver's package type. `url` is not a sub of Mojo::Transaction, so the
+// package-membership gate rejects the fluent shortcut and $url stays untyped;
+// a later `$url->path` therefore emits no edge (rather than a wrong edge to
+// Mojo::Transaction::path). `path` is defined in two packages so it cannot
+// resolve via the globally-unique fallback either.
+func TestPerlGetterNavigationChainDoesNotInheritReceiverType(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "lib/App.pm", `package App;
+
+sub run {
+  my $tx  = Mojo::Transaction->new;
+  my $url = $tx->req->url;
+  $url->path;
+}
+`)
+	writeFile(t, repo, "lib/Mojo/Transaction.pm", `package Mojo::Transaction;
+
+sub new {
+  return bless {}, shift;
+}
+
+sub req {
+  return bless {}, 'Mojo::Message::Request';
+}
+
+sub path {
+  return '/tx';
+}
+`)
+	writeFile(t, repo, "lib/Mojo/URL.pm", `package Mojo::URL;
+
+sub path {
+  return '/url';
+}
+`)
+
+	snapshot, err := BuildProviderSnapshotWithOptions(t.Context(), repo, "test-version", ProviderSnapshotOptions{Worktree: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	symbolsByID := map[string]SymbolRecord{}
+	for _, s := range snapshot.Symbols {
+		symbolsByID[s.ID] = s
+	}
+	for _, r := range snapshot.Relations {
+		if r.Type != "CALLS" || lastSegment(r.FromID) != "run" {
+			continue
+		}
+		if to, ok := symbolsByID[r.ToID]; ok && to.Name == "path" {
+			t.Fatalf("getter-navigation chain fabricated CALLS run -> path @ %s", to.FilePath)
+		}
 	}
 }
