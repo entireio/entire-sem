@@ -127,7 +127,11 @@ type SnapshotHeader struct {
 	RepoKey         string   `json:"repo_key"`
 	Commit          string   `json:"commit"`
 	Tree            string   `json:"tree"`
-	Languages       []string `json:"languages"`
+	// ScopedPaths echoes the normalized repository-relative paths a scoped
+	// snapshot (ProviderSnapshotOptions.OnlyFiles) was requested for, sorted
+	// and deduplicated. Empty means the snapshot covers the full repository.
+	ScopedPaths []string `json:"scoped_paths,omitempty"`
+	Languages   []string `json:"languages"`
 	// LanguageTiers classifies each language present in this snapshot as
 	// "semantic" (grammar-backed extraction) or "inventory-only" (file
 	// discovery + basic symbols), so a consumer can scope trust per language.
@@ -289,8 +293,11 @@ type ProviderSnapshotOptions struct {
 	IgnoreFiles  []string
 	IncludeFiles []string
 	// OnlyFiles restricts parsing to these exact repository-relative paths.
-	// Empty means all discovered files. It is intended for query-time selective
-	// indexing; ignore and vendored-file rules still apply first.
+	// Empty means all discovered files. Paths are normalized (slash-separated,
+	// cleaned) and deduplicated; absolute paths and paths escaping the
+	// repository root are rejected. Ignore and vendored-file rules still apply
+	// first: a requested path they exclude (or that does not exist) is reported
+	// as a W_SCOPED_PATH_UNMATCHED warning, never silently re-included.
 	OnlyFiles []string
 	// MaxParseBytes caps parser input per file. Zero uses the provider default;
 	// negative disables the cap. Oversized files still emit file records and a
@@ -603,15 +610,16 @@ type prefixReader func(path string, limit int) (string, bool)
 // the file list, a per-file content reader, and git-state warnings. It holds no
 // file content itself.
 type sourceContext struct {
-	absRepo    string
-	key        string
-	commit     string
-	tree       string
-	paths      []string
-	read       contentReader
-	readPrefix prefixReader
-	close      func() error
-	warnings   []ProviderWarning
+	absRepo     string
+	key         string
+	commit      string
+	tree        string
+	paths       []string
+	scopedPaths []string
+	read        contentReader
+	readPrefix  prefixReader
+	close       func() error
+	warnings    []ProviderWarning
 }
 
 // leanHeader is the streaming preamble emitted before any file is parsed. It
@@ -628,6 +636,7 @@ func leanHeader(sc sourceContext, providerVersion string, spec profileSpec) Snap
 		RepoKey:          sc.key,
 		Commit:           sc.commit,
 		Tree:             sc.tree,
+		ScopedPaths:      sc.scopedPaths,
 		Languages:        []string{},
 		Capabilities:     []string{"ndjson", "stable-symbol-id-v1", "local-only", "partial-failures"},
 		SchemaFeatures:   append([]string(nil), schemaFeatures...),
@@ -1224,23 +1233,36 @@ func prepareSource(ctx context.Context, repo string, options ProviderSnapshotOpt
 	// The provider is local-only. NoNetwork is accepted to make that contract
 	// explicit for callers that enforce no-egress provider execution.
 	_ = options.NoNetwork
+	scopedPaths, err := normalizeOnlyFiles(options.OnlyFiles)
+	if err != nil {
+		return sourceContext{}, err
+	}
 	useHead := !options.Worktree && commitErr == nil && treeErr == nil
 	paths, read, readPrefix, closeSource, err := openSource(ctx, absRepo, useHead, options.IgnoreFiles, options.IncludeFiles)
 	if err != nil {
 		return sourceContext{}, err
 	}
-	if len(options.OnlyFiles) > 0 {
-		allowed := make(map[string]bool, len(options.OnlyFiles))
-		for _, filePath := range options.OnlyFiles {
-			allowed[filepath.ToSlash(filepath.Clean(filePath))] = true
+	var unmatchedScoped []string
+	if len(scopedPaths) > 0 {
+		allowed := make(map[string]bool, len(scopedPaths))
+		for _, filePath := range scopedPaths {
+			allowed[filePath] = true
 		}
+		matched := make(map[string]bool, len(scopedPaths))
 		filtered := paths[:0]
 		for _, filePath := range paths {
-			if allowed[filepath.ToSlash(filePath)] {
+			normalized := filepath.ToSlash(filePath)
+			if allowed[normalized] {
+				matched[normalized] = true
 				filtered = append(filtered, filePath)
 			}
 		}
 		paths = filtered
+		for _, filePath := range scopedPaths {
+			if !matched[filePath] {
+				unmatchedScoped = append(unmatchedScoped, filePath)
+			}
+		}
 	}
 
 	var warnings []ProviderWarning
@@ -1258,17 +1280,57 @@ func prepareSource(ctx context.Context, repo string, options ProviderSnapshotOpt
 			Detail:               firstError(commitErr, treeErr).Error(),
 		})
 	}
+	for _, filePath := range unmatchedScoped {
+		warnings = append(warnings, ProviderWarning{
+			Code:                 "W_SCOPED_PATH_UNMATCHED",
+			Severity:             "warning",
+			FilePath:             filePath,
+			EffectOnCompleteness: "requested path is not in the snapshot because it is not a discoverable repository file (missing, ignored, or vendored)",
+		})
+	}
 	return sourceContext{
-		absRepo:    absRepo,
-		key:        key,
-		commit:     commit,
-		tree:       tree,
-		paths:      paths,
-		read:       read,
-		readPrefix: readPrefix,
-		close:      closeSource,
-		warnings:   warnings,
+		absRepo:     absRepo,
+		key:         key,
+		commit:      commit,
+		tree:        tree,
+		paths:       paths,
+		scopedPaths: scopedPaths,
+		read:        read,
+		readPrefix:  readPrefix,
+		close:       closeSource,
+		warnings:    warnings,
 	}, nil
+}
+
+// normalizeOnlyFiles canonicalizes a scoped-snapshot request: every path must
+// be repository-relative and stay inside the repository root. The result is
+// slash-separated, cleaned, deduplicated, and sorted so a scoped request is
+// deterministic regardless of argument order or repeated paths.
+func normalizeOnlyFiles(onlyFiles []string) ([]string, error) {
+	if len(onlyFiles) == 0 {
+		return nil, nil
+	}
+	seen := make(map[string]bool, len(onlyFiles))
+	normalized := make([]string, 0, len(onlyFiles))
+	for _, raw := range onlyFiles {
+		if raw == "" {
+			return nil, fmt.Errorf("scoped snapshot path must not be empty")
+		}
+		if filepath.IsAbs(raw) || strings.HasPrefix(filepath.ToSlash(raw), "/") || filepath.VolumeName(raw) != "" {
+			return nil, fmt.Errorf("scoped snapshot path %q must be repository-relative, not absolute", raw)
+		}
+		cleaned := path.Clean(filepath.ToSlash(raw))
+		if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+			return nil, fmt.Errorf("scoped snapshot path %q escapes the repository root", raw)
+		}
+		if seen[cleaned] {
+			continue
+		}
+		seen[cleaned] = true
+		normalized = append(normalized, cleaned)
+	}
+	sort.Strings(normalized)
+	return normalized, nil
 }
 
 func WriteSnapshotNDJSON(out io.Writer, snapshot ProviderSnapshot) error {
