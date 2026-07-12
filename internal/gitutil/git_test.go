@@ -39,7 +39,7 @@ func TestListFilesHandlesNewlinesInPaths(t *testing.T) {
 	}
 }
 
-func TestGrepIndexFilesUsesFixedStringsAndUnstagedContent(t *testing.T) {
+func TestGrepIndexMatchesUsesFixedStringsAndUnstagedContent(t *testing.T) {
 	repo := t.TempDir()
 	git(t, repo, "init")
 	git(t, repo, "config", "user.name", "Entire Sem Test")

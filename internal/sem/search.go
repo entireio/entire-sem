@@ -113,7 +113,7 @@ type searchCandidate struct {
 	score      float64
 }
 
-var searchWordPattern = regexp.MustCompile(`[[:alnum:]_./:+-]+`)
+var searchWordPattern = regexp.MustCompile(`[[:alnum:]_./:+#-]+`)
 
 var searchStopWords = map[string]bool{
 	"a": true, "an": true, "and": true, "are": true, "as": true,
@@ -1140,6 +1140,16 @@ func buildSearchQuery(query string) searchQuery {
 		if len(term) < 2 || searchStopWords[term] {
 			return
 		}
+		hasAlphanumeric := false
+		for _, character := range term {
+			if unicode.IsLetter(character) || unicode.IsDigit(character) {
+				hasAlphanumeric = true
+				break
+			}
+		}
+		if !hasAlphanumeric {
+			return
+		}
 		if weight > weights[term] {
 			weights[term] = weight
 		}
@@ -1218,8 +1228,8 @@ func codeLikeSearchWeight(raw string) float64 {
 }
 
 func codeLikeSearchToken(raw string) bool {
-	trimmed := strings.Trim(raw, "./:+-")
-	if strings.ContainsAny(trimmed, "_./:$") || strings.HasPrefix(raw, "--") {
+	trimmed := strings.Trim(raw, "./:-")
+	if strings.ContainsAny(trimmed, "_./:$+#") || strings.HasPrefix(raw, "--") {
 		return true
 	}
 	uppercase := 0
@@ -1258,7 +1268,7 @@ func morphologicalSearchTerms(term string) []string {
 }
 
 func searchTokenVariants(raw string) []string {
-	raw = strings.Trim(raw, "./:+-")
+	raw = strings.Trim(raw, "./:-")
 	if raw == "" {
 		return nil
 	}

@@ -46,6 +46,24 @@ func Example() {}
 	}
 }
 
+func TestSearchRepositorySupportsPunctuatedLanguageQuery(t *testing.T) {
+	repo := t.TempDir()
+	write(t, repo, "native/bridge.cpp", "// C++ bridge implementation\nint bridge() { return 1; }\n")
+	write(t, repo, "docs/unrelated.txt", "plain language documentation\n")
+
+	response, err := SearchRepository(t.Context(), repo, "test", "C++", SearchOptions{
+		Worktree: true,
+		Profile:  ProfileSyntaxOnly,
+		TopK:     5,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Results) == 0 || response.Results[0].FilePath != "native/bridge.cpp" {
+		t.Fatalf("C++ search results = %#v", response.Results)
+	}
+}
+
 func TestSearchRepositoryFindsConceptualBodyText(t *testing.T) {
 	repo := t.TempDir()
 	write(t, repo, "encoding/serializer.go", `package encoding
@@ -557,13 +575,29 @@ func TestSearchTokenVariantsKeepQualifiedCompoundIdentifiers(t *testing.T) {
 	}
 }
 
+func TestSearchQueryPreservesPunctuatedLanguageNames(t *testing.T) {
+	for query, want := range map[string]string{"C++": "c++", "C#": "c#", "F#": "f#"} {
+		t.Run(query, func(t *testing.T) {
+			got := buildSearchQuery(query)
+			if !got.termSet[want] {
+				t.Fatalf("query %q terms = %#v, want %q", query, got.terms, want)
+			}
+		})
+	}
+	for _, query := range []string{"++", "#", ":-"} {
+		if got := buildSearchQuery(query); len(got.terms) != 0 {
+			t.Fatalf("punctuation-only query %q produced terms %#v", query, got.terms)
+		}
+	}
+}
+
 func TestCodeLikeSearchTokenIgnoresProsePunctuation(t *testing.T) {
 	for _, token := range []string{"documentation.", "Currently,", "spaces."} {
 		if codeLikeSearchToken(token) {
 			t.Fatalf("prose token %q classified as code", token)
 		}
 	}
-	for _, token := range []string{"NewServiceConfig", "resolver_conn_wrapper", "foo/bar.go", "--head", "DOM"} {
+	for _, token := range []string{"NewServiceConfig", "resolver_conn_wrapper", "foo/bar.go", "--head", "DOM", "C++", "C#"} {
 		if !codeLikeSearchToken(token) {
 			t.Fatalf("code token %q was not classified as code", token)
 		}
