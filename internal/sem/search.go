@@ -342,26 +342,38 @@ func compactSearchResultToBytes(result SearchResult, q searchQuery, budget int) 
 	if focus < 0 || focus >= len(lines) {
 		focus = len(lines) / 2
 	}
-	left, right := focus, focus
-	for {
-		candidate := result
-		candidate.SnippetStartLine = result.SnippetStartLine + left
-		candidate.SnippetEndLine = result.SnippetStartLine + right
-		candidate.Snippet = strings.Join(lines[left:right+1], "\n")
-		size := serializedSearchResultBytes(candidate)
-		if size <= budget {
-			return candidate, size
-		}
-		if left == right {
-			candidate.Snippet = truncateSearchText(candidate.Snippet, maxInt(16, budget/3), q)
-			return candidate, serializedSearchResultBytes(candidate)
-		}
-		if right-focus >= focus-left {
-			right--
-		} else {
-			left++
+	bestSpan, bestBalance := 0, len(lines)+1
+	var best SearchResult
+	bestSize := 0
+	for left := 0; left <= focus; left++ {
+		for right := focus; right < len(lines); right++ {
+			candidate := result
+			candidate.SnippetStartLine = result.SnippetStartLine + left
+			candidate.SnippetEndLine = result.SnippetStartLine + right
+			candidate.Snippet = strings.Join(lines[left:right+1], "\n")
+			size := serializedSearchResultBytes(candidate)
+			if size > budget {
+				continue
+			}
+			span := right - left + 1
+			balance := (focus - left) - (right - focus)
+			if balance < 0 {
+				balance = -balance
+			}
+			if span > bestSpan || (span == bestSpan && balance < bestBalance) {
+				best, bestSize = candidate, size
+				bestSpan, bestBalance = span, balance
+			}
 		}
 	}
+	if bestSpan > 0 {
+		return best, bestSize
+	}
+	candidate := result
+	candidate.SnippetStartLine = result.SnippetStartLine + focus
+	candidate.SnippetEndLine = candidate.SnippetStartLine
+	candidate.Snippet = truncateSearchText(lines[focus], maxInt(16, budget/3), q)
+	return candidate, serializedSearchResultBytes(candidate)
 }
 
 func truncateSearchText(value string, maxBytes int, q searchQuery) string {
@@ -567,7 +579,11 @@ func preselectSearchFiles(ctx context.Context, repo string, q searchQuery, optio
 				defer wait.Done()
 				for filePath := range jobs {
 					if candidate, ok := scoreFile(filePath); ok {
-						results <- candidate
+						select {
+						case results <- candidate:
+						case <-ctx.Done():
+							return
+						}
 					}
 				}
 			}()
@@ -575,7 +591,11 @@ func preselectSearchFiles(ctx context.Context, repo string, q searchQuery, optio
 		go func() {
 			defer close(jobs)
 			for _, filePath := range scanPaths {
-				jobs <- filePath
+				select {
+				case jobs <- filePath:
+				case <-ctx.Done():
+					return
+				}
 			}
 		}()
 		go func() {
@@ -587,6 +607,9 @@ func preselectSearchFiles(ctx context.Context, repo string, q searchQuery, optio
 		}
 	} else {
 		for _, filePath := range scanPaths {
+			if ctx.Err() != nil {
+				break
+			}
 			if candidate, ok := scoreFile(filePath); ok {
 				files = append(files, candidate)
 			}
