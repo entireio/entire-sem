@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestSearchRepositoryRanksExactSymbol(t *testing.T) {
@@ -493,6 +495,70 @@ func TestSearchRepositoryKeepsUntrackedFiles(t *testing.T) {
 	}
 }
 
+func TestSearchRepositoryGitPreselectionKeepsFallbackTiers(t *testing.T) {
+	repo := t.TempDir()
+	git(t, repo, "init")
+	git(t, repo, "config", "user.name", "Entire Sem Test")
+	git(t, repo, "config", "user.email", "sem@example.com")
+	write(t, repo, "noise/selected.go", "package noise\n// sentinel alphaone\nfunc SelectedNoise() {}\n")
+	write(t, repo, "targets/morph.go", "package targets\n// configure\nfunc MorphTarget() {}\n")
+	write(t, repo, "targets/fragment.go", "package targets\n// profile\nfunc FragmentTarget() {}\n")
+	write(t, repo, "targets/direct.go", "package targets\n// tenthdirect\nfunc DirectTarget() {}\n")
+	fillerDir := filepath.Join(repo, "filler")
+	if err := os.MkdirAll(fillerDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for index := 0; index < minGitGrepPreselectionFiles-4; index++ {
+		path := filepath.Join(fillerDir, fmt.Sprintf("file_%05d.go", index))
+		if err := os.WriteFile(path, []byte("package filler\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git(t, repo, "add", ".")
+	git(t, repo, "commit", "-m", "large tracked worktree")
+
+	tests := []struct {
+		name       string
+		query      string
+		targetPath string
+	}{
+		{name: "morphology", query: "configuring sentinel", targetPath: "targets/morph.go"},
+		{name: "code fragment", query: "RenderProfileButton sentinel", targetPath: "targets/fragment.go"},
+		{
+			name:       "saturated direct term",
+			query:      "AlphaOne BetaTwo GammaThree DeltaFour EpsilonFive ZetaSix EtaSeven ThetaEight ninthdirect tenthdirect",
+			targetPath: "targets/direct.go",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			response, err := SearchRepository(t.Context(), repo, "test", test.query, SearchOptions{
+				Worktree:        true,
+				Profile:         ProfileSyntaxOnly,
+				TopK:            10,
+				MaxIndexedFiles: 2,
+				DisableCache:    true,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if response.Stats.FilesScanned != minGitGrepPreselectionFiles {
+				t.Fatalf("files scanned = %d, want %d", response.Stats.FilesScanned, minGitGrepPreselectionFiles)
+			}
+			if response.Stats.FilesContentRead <= 0 || response.Stats.FilesContentRead > 8 {
+				t.Fatalf("git preselection read %d files, want 1..8", response.Stats.FilesContentRead)
+			}
+			found := false
+			for _, result := range response.Results {
+				found = found || result.FilePath == test.targetPath
+			}
+			if !found {
+				t.Fatalf("git preselection lost %s for query %q: %#v", test.targetPath, test.query, response.Results)
+			}
+		})
+	}
+}
+
 func TestSearchGitPreselectionThresholdTargetsLargeWorktrees(t *testing.T) {
 	if shouldUseGitGrepPreselection(true, minGitGrepPreselectionFiles-1) {
 		t.Fatal("small worktree selected git-grep accelerator")
@@ -546,9 +612,47 @@ func TestSearchPreselectionPatternsPreferCodeShapedTerms(t *testing.T) {
 	if !containsString(patterns, "renderprofilebutton") || !containsString(patterns, "trailingaction") {
 		t.Fatalf("preselection patterns = %#v", patterns)
 	}
-	for _, generic := range []string{"render", "profile", "button", "trailing", "action"} {
-		if containsString(patterns, generic) {
-			t.Fatalf("compound identifier fragment %q entered preselection: %#v", generic, patterns)
+	fragmentCount := 0
+	for _, fragment := range []string{"render", "profile", "button", "trailing", "action"} {
+		if containsString(patterns, fragment) {
+			fragmentCount++
+		}
+	}
+	if fragmentCount == 0 || fragmentCount > 2 {
+		t.Fatalf("bounded compound-fragment fallback count = %d, patterns = %#v", fragmentCount, patterns)
+	}
+	if len(patterns) > 12 {
+		t.Fatalf("preselection pattern count = %d", len(patterns))
+	}
+}
+
+func TestSearchPreselectionPatternsReserveMorphologicalFallbacks(t *testing.T) {
+	patterns := searchPreselectionPatterns(buildSearchQuery("configuring serializer behavior"))
+	if !containsString(patterns, "configuring") {
+		t.Fatalf("direct query term missing from preselection: %#v", patterns)
+	}
+	if !containsString(patterns, "configur") && !containsString(patterns, "configure") {
+		t.Fatalf("morphological fallback missing from preselection: %#v", patterns)
+	}
+	if len(patterns) > 12 {
+		t.Fatalf("preselection pattern count = %d", len(patterns))
+	}
+}
+
+func TestSearchPreselectionPatternsPreserveDirectTermsAtCapacity(t *testing.T) {
+	plainTerms := []string{"alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", "juliet"}
+	plainPatterns := searchPreselectionPatterns(buildSearchQuery(strings.Join(plainTerms, " ")))
+	for _, direct := range plainTerms {
+		if !containsString(plainPatterns, direct) {
+			t.Fatalf("plain query term %q missing from saturated preselection: %#v", direct, plainPatterns)
+		}
+	}
+
+	query := buildSearchQuery("AlphaOne BetaTwo GammaThree DeltaFour EpsilonFive ZetaSix EtaSeven ThetaEight ninthdirect tenthdirect")
+	patterns := searchPreselectionPatterns(query)
+	for _, direct := range []string{"ninthdirect", "tenthdirect"} {
+		if !containsString(patterns, direct) {
+			t.Fatalf("direct query term %q missing from saturated preselection: %#v", direct, patterns)
 		}
 	}
 	if len(patterns) > 12 {
@@ -709,6 +813,26 @@ func TestCompactSearchResultKeepsLargestFocusedWindowThatFits(t *testing.T) {
 	}
 	if got.SnippetStartLine != 2 || got.SnippetEndLine != 4 || got.Snippet != threeLine.Snippet {
 		t.Fatalf("compacted snippet = lines %d-%d %q, want balanced lines 2-4", got.SnippetStartLine, got.SnippetEndLine, got.Snippet)
+	}
+}
+
+func TestTruncateSearchTextNeverExceedsByteBudget(t *testing.T) {
+	query := buildSearchQuery("configuration handler")
+	values := []string{
+		strings.Repeat("å", 20) + " configuration handler " + strings.Repeat("界", 20),
+		"configuration handler " + strings.Repeat("界", 20),
+		strings.Repeat("å", 20) + " configuration handler",
+	}
+	for _, value := range values {
+		for budget := 0; budget <= 64; budget++ {
+			got := truncateSearchText(value, budget, query)
+			if len(got) > budget {
+				t.Fatalf("budget %d produced %d bytes: %q", budget, len(got), got)
+			}
+			if !utf8.ValidString(got) {
+				t.Fatalf("budget %d split UTF-8: %q", budget, got)
+			}
+		}
 	}
 }
 
