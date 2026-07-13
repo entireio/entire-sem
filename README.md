@@ -16,6 +16,7 @@ entire sem capabilities --json
 entire sem snapshot --repo . --format ndjson
 entire sem symbols --repo . --format ndjson
 entire sem edges --repo . --format ndjson
+entire sem search --repo . --query "where is service config disabled?"
 entire sem snapshot --repo . --format ndjson --worktree --ignore-file .brainignore
 entire sem snapshot --repo . --format ndjson --worktree --include-file .seminclude
 ```
@@ -110,6 +111,31 @@ See [docs/operations.md](docs/operations.md) for target and cgo details.
 
 ## Commands
 
+Search the live working tree for ranked source regions:
+
+```sh
+entire sem search --repo . --query "where is service config disabled?" --top-k 20
+```
+
+`search` combines source-body matching, identifier splitting, symbol names and
+signatures, paths, conceptual issue-to-API terms, and diversity-aware region
+selection. It can return several non-overlapping regions from one file. Results
+include broad source provenance plus a focused, bounded snippet for direct agent
+context.
+
+Interactive search reads the working tree by default so agents see dirty edits.
+Use `--head` for immutable committed-tree semantics. Cold search first scans
+files without parsing, then indexes at most 96 query-relevant files; use
+`--max-indexed-files` to change the bound or `--index-all-files` for exhaustive
+parsing. The default `syntax-only` profile avoids synchronous whole-repository
+graph construction. `--profile fast` adds local relation expansion when deeper
+semantic indexing is worth the cost.
+
+When Entire supplies `ENTIRE_PLUGIN_DATA_DIR`, committed-tree searches reuse a
+tree-keyed compressed index. Direct callers can set `--cache-dir`; `--no-cache`
+disables persistence. Worktree searches do not reuse committed indexes, avoiding
+stale results after edits.
+
 Compare one commit against its first parent:
 
 ```sh
@@ -182,6 +208,10 @@ semantic graph rather than human-oriented diff text.
   symbol, and relation records.
 - `symbols --format ndjson` emits the same header followed by symbol records.
 - `edges --format ndjson` emits the same header followed by relation records.
+- `search --query ...` emits ranked, qrel-blind source regions as JSON, NDJSON,
+  or text without network access or a hosted model. Search output is bounded to
+  16 KiB of serialized result context by default; use `--max-context-bytes 0`
+  for an unbounded diagnostic ranking.
 
 Snapshot headers include the schema version, provider version, repository key,
 `HEAD` commit and tree when available, parsed languages, capability labels,

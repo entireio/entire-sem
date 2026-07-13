@@ -65,6 +65,8 @@ func Run(ctx context.Context, opts Options, args []string) error {
 		return runProviderRecords(ctx, opts, args[1:], "symbols")
 	case "edges":
 		return runProviderRecords(ctx, opts, args[1:], "edges")
+	case "search":
+		return runSearch(ctx, opts, args[1:])
 	case "version", "--version", "-v":
 		if len(args) > 1 && args[1] == "--json" {
 			return json.NewEncoder(opts.Stdout).Encode(map[string]string{
@@ -95,7 +97,8 @@ Usage:
   entire sem capabilities --json
   entire sem snapshot --repo . --format ndjson [--worktree] [--progress] [--ignore-file path] [--include-file path]
   entire sem symbols --repo . --format ndjson [--worktree] [--progress] [--ignore-file path] [--include-file path]
-  entire sem edges --repo . --format ndjson [--worktree] [--progress] [--ignore-file path] [--include-file path]`)
+  entire sem edges --repo . --format ndjson [--worktree] [--progress] [--ignore-file path] [--include-file path]
+  entire sem search --query "issue or concept" --repo . [--format json|ndjson|text] [--top-k 20] [--max-context-bytes 16384] [--head] [--profile syntax-only|fast|full] [--max-indexed-files 96|--index-all-files] [--cache-dir path|--no-cache]`)
 }
 
 func runDoctor(ctx context.Context, opts Options, args []string) error {

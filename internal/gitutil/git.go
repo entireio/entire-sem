@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os/exec"
@@ -23,6 +24,12 @@ type FileCochange struct {
 	Left  string
 	Right string
 	Count int
+}
+
+// GrepMatch is one matched substring from a tracked-worktree fixed-string grep.
+type GrepMatch struct {
+	Path string
+	Text string
 }
 
 func RepoRoot(ctx context.Context, cwd string) (string, error) {
@@ -91,6 +98,68 @@ func ListIndexFiles(ctx context.Context, repo string) ([]string, error) {
 		}
 	}
 	return files, nil
+}
+
+// GrepIndexMatches returns a bounded sample of matched terms per tracked
+// worktree file. Fixed strings and NUL-delimited paths keep query terms and
+// unusual paths from changing grep semantics.
+func GrepIndexMatches(ctx context.Context, repo string, patterns []string, maxPerFile int) ([]GrepMatch, error) {
+	if len(patterns) == 0 {
+		return []GrepMatch{}, nil
+	}
+	if maxPerFile <= 0 {
+		maxPerFile = 32
+	}
+	args := []string{"grep", "-z", "-I", "-i", "-F", "-o", "-m", strconv.Itoa(maxPerFile)}
+	for _, pattern := range patterns {
+		if pattern != "" {
+			args = append(args, "-e", pattern)
+		}
+	}
+	if len(args) == 8 {
+		return []GrepMatch{}, nil
+	}
+	args = append(args, "--")
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Dir = repo
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if err != nil {
+		var exitError *exec.ExitError
+		if errors.As(err, &exitError) && exitError.ExitCode() == 1 && stderr.Len() == 0 {
+			return []GrepMatch{}, nil
+		}
+		message := strings.TrimSpace(stderr.String())
+		if message == "" {
+			message = err.Error()
+		}
+		return nil, fmt.Errorf("git %s: %s", strings.Join(args, " "), message)
+	}
+
+	data := stdout.Bytes()
+	matches := make([]GrepMatch, 0)
+	for len(data) > 0 {
+		pathEnd := bytes.IndexByte(data, 0)
+		if pathEnd < 0 {
+			return nil, fmt.Errorf("git grep returned malformed path metadata")
+		}
+		path := string(data[:pathEnd])
+		data = data[pathEnd+1:]
+		textEnd := bytes.IndexByte(data, '\n')
+		if textEnd < 0 {
+			textEnd = len(data)
+		}
+		matches = append(matches, GrepMatch{Path: path, Text: string(data[:textEnd])})
+		if textEnd == len(data) {
+			data = nil
+		} else {
+			data = data[textEnd+1:]
+		}
+	}
+	return matches, nil
 }
 
 func ChangedFiles(ctx context.Context, repo, base, head string, paths []string) ([]ChangedFile, error) {

@@ -39,6 +39,50 @@ func TestListFilesHandlesNewlinesInPaths(t *testing.T) {
 	}
 }
 
+func TestGrepIndexMatchesUsesFixedStringsAndUnstagedContent(t *testing.T) {
+	repo := t.TempDir()
+	git(t, repo, "init")
+	git(t, repo, "config", "user.name", "Entire Sem Test")
+	git(t, repo, "config", "user.email", "sem@example.com")
+	for path, content := range map[string]string{
+		"src/target.go": "package source\nfunc Initial() {}\n",
+		"src/other.go":  "package source\nfunc Other() {}\n",
+	} {
+		full := filepath.Join(repo, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git(t, repo, "add", ".")
+	git(t, repo, "commit", "-m", "initial")
+	if err := os.WriteFile(filepath.Join(repo, "src/target.go"), []byte("package source\nfunc NeedlePattern() {}\nfunc AnotherNeedlePattern() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	matches, err := GrepIndexMatches(t.Context(), repo, []string{"NeedlePattern"}, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 2 {
+		t.Fatalf("grep match count = %d, want 2: %#v", len(matches), matches)
+	}
+	for _, match := range matches {
+		if match.Path != "src/target.go" || match.Text != "NeedlePattern" {
+			t.Fatalf("grep match = %#v, want path src/target.go and exact fixed-string text", match)
+		}
+	}
+	empty, err := GrepIndexMatches(t.Context(), repo, []string{"absent-fixed-string"}, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(empty) != 0 {
+		t.Fatalf("no-match grep results = %#v", empty)
+	}
+}
+
 func TestChangedFilesHandlesNewlinesAndTabsInPaths(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Windows filenames cannot contain newlines")

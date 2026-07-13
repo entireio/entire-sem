@@ -288,6 +288,10 @@ type ProviderSnapshotOptions struct {
 	Worktree     bool
 	IgnoreFiles  []string
 	IncludeFiles []string
+	// OnlyFiles restricts parsing to these exact repository-relative paths.
+	// Empty means all discovered files. It is intended for query-time selective
+	// indexing; ignore and vendored-file rules still apply first.
+	OnlyFiles []string
 	// MaxParseBytes caps parser input per file. Zero uses the provider default;
 	// negative disables the cap. Oversized files still emit file records and a
 	// partial failure, but symbol parsing is skipped.
@@ -446,6 +450,7 @@ func Capabilities() CapabilityReport {
 			"stable_symbol_ids":    true,
 			"semantic_diff":        true,
 			"ndjson_snapshot":      true,
+			"hybrid_source_search": true,
 			"near_clone_detection": true,
 			"git_cochange_edges":   true,
 		},
@@ -1223,6 +1228,19 @@ func prepareSource(ctx context.Context, repo string, options ProviderSnapshotOpt
 	paths, read, readPrefix, closeSource, err := openSource(ctx, absRepo, useHead, options.IgnoreFiles, options.IncludeFiles)
 	if err != nil {
 		return sourceContext{}, err
+	}
+	if len(options.OnlyFiles) > 0 {
+		allowed := make(map[string]bool, len(options.OnlyFiles))
+		for _, filePath := range options.OnlyFiles {
+			allowed[filepath.ToSlash(filepath.Clean(filePath))] = true
+		}
+		filtered := paths[:0]
+		for _, filePath := range paths {
+			if allowed[filepath.ToSlash(filePath)] {
+				filtered = append(filtered, filePath)
+			}
+		}
+		paths = filtered
 	}
 
 	var warnings []ProviderWarning
