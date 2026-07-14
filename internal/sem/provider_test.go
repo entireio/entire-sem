@@ -10949,7 +10949,7 @@ func TestBuildProviderSnapshotWorktreeHonorsAdditionalIgnoreFile(t *testing.T) {
 func TestBuildProviderSnapshotWorktreeCombinesMultipleIgnoreFiles(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, ".brainignore", "cache/\n")
-	writeFile(t, repo, ".semignore", "# comments and blanks are ignored\n\n**/generated.py\nbenchmarks/agent-brain/results/\n")
+	writeFile(t, repo, ".graphignore", "# comments and blanks are ignored\n\n**/generated.py\nbenchmarks/agent-brain/results/\n")
 	writeFile(t, repo, "cache/cache.py", "def cache():\n    return True\n")
 	writeFile(t, repo, "src/generated.py", "def generated():\n    return True\n")
 	writeFile(t, repo, "benchmarks/agent-brain/results/result.py", "def result():\n    return True\n")
@@ -10957,7 +10957,7 @@ func TestBuildProviderSnapshotWorktreeCombinesMultipleIgnoreFiles(t *testing.T) 
 
 	snapshot, err := BuildProviderSnapshotWithOptions(t.Context(), repo, "test-version", ProviderSnapshotOptions{
 		Worktree:    true,
-		IgnoreFiles: []string{".brainignore", ".semignore"},
+		IgnoreFiles: []string{".brainignore", ".graphignore"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -11045,7 +11045,7 @@ func TestBuildProviderSnapshotHeadHonorsIgnoreAndIncludeFiles(t *testing.T) {
 	git(t, repo, "init")
 	git(t, repo, "config", "user.name", "Entire Graph Test")
 	git(t, repo, "config", "user.email", "graph@example.com")
-	writeFile(t, repo, ".semignore", "*\n")
+	writeFile(t, repo, ".graphignore", "*\n")
 	writeFile(t, repo, ".graphinclude", "src/keep.py\n")
 	writeFile(t, repo, "src/keep.py", "def keep_me():\n    return True\n")
 	writeFile(t, repo, "src/drop.py", "def drop_me():\n    return False\n")
@@ -11053,7 +11053,7 @@ func TestBuildProviderSnapshotHeadHonorsIgnoreAndIncludeFiles(t *testing.T) {
 	git(t, repo, "commit", "-m", "initial")
 
 	snapshot, err := BuildProviderSnapshotWithOptions(t.Context(), repo, "test-version", ProviderSnapshotOptions{
-		IgnoreFiles:  []string{".semignore"},
+		IgnoreFiles:  []string{".graphignore"},
 		IncludeFiles: []string{".graphinclude"},
 	})
 	if err != nil {
