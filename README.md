@@ -1,18 +1,33 @@
 # Entire Graph
 
-`entire-graph` is an Entire CLI plugin for entity-level checkpoint context.
+`entire-graph` is an Entire CLI plugin that gives Entire sessions entity-level
+checkpoint context and a local semantic code graph.
 
 Entire already knows a checkpoint touched `auth.py` or `.github/workflows/ci.yml`.
-This plugin answers the next question: which semantic entities changed inside that file?
+This plugin answers the next question: which semantic entities changed inside
+that file? It also serves ranked source context for a task and streams a
+machine-readable graph of symbols and relations, all without network access.
 
-## What Entire Graph Adds to Entire
+The plugin builds a binary named `entire-graph`, which is invoked through
+Entire as:
+
+```sh
+entire graph commit HEAD
+entire graph checkpoint abc123def456
+entire graph diff --base HEAD~1 --head HEAD
+entire graph search --repo . --query "where is service config disabled?"
+entire graph snapshot --repo . --format ndjson
+entire graph capabilities --json
+```
+
+## What It Adds to Entire
 
 - **Entity-level checkpoint context.** `commit`, `checkpoint`, and `diff` report
   added, removed, renamed, and signature- or body-changed entities with heuristic
   dependent counts, so a checkpoint can be judged without reading the full diff.
 - **A local-only semantic provider.** `snapshot`, `symbols`, and `edges` stream
   NDJSON graph records under a frozen schema 1.x contract for downstream
-  consumers such as Entire Brain — no network, no hosted models, no telemetry.
+  consumers such as Entire Brain: no network, no hosted models, no telemetry.
 - **Tree-sitter parsing across 36 languages**, from Go and TypeScript to
   Terraform, SQL, and GitHub Actions YAML, with 149 more filetypes tracked as
   inventory-only and honest partial failures for everything else.
@@ -28,71 +43,20 @@ This plugin answers the next question: which semantic entities changed inside th
   and moves by similarity, and streams results so memory stays bounded on very
   large repositories.
 
-This plugin builds a binary named `entire-graph`, which is invoked through Entire as:
+## Language Support
 
-```sh
-entire graph commit HEAD
-entire graph checkpoint abc123def456
-entire graph diff --base HEAD~1 --head HEAD
-entire graph analyze --json
-entire graph capabilities --json
-entire graph snapshot --repo . --format ndjson
-entire graph symbols --repo . --format ndjson
-entire graph edges --repo . --format ndjson
-entire graph search --repo . --query "where is service config disabled?"
-entire graph snapshot --repo . --format ndjson --worktree --ignore-file .graphignore
-entire graph snapshot --repo . --format ndjson --worktree --include-file .graphinclude
-```
+Tree-sitter-backed semantic parsing covers 36 languages: Bash, C, C++, C#,
+Clojure/ClojureScript, CUE, Dart, Elixir, Erlang, F#, Go, Groovy, Haskell,
+HCL/Terraform, Java, JavaScript, Julia, Kotlin, Lua, Objective-C, OCaml, Perl,
+PHP, Protocol Buffers, Python, R, Ruby, Rust, Scala, SQL, Swift, TypeScript,
+YAML (including GitHub Actions workflow sections and jobs), Zig, and Zsh.
 
-## Status
-
-This plugin implements the semantic checkpoint context proposed in
-[entireio/cli#589](https://github.com/entireio/cli/issues/589).
-
-The plugin uses a tree-sitter-backed parser for 36 semantic languages:
-
-- Bash and Zsh
-- C / C++ and Objective-C
-- C# and F#
-- Clojure / ClojureScript
-- CUE
-- Dart
-- Elixir and Erlang
-- Go
-- Groovy
-- Haskell
-- HCL / Terraform
-- Java
-- JavaScript / TypeScript
-- Julia
-- Kotlin
-- Lua
-- OCaml
-- Perl
-- PHP
-- Protocol Buffers
-- Python
-- R
-- Ruby
-- Rust
-- Scala
-- SQL
-- Swift
-- Zig
-- YAML, including GitHub Actions workflow sections and jobs
-
-Another 149 filetypes are recognized as inventory-only (stable file records
-without semantic claims). See [docs/language-support.md](docs/language-support.md)
+Another 149 filetypes are recognized as inventory-only: stable file records
+without semantic claims. See [docs/language-support.md](docs/language-support.md)
 for the full two-tier matrix.
 
-The parser is isolated behind `internal/sem`, so the command surface can stay stable
-while the semantic model gets richer.
-
-The plugin also implements a local-only semantic provider contract for tools that
-need machine-readable repository snapshots. Provider commands emit JSON or NDJSON
-records for capabilities, files, symbols, and relations without fetching remote
-code, calling hosted model APIs, uploading telemetry, or downloading grammars at
-runtime.
+The parser is isolated behind `internal/sem`, so the command surface stays
+stable while the semantic model gets richer.
 
 ## Getting Started
 
@@ -142,21 +106,37 @@ entire plugin install ./entire-graph --force
 After either install path, `entire graph ...` works anywhere the Entire CLI can
 find the managed plugin.
 
-For a one-command local source install, run:
-
-```sh
-scripts/install-local.sh
-```
-
-For local release archives with `SHA256SUMS`, run:
-
-```sh
-scripts/release.sh
-```
-
-See [docs/operations.md](docs/operations.md) for target and cgo details.
+For a one-command local source install, run `scripts/install-local.sh`. For
+local release archives with `SHA256SUMS`, run `scripts/release.sh`. See
+[docs/operations.md](docs/operations.md) for target and cgo details.
 
 ## Commands
+
+### Semantic Diff
+
+Compare one commit against its first parent, compare two arbitrary refs, or
+analyze the commit associated with an Entire checkpoint trailer:
+
+```sh
+entire graph commit HEAD
+entire graph diff --base main --head HEAD
+entire graph diff --base main --head HEAD --json
+entire graph checkpoint abc123def456
+```
+
+`analyze` is an alias for `diff`. All four commands print human-readable text
+by default and structured output with `--json`. Example:
+
+```text
+Semantic changes HEAD~1..HEAD
+
+auth.py
+  ~ function validate_token signature changed (14 dependents)
+  + class TokenClaims added
+  - function parse_token removed (0 dependents)
+```
+
+### Search
 
 Search the live working tree for ranked source regions:
 
@@ -183,44 +163,16 @@ tree-keyed compressed index. Direct callers can set `--cache-dir`; `--no-cache`
 disables persistence. Worktree searches do not reuse committed indexes, avoiding
 stale results after edits.
 
-Compare one commit against its first parent:
+### Provider Records
 
-```sh
-entire graph commit HEAD
-```
-
-Compare two arbitrary refs:
-
-```sh
-entire graph diff --base main --head HEAD
-```
-
-Emit JSON:
-
-```sh
-entire graph diff --base main --head HEAD --json
-```
-
-Analyze the commit associated with an Entire checkpoint trailer:
-
-```sh
-entire graph checkpoint abc123def456
-```
-
-Inspect the provider and its environment:
-
-```sh
-entire graph version --json
-entire graph doctor --json
-entire graph capabilities --json
-```
-
-Emit semantic provider records:
+Emit machine-readable graph records:
 
 ```sh
 entire graph snapshot --repo . --format ndjson
 entire graph symbols --repo . --format ndjson
 entire graph edges --repo . --format ndjson
+entire graph snapshot --repo . --format ndjson --worktree --ignore-file .brainignore
+entire graph snapshot --repo . --format ndjson --worktree --include-file .graphinclude
 ```
 
 `snapshot` writes a complete NDJSON stream: one header record followed by file,
@@ -235,7 +187,17 @@ path is absolute. Pass repeatable `--include-file <path>` flags for gitignore-st
 inclusion rules that are applied after `.gitignore` and `--ignore-file`, allowing
 callers to reopen otherwise ignored paths.
 
-Run without installing through Entire:
+### Environment
+
+Inspect the provider and its environment:
+
+```sh
+entire graph version --json
+entire graph doctor --json
+entire graph capabilities --json
+```
+
+### Running Without Entire
 
 ```sh
 ENTIRE_REPO_ROOT=/path/to/repo ./entire-graph diff --base HEAD~1 --head HEAD
@@ -294,8 +256,8 @@ working on this repository.
 
 ## Provider Contract
 
-The provider contract is designed for Entire or other local tools that want a stable
-semantic graph rather than human-oriented diff text.
+The provider contract is designed for Entire or other local tools that want a
+stable semantic graph rather than human-oriented diff text.
 
 - `version --json` returns the provider name and plugin version.
 - `doctor --json` reports Entire environment variables, repository resolution,
@@ -346,25 +308,12 @@ one file are disambiguated with source ranges, so inserted lines above duplicate
 can change those duplicate IDs; move/rename reconciliation is left to semantic diff
 records.
 
-## Example Output
-
-```text
-Semantic changes HEAD~1..HEAD
-
-auth.py
-  ~ function validate_token signature changed (14 dependents)
-  + class TokenClaims added
-  - function parse_token removed (0 dependents)
-```
-
-## Use Case
+## Why This Exists
 
 When an agent changes a repo, you often need to decide if the checkpoint is safe
 to keep, revert, or continue from. File names are not enough. `entire-graph` shows
 the actual code entities, workflow sections, signatures, and renames that changed,
 so you can understand the checkpoint before reading the full diff.
-
-## Why This Exists
 
 Issue [entireio/cli#589](https://github.com/entireio/cli/issues/589) proposes showing
 checkpoint context at the entity level instead of stopping at "this file changed."
@@ -378,6 +327,8 @@ checkpoint context at the entity level instead of stopping at "this file changed
 - report added, removed, renamed, signature-changed, and body-changed entities
 - expose the same parser through local-only provider commands that emit
   JSON/NDJSON snapshot, symbol, and relation records
+
+## Licensing
 
 The implementation does not copy or vendor Ataraxy Labs code. The runtime parser
 dependency is `github.com/smacker/go-tree-sitter`, which is MIT-licensed. This
