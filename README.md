@@ -17,7 +17,7 @@ entire graph snapshot --repo . --format ndjson
 entire graph symbols --repo . --format ndjson
 entire graph edges --repo . --format ndjson
 entire graph search --repo . --query "where is service config disabled?"
-entire graph snapshot --repo . --format ndjson --worktree --ignore-file .brainignore
+entire graph snapshot --repo . --format ndjson --worktree --ignore-file .graphignore
 entire graph snapshot --repo . --format ndjson --worktree --include-file .graphinclude
 ```
 
@@ -26,40 +26,52 @@ entire graph snapshot --repo . --format ndjson --worktree --include-file .graphi
 This plugin implements the semantic checkpoint context proposed in
 [entireio/cli#589](https://github.com/entireio/cli/issues/589).
 
-The plugin uses a tree-sitter-backed parser for:
+The plugin uses a tree-sitter-backed parser for 36 semantic languages:
 
-- Bash
-- C / C++
-- C#
+- Bash and Zsh
+- C / C++ and Objective-C
+- C# and F#
+- Clojure / ClojureScript
 - CUE
-- Elixir
+- Dart
+- Elixir and Erlang
 - Go
 - Groovy
+- Haskell
 - HCL / Terraform
 - Java
 - JavaScript / TypeScript
+- Julia
 - Kotlin
 - Lua
 - OCaml
+- Perl
 - PHP
 - Protocol Buffers
 - Python
+- R
 - Ruby
 - Rust
 - Scala
 - SQL
 - Swift
+- Zig
 - YAML, including GitHub Actions workflow sections and jobs
+
+Another 149 filetypes are recognized as inventory-only (stable file records
+without semantic claims). See [docs/language-support.md](docs/language-support.md)
+for the full two-tier matrix.
 
 The parser is isolated behind `internal/sem`, so the command surface can stay stable
 while the semantic model gets richer.
 
-This branch also adds a local-only semantic provider contract for tools that need
-machine-readable repository snapshots. Provider commands emit JSON or NDJSON records
-for capabilities, files, symbols, and relations without fetching remote code, calling
-hosted model APIs, uploading telemetry, or downloading grammars at runtime.
+The plugin also implements a local-only semantic provider contract for tools that
+need machine-readable repository snapshots. Provider commands emit JSON or NDJSON
+records for capabilities, files, symbols, and relations without fetching remote
+code, calling hosted model APIs, uploading telemetry, or downloading grammars at
+runtime.
 
-## Install
+## Getting Started
 
 Requirements:
 
@@ -67,14 +79,26 @@ Requirements:
 - Git
 - Go toolchain with CGO support (tree-sitter uses native parser bindings)
 
-Install the current plugin binary from the default branch, then copy it into
-Entire's managed plugin directory:
+1. Install the plugin binary from the default branch and register it with
+   Entire's managed plugin directory:
 
-```sh
-go install github.com/entireio/entire-graph/cmd/entire-graph@main
-entire plugin install "$(go env GOPATH)/bin/entire-graph" --force
-entire graph version
-```
+   ```sh
+   go install github.com/entireio/entire-graph/cmd/entire-graph@main
+   entire plugin install "$(go env GOPATH)/bin/entire-graph" --force
+   ```
+
+2. Verify the install and the local-only environment:
+
+   ```sh
+   entire graph version
+   entire graph doctor --json
+   ```
+
+3. Run your first semantic diff from any git repository:
+
+   ```sh
+   entire graph commit HEAD
+   ```
 
 If `$(go env GOPATH)/bin` is already on your `PATH`, Entire can also discover
 the binary directly after `go install`.
@@ -193,6 +217,57 @@ Run without installing through Entire:
 ```sh
 ENTIRE_REPO_ROOT=/path/to/repo ./entire-graph diff --base HEAD~1 --head HEAD
 ```
+
+## Agent Usage
+
+Entire Graph is built to be called by coding agents, not just humans. Every
+command is local-only and no-egress, so agents can run it freely inside
+sandboxed sessions without leaking source. Typical agent workflows:
+
+- **Find where to work.** Before editing, retrieve ranked code regions for a
+  task description:
+
+  ```sh
+  entire graph search --repo . --query "retry logic for webhook delivery" --format json
+  ```
+
+  Search reads the working tree by default, so an agent sees its own dirty
+  edits. Output is budgeted to 16 KiB of serialized snippets by default,
+  sized for direct inclusion in a model context window. Use `--top-k` and
+  `--max-context-bytes` to tune the budget.
+
+- **Judge a checkpoint.** After a change, summarize what actually changed at
+  the entity level to decide whether to keep, revert, or continue:
+
+  ```sh
+  entire graph commit HEAD --json
+  entire graph checkpoint <checkpoint-id> --json
+  ```
+
+  Signature changes with high dependent counts are a strong signal to run
+  tests before proceeding.
+
+- **Build a code graph.** Ingest machine-readable symbols and relations into
+  agent memory or a downstream store such as Entire Brain:
+
+  ```sh
+  entire graph snapshot --repo . --format ndjson
+  ```
+
+  Records carry stable `compound-v1` IDs, so entities can be tracked across
+  sessions and ordinary edits.
+
+- **Detect capabilities first.** Agents should feature-detect instead of
+  assuming: `entire graph capabilities --json` lists semantic versus
+  inventory-only languages and supported relation types, and
+  `entire graph doctor --json` verifies the environment, including
+  `no_egress=true`.
+
+Inside Entire sessions, the Entire CLI sets `ENTIRE_REPO_ROOT` and
+`ENTIRE_PLUGIN_DATA_DIR` automatically; committed-tree searches then reuse a
+tree-keyed compressed index across invocations. Outside Entire, pass `--repo`
+explicitly. See [AGENTS.md](AGENTS.md) for agent instructions specific to
+working on this repository.
 
 ## Provider Contract
 
