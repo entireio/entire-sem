@@ -36,7 +36,7 @@ entire graph capabilities --json
 
 **A 30-relation code graph with stable identity.** `compound-v1` symbol IDs survive ordinary edits, and relations span structure, calls, inheritance, fields, service boundaries, and config dependencies, each tagged with resolution and confidence.
 
-**Fewer tokens for coding agents.** One `search` or `edges` call returns exact `file:line` results and call relationships, replacing the dozens of grep and read cycles an agent otherwise burns to reconstruct structure and flood its context with file contents.
+**Fewer tokens for coding agents.** A structural question that costs an agent a file-reading sweep becomes one graph call. Answering "where is it defined, who calls it, what does it call" for a core symbol like `redisCommand` in redis takes about **2,300 tokens** from the graph versus about **654,000 tokens** to read the 23 files that reference it: a **283x reduction** (measured with tiktoken). The more widely a symbol is used, the larger the saving.
 
 ## What It Adds to Entire
 
