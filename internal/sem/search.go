@@ -979,6 +979,9 @@ func expandGraphCandidates(seeds []searchCandidate, relations []RelationRecord, 
 				contentCache[symbol.FilePath] = lines
 			}
 			start, end := clampRegion(symbol.StartLine, symbol.EndLine, len(lines))
+			if start == 0 {
+				continue
+			}
 			if end-start+1 > options.MaxRegionLines {
 				end = minInt(len(lines), start+options.MaxRegionLines-1)
 			}
