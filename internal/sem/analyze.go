@@ -47,15 +47,19 @@ func AnalyzeGitRange(ctx context.Context, repo, base, head string, paths []strin
 		if language == "" {
 			language = afterLanguage
 		}
-		// A file that fails to parse on either side yields zero entities with no
-		// signal, which would otherwise make compareEntities report every entity
-		// as phantom removed/added. Surface it as a machine-readable partial
-		// failure and skip the delta instead. Only ParseError suppresses the
-		// delta — a validly-emptied file (ParseError false, zero entities) must
-		// still report its real removed changes.
-		if beforeStatus.ParseError || afterStatus.ParseError {
+		// A hard parse failure yields ZERO entities with no signal, which would
+		// otherwise make compareEntities report every entity on that side as a
+		// phantom removed/added. Surface it as a machine-readable partial failure
+		// and skip the delta instead. We gate on zero entities rather than merely
+		// ParseError: tree-sitter also flags recoverable syntax errors
+		// (root.HasError) while still extracting a complete entity set, and those
+		// diffs are correct and must be kept. A validly-emptied file (ParseError
+		// false) is likewise never suppressed, so its real removed changes stand.
+		afterParseFailed := afterStatus.ParseError && len(afterEntities) == 0
+		beforeParseFailed := beforeStatus.ParseError && len(beforeEntities) == 0
+		if afterParseFailed || beforeParseFailed {
 			status := afterStatus
-			if !status.ParseError {
+			if !afterParseFailed {
 				status = beforeStatus
 			}
 			result.Warnings = append(result.Warnings, parseFailureWarning(path, status))
