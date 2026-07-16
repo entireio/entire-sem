@@ -281,6 +281,82 @@ func TestAnalyzeCheckpointResolvesAssociatedCommit(t *testing.T) {
 	}
 }
 
+func TestCompareEntitiesDisambiguatesSameNameOverloads(t *testing.T) {
+	// Two same-name, same-Kind overloads (reachable in C#/Java) must not
+	// collide in the diff keys. Editing the FIRST overload's signature must be
+	// reported, and the untouched SECOND overload must not become a spurious
+	// remove/add.
+	before := []Entity{
+		{Kind: "method", Name: "C.F", Signature: "F(int)", StartLine: 1},
+		{Kind: "method", Name: "C.F", Signature: "F(string)", StartLine: 5},
+	}
+	after := []Entity{
+		{Kind: "method", Name: "C.F", Signature: "F(long)", StartLine: 1},
+		{Kind: "method", Name: "C.F", Signature: "F(string)", StartLine: 5},
+	}
+
+	changes, removed, added := compareEntities(before, after)
+	if len(removed) != 0 || len(added) != 0 {
+		t.Fatalf("unexpected remove/add: removed=%#v added=%#v", removed, added)
+	}
+	if len(changes) != 1 {
+		t.Fatalf("changes = %#v, want exactly one signature change for the first overload", changes)
+	}
+	c := changes[0]
+	if c.Type != "signature_changed" || c.Kind != "method" || c.Name != "C.F" {
+		t.Fatalf("change = %#v, want signature_changed for method C.F", c)
+	}
+	if c.OldSignature != "F(int)" || c.NewSignature != "F(long)" {
+		t.Fatalf("change signatures = %q -> %q, want F(int) -> F(long)", c.OldSignature, c.NewSignature)
+	}
+}
+
+func TestCompareEntitiesDetectsSecondOverloadEdit(t *testing.T) {
+	// Control: editing only the SECOND overload is reported, and the first is
+	// left untouched.
+	before := []Entity{
+		{Kind: "method", Name: "C.F", Signature: "F(int)", StartLine: 1},
+		{Kind: "method", Name: "C.F", Signature: "F(string)", StartLine: 5},
+	}
+	after := []Entity{
+		{Kind: "method", Name: "C.F", Signature: "F(int)", StartLine: 1},
+		{Kind: "method", Name: "C.F", Signature: "F(object)", StartLine: 5},
+	}
+
+	changes, removed, added := compareEntities(before, after)
+	if len(removed) != 0 || len(added) != 0 {
+		t.Fatalf("unexpected remove/add: removed=%#v added=%#v", removed, added)
+	}
+	if len(changes) != 1 {
+		t.Fatalf("changes = %#v, want exactly one signature change for the second overload", changes)
+	}
+	c := changes[0]
+	if c.Type != "signature_changed" || c.OldSignature != "F(string)" || c.NewSignature != "F(object)" {
+		t.Fatalf("change = %#v, want signature_changed F(string) -> F(object)", c)
+	}
+}
+
+func TestCompareEntitiesSingleEntityUnchangedBehavior(t *testing.T) {
+	// Regression: a lone non-overloaded entity keeps its pre-ordinal behavior.
+	before := []Entity{
+		{Kind: "function", Name: "validate", Signature: "validate(token)", StartLine: 1},
+	}
+	after := []Entity{
+		{Kind: "function", Name: "validate", Signature: "validate(token, issuer)", StartLine: 1},
+	}
+
+	changes, removed, added := compareEntities(before, after)
+	if len(removed) != 0 || len(added) != 0 {
+		t.Fatalf("unexpected remove/add: removed=%#v added=%#v", removed, added)
+	}
+	if len(changes) != 1 {
+		t.Fatalf("changes = %#v, want exactly one change", changes)
+	}
+	if changes[0].Type != "signature_changed" || changes[0].Name != "validate" {
+		t.Fatalf("change = %#v, want signature_changed for validate", changes[0])
+	}
+}
+
 func write(t *testing.T, repo, path, content string) {
 	t.Helper()
 	full := filepath.Join(repo, path)

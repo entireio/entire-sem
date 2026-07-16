@@ -258,14 +258,8 @@ func Compare(before, after []Entity) []EntityChange {
 // removed and added entities that were not reconciled, sorted deterministically
 // so callers can run a cross-file reconciliation pass over the leftovers.
 func compareEntities(before, after []Entity) (changes []EntityChange, removed, added []Entity) {
-	beforeByKey := map[string]Entity{}
-	afterByKey := map[string]Entity{}
-	for _, entity := range before {
-		beforeByKey[key(entity)] = entity
-	}
-	for _, entity := range after {
-		afterByKey[key(entity)] = entity
-	}
+	beforeByKey := keyedEntities(before)
+	afterByKey := keyedEntities(after)
 
 	deleted := map[string]Entity{}
 	addedByKey := map[string]Entity{}
@@ -384,6 +378,28 @@ func sortChanges(changes []EntityChange) {
 
 func key(entity Entity) string {
 	return entity.Kind + ":" + entity.Name
+}
+
+// keyedEntities maps each entity to a stable key within its parse. Entities that
+// share a Kind:Name (same-name overloads, reachable in languages like C#/Java)
+// are disambiguated by a positional ordinal assigned in file order, so
+// before[Kind:Name#0] pairs with after[Kind:Name#0]. A lone entity is always
+// #0, preserving the pre-ordinal single-entity behavior. Using an ordinal rather
+// than the full signature keeps a signature edit to an overload paired across
+// sides (so it surfaces as signature_changed, not a spurious remove+add).
+//
+// Known limitation: ordinal pairing can misattribute when overloads are
+// reordered or one is inserted/removed mid-list, but that is a strict
+// improvement over last-write-wins dropping all but one same-name overload.
+func keyedEntities(entities []Entity) map[string]Entity {
+	out := make(map[string]Entity, len(entities))
+	counts := map[string]int{}
+	for _, entity := range entities {
+		base := key(entity)
+		out[fmt.Sprintf("%s#%d", base, counts[base])] = entity
+		counts[base]++
+	}
+	return out
 }
 
 func lineForSort(change EntityChange) int {
