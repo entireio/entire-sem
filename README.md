@@ -82,6 +82,18 @@ entire graph commit HEAD
 
 If `$(go env GOPATH)/bin` is already on your `PATH`, Entire can discover the binary directly after `go install`. Entire plugins are local executables, not a hosted marketplace: `entire graph` works because Entire finds an `entire-graph` binary in its managed plugin directory or on `$PATH`.
 
+### 🔄 Updating (and migrating from `entire-sem`)
+
+This plugin was renamed from `entire-sem` to `entire-graph` after `v0.1.0` — both the binary and the `cmd/` path changed. If you installed the old `entire-sem`, switch over with:
+
+```sh
+go install github.com/entireio/entire-graph/cmd/entire-graph@latest
+entire plugin install "$(go env GOPATH)/bin/entire-graph" --force
+rm -f "$(go env GOPATH)/bin/entire-sem"   # remove the old binary
+```
+
+> `…/cmd/entire-graph@latest` needs **v0.2.0 or newer** — `v0.1.0` predates the rename and only ships `cmd/entire-sem`, so `@latest` against it fails with *"module found (v0.1.0), but does not contain package …/cmd/entire-graph"*. If a fresh tag hasn't propagated to the Go module proxy yet, pin it (`@v0.2.0`) or use `@main`. Graph and query behavior is unchanged — only the name.
+
 ### 🛠️ Install From Source
 
 ```sh
