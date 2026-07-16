@@ -1,118 +1,62 @@
-# Entire Graph
+# 🧠 entire-graph
 
-`entire-graph` is an Entire CLI plugin that gives Entire sessions entity-level
-checkpoint context and a local semantic code graph.
+![License](https://img.shields.io/badge/license-MIT-blue)
+![Languages](https://img.shields.io/badge/languages-36%20semantic%20%2B%20149%20inventory-2ea44f)
+![Graph](https://img.shields.io/badge/graph-30%20relation%20types-8957e5)
+![Local](https://img.shields.io/badge/100%25%20local-no%20egress-brightgreen)
+![Deterministic](https://img.shields.io/badge/deterministic-no%20LLM%20·%20no%20vectors-f59e0b)
+![Plugin](https://img.shields.io/badge/Entire%20CLI-plugin-24292f)
 
-Entire already knows a checkpoint touched `auth.py` or `.github/workflows/ci.yml`.
-This plugin answers the next question: which semantic entities changed inside
-that file? It also serves ranked source context for a task and streams a
-machine-readable graph of symbols and relations, all without network access.
+**A deterministic, local-first code graph for coding agents and for Entire checkpoints.** entire-graph parses your repository with tree-sitter and answers structural questions (where is this defined, who calls it, what changed at the entity level, what will this break) straight from the graph. No model calls, no embeddings, no network. The same commit always produces the same graph.
 
-The plugin builds a binary named `entire-graph`, which is invoked through
-Entire as:
+It ships as an **Entire CLI plugin**, invoked as `entire graph ...`, and doubles as a local-only semantic provider that streams a machine-readable graph of symbols and relations for downstream tools such as Entire Brain.
 
 ```sh
-entire graph commit HEAD
-entire graph checkpoint abc123def456
-entire graph diff --base HEAD~1 --head HEAD
-entire graph search --repo . --query "where is service config disabled?"
-entire graph snapshot --repo . --format ndjson
-entire graph capabilities --json
+entire graph search   --repo . --query "where is webhook retry handled?"   # 🔍 ranked code for a task
+entire graph snapshot --repo . --format ndjson                             # 🕸️  full symbol + relation graph
+entire graph diff     --base main --head HEAD                               # 🧬 what changed, at the entity level
+entire graph capabilities --json                                           # 🧭 languages + relation types
 ```
 
-## Why entire-graph
+> 🔬 **Head to head.** On a frozen 21-repo multi-language board of fixed-answer semantic tasks (definition lookup, call graph, imports, change-impact), entire-graph scored **265/283 (94%)** versus **191/283 (68%)** for the leading tree-sitter code-memory tool. It wins where it matters: correct symbols, correct edges, correct impact.
 
-**More accurate than the leading code-memory tool.** On a frozen, multi-language board of 21 real repositories scored on fixed-answer semantic tasks (definition lookup, call graph, imports, change-impact), entire-graph scored **265/283 (94%)** versus **191/283 (68%)** for codebase-memory-mcp. It wins on the questions that matter for navigation and impact, not just node counts.
+---
 
-**Deterministic. No LLM, no vectors.** Pure tree-sitter static analysis. The same commit always produces the same graph. No embeddings, no similarity thresholds, no fuzzy recall to second-guess. A relation is either in the graph or it is not.
+## 🎯 Why entire-graph
 
-**100% local, zero egress.** No API keys, no network calls, no telemetry, no grammar downloads at runtime. `entire graph doctor --json` reports `no_egress=true`. Safe to point at private code.
+- **🥇 More accurate than the leading code-memory tool.** 94% vs 68% on the same 21-repo board. entire-graph is built to be right about symbols and edges, not just fast at emitting them.
+- **🎲 Deterministic. No LLM, no vectors.** Pure tree-sitter static analysis. The same commit always yields the same graph. No embeddings, no similarity thresholds, no fuzzy recall to second-guess. A relation is either in the graph or it is not.
+- **🔒 100% local, zero egress.** No API keys, no network calls, no telemetry, no grammar downloads at runtime. `entire graph doctor --json` reports `no_egress=true`. Safe to point at private code.
+- **🧭 Git-native and reproducible.** Every snapshot is keyed by `(repo, commit, tree)`, so the graph is content-addressed and cacheable per commit. Reads committed `HEAD` by default; pass `--worktree` for live edits.
+- **⚡ Scales to millions of relations on one machine.** Measured builds: **41K relations in 4.8s**, **914K in 45s**, **2.5M in 130s**. No indexing service, no cluster.
+- **🪶 Lean on memory where it counts.** Memory is released after the build. On repositories it fully indexes, peak stays in tens of MB where the competitor uses hundreds: **80 MB vs 599 MB** (nlohmann/json), **64 vs 285** (koin), **43 vs 225** (Dapper).
+- **🗣️ 36 languages, one binary.** Deep semantic parsing for 36 languages plus 149 inventory-only filetypes, all from vendored tree-sitter grammars compiled in. Nothing to install at runtime.
+- **🕸️ A 30-relation code graph with stable identity.** `compound-v1` symbol IDs survive ordinary edits. Relations span structure, calls, inheritance, fields, service boundaries, and config dependencies, each tagged with resolution and confidence.
+- **💸 Fewer tokens for coding agents.** For a core symbol like `redisCommand` in redis, the five structural questions cost about **2,300 tokens** from the graph versus about **654,000 tokens** to read the 23 files that reference it: a **283x reduction** (measured with tiktoken). Savings scale with how widely a symbol is used.
+- **🧩 Part of Entire.** The same graph powers entity-level checkpoint context, so a checkpoint can be judged (keep, revert, continue) without reading the full diff.
 
-**Scales to millions of relations on a single machine.** Measured builds on real repositories: **41K relations in 4.8s**, **914K in 45s**, **2.5M in 130s**. No indexing service, no cluster.
+---
 
-**Lean on memory where it counts.** Memory is released after the build. On repositories it fully indexes, peak memory stays in the tens of MB even where codebase-memory-mcp uses hundreds: **80 MB vs 599 MB** on nlohmann/json, **64 MB vs 285 MB** on koin, **43 MB vs 225 MB** on Dapper.
+## 🚀 Quick Start
 
-**36 languages, one binary.** Tree-sitter grammars compiled in, plus 149 inventory-only filetypes. Nothing to install at runtime, nothing that breaks.
+**Requirements:** Entire CLI · Git · Go toolchain with CGO (tree-sitter uses native parser bindings).
 
-**A 30-relation code graph with stable identity.** `compound-v1` symbol IDs survive ordinary edits, and relations span structure, calls, inheritance, fields, service boundaries, and config dependencies, each tagged with resolution and confidence.
+```sh
+# Install the plugin binary and register it with Entire
+go install github.com/entireio/entire-graph/cmd/entire-graph@main
+entire plugin install "$(go env GOPATH)/bin/entire-graph" --force
 
-**Fewer tokens for coding agents.** A structural question that costs an agent a file-reading sweep becomes one graph call. Answering "where is it defined, who calls it, what does it call" for a core symbol like `redisCommand` in redis takes about **2,300 tokens** from the graph versus about **654,000 tokens** to read the 23 files that reference it: a **283x reduction** (measured with tiktoken). The more widely a symbol is used, the larger the saving.
+# Verify install + local-only environment
+entire graph version
+entire graph doctor --json      # includes "no_egress": true
 
-## What It Adds to Entire
+# First semantic diff, from any git repo
+entire graph commit HEAD
+```
 
-- **Entity-level checkpoint context.** `commit`, `checkpoint`, and `diff` report
-  added, removed, renamed, and signature- or body-changed entities with heuristic
-  dependent counts, so a checkpoint can be judged without reading the full diff.
-- **A local-only semantic provider.** `snapshot`, `symbols`, and `edges` stream
-  NDJSON graph records under a frozen schema 1.x contract for downstream
-  consumers such as Entire Brain: no network, no hosted models, no telemetry.
-- **Tree-sitter parsing across 36 languages**, from Go and TypeScript to
-  Terraform, SQL, and GitHub Actions YAML, with 149 more filetypes tracked as
-  inventory-only and honest partial failures for everything else.
-- **A 30-relation code graph with stable identity.** `compound-v1` symbol IDs
-  survive ordinary edits, and relations cover structure, calls, inheritance,
-  fields, service boundaries, and config dependencies, each tagged with
-  resolution and confidence.
-- **Agent-ready hybrid search.** Lexical scoring fused with graph-neighbor
-  expansion returns diverse source regions from the live working tree, budgeted
-  to 16 KiB for direct use in a model context window.
-- **How it works.** The plugin shells out to git for trees and diffs, parses
-  before/after states with tree-sitter behind `internal/sem`, reconciles renames
-  and moves by similarity, and streams results so memory stays bounded on very
-  large repositories.
+If `$(go env GOPATH)/bin` is on your `PATH`, Entire can discover the binary directly after `go install`. Entire plugins are local executables: `entire graph` works because Entire finds an `entire-graph` binary in its managed plugin directory or on `$PATH`.
 
-## Language Support
-
-Tree-sitter-backed semantic parsing covers 36 languages: Bash, C, C++, C#,
-Clojure/ClojureScript, CUE, Dart, Elixir, Erlang, F#, Go, Groovy, Haskell,
-HCL/Terraform, Java, JavaScript, Julia, Kotlin, Lua, Objective-C, OCaml, Perl,
-PHP, Protocol Buffers, Python, R, Ruby, Rust, Scala, SQL, Swift, TypeScript,
-YAML (including GitHub Actions workflow sections and jobs), Zig, and Zsh.
-
-Another 149 filetypes are recognized as inventory-only: stable file records
-without semantic claims. See [docs/language-support.md](docs/language-support.md)
-for the full two-tier matrix.
-
-The parser is isolated behind `internal/sem`, so the command surface stays
-stable while the semantic model gets richer.
-
-## Getting Started
-
-Requirements:
-
-- Entire CLI
-- Git
-- Go toolchain with CGO support (tree-sitter uses native parser bindings)
-
-1. Install the plugin binary from the default branch and register it with
-   Entire's managed plugin directory:
-
-   ```sh
-   go install github.com/entireio/entire-graph/cmd/entire-graph@main
-   entire plugin install "$(go env GOPATH)/bin/entire-graph" --force
-   ```
-
-2. Verify the install and the local-only environment:
-
-   ```sh
-   entire graph version
-   entire graph doctor --json
-   ```
-
-3. Run your first semantic diff from any git repository:
-
-   ```sh
-   entire graph commit HEAD
-   ```
-
-If `$(go env GOPATH)/bin` is already on your `PATH`, Entire can also discover
-the binary directly after `go install`.
-
-Entire plugins are currently local executables, not a hosted plugin marketplace:
-`entire graph` works because Entire discovers an `entire-graph` binary from its
-managed plugin directory or from `$PATH`.
-
-## Install From Source
+### 🛠️ Install From Source
 
 ```sh
 git clone https://github.com/entireio/entire-graph.git
@@ -121,29 +65,26 @@ mise run build
 entire plugin install ./entire-graph --force
 ```
 
-After either install path, `entire graph ...` works anywhere the Entire CLI can
-find the managed plugin.
+One-command local install: `scripts/install-local.sh`. Release archives with `SHA256SUMS`: `scripts/release.sh`. See [docs/operations.md](docs/operations.md) for target and cgo details.
 
-For a one-command local source install, run `scripts/install-local.sh`. For
-local release archives with `SHA256SUMS`, run `scripts/release.sh`. See
-[docs/operations.md](docs/operations.md) for target and cgo details.
+---
 
-## Commands
+## 🧩 Commands
 
-### Semantic Diff
+| Command | What it does |
+|---|---|
+| `entire graph commit <rev>` | Entity-level semantic diff of a commit vs its first parent |
+| `entire graph diff --base <a> --head <b>` | Semantic diff between two refs (`analyze` is an alias) |
+| `entire graph checkpoint <id>` | Semantic diff for the commit behind an Entire checkpoint trailer |
+| `entire graph search --query "..."` | 🔍 Ranked source regions for a task description |
+| `entire graph snapshot --format ndjson` | 🕸️ Full graph stream: header + files + symbols + relations |
+| `entire graph symbols --format ndjson` | Symbols only (filtered snapshot) |
+| `entire graph edges --format ndjson` | Relations only (filtered snapshot) |
+| `entire graph capabilities --json` | Languages, relation types, features, network requirements |
+| `entire graph doctor --json` | Environment, plugin data dir, `no_egress=true` |
+| `entire graph version --json` | Provider name and plugin version |
 
-Compare one commit against its first parent, compare two arbitrary refs, or
-analyze the commit associated with an Entire checkpoint trailer:
-
-```sh
-entire graph commit HEAD
-entire graph diff --base main --head HEAD
-entire graph diff --base main --head HEAD --json
-entire graph checkpoint abc123def456
-```
-
-`analyze` is an alias for `diff`. All four commands print human-readable text
-by default and structured output with `--json`. Example:
+All diff commands print human-readable text by default and structured output with `--json`:
 
 ```text
 Semantic changes HEAD~1..HEAD
@@ -154,211 +95,162 @@ auth.py
   - function parse_token removed (0 dependents)
 ```
 
-### Search
+---
 
-Search the live working tree for ranked source regions:
-
-```sh
-entire graph search --repo . --query "where is service config disabled?" --top-k 20
-```
-
-`search` combines source-body matching, identifier splitting, symbol names and
-signatures, paths, conceptual issue-to-API terms, and diversity-aware region
-selection. It can return several non-overlapping regions from one file. Results
-include broad source provenance plus a focused, bounded snippet for direct agent
-context.
-
-Interactive search reads the working tree by default so agents see dirty edits.
-Use `--head` for immutable committed-tree semantics. Cold search first scans
-files without parsing, then indexes at most 96 query-relevant files; use
-`--max-indexed-files` to change the bound or `--index-all-files` for exhaustive
-parsing. The default `syntax-only` profile avoids synchronous whole-repository
-graph construction. `--profile fast` adds local relation expansion when deeper
-semantic indexing is worth the cost.
-
-When Entire supplies `ENTIRE_PLUGIN_DATA_DIR`, committed-tree searches reuse a
-tree-keyed compressed index. Direct callers can set `--cache-dir`; `--no-cache`
-disables persistence. Worktree searches do not reuse committed indexes, avoiding
-stale results after edits.
-
-### Provider Records
-
-Emit machine-readable graph records:
+## 🔍 Search
 
 ```sh
-entire graph snapshot --repo . --format ndjson
-entire graph symbols --repo . --format ndjson
-entire graph edges --repo . --format ndjson
-entire graph snapshot --repo . --format ndjson --worktree --ignore-file .brainignore
-entire graph snapshot --repo . --format ndjson --worktree --include-file .graphinclude
+entire graph search --repo . --query "retry logic for webhook delivery" --top-k 20 --format json
 ```
 
-`snapshot` writes a complete NDJSON stream: one header record followed by file,
-symbol, and relation records. `symbols` and `edges` are filtered views over the
-same snapshot builder. By default, snapshots read the committed `HEAD` tree when
-git metadata is available, so dirty tracked edits and untracked files are excluded.
-Use `--worktree` to include live working-tree contents, and `--no-network` to make
-the provider's no-egress contract explicit to callers. Worktree snapshots honor
-the repository root `.gitignore`. Pass repeatable `--ignore-file <path>` flags for
-additional gitignore-style exclusions, resolved relative to `--repo` unless the
-path is absolute. Pass repeatable `--include-file <path>` flags for gitignore-style
-inclusion rules that are applied after `.gitignore` and `--ignore-file`, allowing
-callers to reopen otherwise ignored paths.
+Search fuses source-body matching, identifier splitting, symbol names and signatures, paths, conceptual issue-to-API terms, and diversity-aware region selection. It can return several non-overlapping regions from one file, each with broad provenance plus a focused snippet.
 
-### Environment
+- Reads the **working tree by default** so an agent sees its own dirty edits. Use `--head` for committed-tree semantics.
+- Output is budgeted to **16 KiB** of serialized snippets by default, sized to drop straight into a model context window. Tune with `--top-k` and `--max-context-bytes`.
+- Cold search scans files without parsing, then indexes at most 96 query-relevant files (`--max-indexed-files`, or `--index-all-files`). The default `syntax-only` profile avoids whole-repo graph construction; `--profile fast` adds local relation expansion.
+- When Entire supplies `ENTIRE_PLUGIN_DATA_DIR`, committed-tree searches reuse a tree-keyed compressed index across invocations.
 
-Inspect the provider and its environment:
+---
 
-```sh
-entire graph version --json
-entire graph doctor --json
-entire graph capabilities --json
-```
+## 🕸️ The Code Graph
 
-### Running Without Entire
+**Node kinds:** Project, Package, Folder, File, Module, Class, Function, Method, Interface, Enum, Type, plus service entities like Route and Resource, and YAML workflow sections / GitHub Actions jobs.
+
+**Schema 1.1 defines 30 relation types**, emitted in profile-scoped subsets:
+
+| Group | Relations |
+|---|---|
+| 🏗️ Structural | `DEFINES` · `CONTAINS` · `IMPORTS` |
+| 📞 Calls & construction | `CALLS` · `CONSTRUCTS` · `ASYNC_CALLS` |
+| 🧬 Types & inheritance | `EXTENDS` · `INHERITS` · `IMPLEMENTS` · `OVERRIDES` · `USES_TYPE` · `PARAM_TYPE` · `RETURNS_TYPE` |
+| 🗂️ Fields | `READS_FIELD` · `WRITES_FIELD` · `ACCESSES` |
+| 🌐 Service boundaries | `HANDLES_ROUTE` · `HANDLES_GRPC` · `HANDLES_GRAPHQL` · `HANDLES_TRPC` · `HTTP_CALLS` · `EMITS` · `LISTENS_ON` · `HANDLES_TOOL` |
+| ⚙️ Config & analysis | `CONFIGURES` · `SIMILAR_TO` · `TESTS` · `RESOURCE_DEPENDS_ON` · `DATA_FLOWS` · `FILE_CHANGES_WITH` |
+
+Indexing profiles: `syntax-only` emits `DEFINES` and `CONTAINS`; `fast` adds imports, shallow calls, and boundary relations; `full` emits every relation type with evidence fields. `capabilities --json` reports the supported relation types per language.
+
+**Stable identity.** `compound-v1` symbol IDs use repo key, language, path, kind, and qualified name, so they survive ordinary body and signature edits. Duplicate same-name symbols in one file are disambiguated by source range.
+
+---
+
+## 🗣️ Language Support
+
+**36 languages with deep semantic parsing:** Bash, C, C++, C#, Clojure/ClojureScript, CUE, Dart, Elixir, Erlang, F#, Go, Groovy, Haskell, HCL/Terraform, Java, JavaScript, Julia, Kotlin, Lua, Objective-C, OCaml, Perl, PHP, Protocol Buffers, Python, R, Ruby, Rust, Scala, SQL, Swift, TypeScript, YAML (including GitHub Actions workflow sections and jobs), Zig, and Zsh.
+
+Another **149 filetypes** are recognized as inventory-only: stable file records without semantic claims. Everything else is reported as an honest partial failure rather than dropped silently. See [docs/language-support.md](docs/language-support.md) for the full two-tier matrix.
+
+---
+
+## 🤖 Agent Usage
+
+entire-graph is built to be called by coding agents, not only humans. Every command is local-only and no-egress, so agents can run it freely inside sandboxed sessions.
+
+- **🔍 Find where to work.** Retrieve ranked regions for a task before editing:
+  ```sh
+  entire graph search --repo . --query "retry logic for webhook delivery" --format json
+  ```
+- **🧬 Judge a change.** Summarize what actually changed at the entity level to decide keep / revert / continue:
+  ```sh
+  entire graph commit HEAD --json
+  ```
+  Signature changes with high dependent counts are a strong signal to run tests first.
+- **🕸️ Build a code graph.** Ingest machine-readable symbols and relations into agent memory or a store such as Entire Brain:
+  ```sh
+  entire graph snapshot --repo . --format ndjson
+  ```
+- **🧭 Feature-detect first.** `entire graph capabilities --json` lists semantic vs inventory-only languages and supported relation types; `doctor --json` verifies the environment, including `no_egress=true`.
+
+Inside Entire sessions the CLI sets `ENTIRE_REPO_ROOT` and `ENTIRE_PLUGIN_DATA_DIR` automatically. Outside Entire, pass `--repo`. See [AGENTS.md](AGENTS.md) for repo-specific agent instructions.
+
+---
+
+## 📊 Benchmarks
+
+All figures below are measured, not estimated.
+
+### 🎯 Accuracy vs codebase-memory-mcp
+
+Fixed-answer semantic tasks (definition lookup, call graph, imports, change-impact) on real checkouts, scored as correctness counts.
+
+| System | Score | Corpus |
+|---|---|---|
+| **entire-graph** | **265 / 283 (94%)** | 21 repos, multi-language |
+| codebase-memory-mcp | 191 / 283 (68%) | same board |
+
+### ⚡ Throughput
+
+| Repo | Relations | Build time |
+|---|--:|--:|
+| entire-api | 41,106 | 4.8s |
+| entiredb | 913,801 | 45s |
+| entire.io | 2,549,268 | 130s |
+
+### 🪶 Peak memory (vs codebase-memory-mcp)
+
+| Repo | entire-graph | codebase-memory-mcp |
+|---|--:|--:|
+| nlohmann/json | **80 MB** | 599 MB |
+| koin | **64 MB** | 285 MB |
+| Dapper | **43 MB** | 225 MB |
+
+Memory is released after the build completes.
+
+### 💸 Token efficiency
+
+Answering the five structural questions for a core symbol, graph query vs reading every referencing file (tiktoken `cl100k`):
+
+| Task | entire-graph | file-by-file | Reduction |
+|---|--:|--:|--:|
+| `redisCommand` (redis), 23 referencing files | ~2,300 tokens | ~654,000 tokens | **283x** |
+
+Savings scale with symbol connectivity: single-digit for narrow symbols, 280x+ for core symbols.
+
+---
+
+## 🔒 Local-First and Private
+
+entire-graph runs entirely on your machine. It makes **no network calls**, ships with **no telemetry**, needs **no API keys**, and downloads **no grammars at runtime** (they are compiled into the binary). `entire graph doctor --json` reports `no_egress=true`, and `--no-network` makes the no-egress contract explicit to callers. Your source never leaves your machine.
+
+---
+
+## 🧬 How It Works
+
+The plugin shells out to git for trees and diffs, parses before/after states with tree-sitter behind `internal/sem`, reconciles renames and moves by similarity, and streams results so memory stays bounded on very large repositories.
+
+Unlike code tools that embed an LLM for natural-language-to-query translation, entire-graph has **no model inside it**. Your coding agent is already the intelligence layer: it calls `search`, `snapshot`, or `diff`, and reasons over the structured results. That means no extra keys, no extra cost, and a graph you can trust to be the same every run.
+
+---
+
+## 📦 Provider Contract (NDJSON)
+
+For Entire and other local tools that want a stable graph rather than human diff text:
+
+- `snapshot --format ndjson` emits a header record plus file, external-endpoint, symbol, and relation records.
+- `symbols` / `edges` emit the same header followed by their record type.
+- `search --query ...` emits ranked, qrel-blind source regions as JSON, NDJSON, or text, bounded to 16 KiB by default.
+
+Snapshot headers carry schema version, provider version, repo key, `HEAD` commit and tree, parsed languages, capability labels, warnings, partial failures, and completeness stats. Symbol records carry stable compound IDs, kind, qualified name, source range, signature, body hash, language, and container ID. Unsupported-but-detected files and files with syntax errors are reported as machine-readable partial failures; recoverable symbols are still emitted.
+
+Run without Entire:
 
 ```sh
 ENTIRE_REPO_ROOT=/path/to/repo ./entire-graph diff --base HEAD~1 --head HEAD
 ```
 
-## Agent Usage
+---
 
-Entire Graph is built to be called by coding agents, not just humans. Every
-command is local-only and no-egress, so agents can run it freely inside
-sandboxed sessions without leaking source. Typical agent workflows:
-
-- **Find where to work.** Before editing, retrieve ranked code regions for a
-  task description:
-
-  ```sh
-  entire graph search --repo . --query "retry logic for webhook delivery" --format json
-  ```
-
-  Search reads the working tree by default, so an agent sees its own dirty
-  edits. Output is budgeted to 16 KiB of serialized snippets by default,
-  sized for direct inclusion in a model context window. Use `--top-k` and
-  `--max-context-bytes` to tune the budget.
-
-- **Judge a checkpoint.** After a change, summarize what actually changed at
-  the entity level to decide whether to keep, revert, or continue:
-
-  ```sh
-  entire graph commit HEAD --json
-  entire graph checkpoint <checkpoint-id> --json
-  ```
-
-  Signature changes with high dependent counts are a strong signal to run
-  tests before proceeding.
-
-- **Build a code graph.** Ingest machine-readable symbols and relations into
-  agent memory or a downstream store such as Entire Brain:
-
-  ```sh
-  entire graph snapshot --repo . --format ndjson
-  ```
-
-  Records carry stable `compound-v1` IDs, so entities can be tracked across
-  sessions and ordinary edits.
-
-- **Detect capabilities first.** Agents should feature-detect instead of
-  assuming: `entire graph capabilities --json` lists semantic versus
-  inventory-only languages and supported relation types, and
-  `entire graph doctor --json` verifies the environment, including
-  `no_egress=true`.
-
-Inside Entire sessions, the Entire CLI sets `ENTIRE_REPO_ROOT` and
-`ENTIRE_PLUGIN_DATA_DIR` automatically; committed-tree searches then reuse a
-tree-keyed compressed index across invocations. Outside Entire, pass `--repo`
-explicitly. See [AGENTS.md](AGENTS.md) for agent instructions specific to
-working on this repository.
-
-## Provider Contract
-
-The provider contract is designed for Entire or other local tools that want a
-stable semantic graph rather than human-oriented diff text.
-
-- `version --json` returns the provider name and plugin version.
-- `doctor --json` reports Entire environment variables, repository resolution,
-  plugin data directory writability, and `no_egress=true`.
-- `capabilities --json` reports supported extensions, languages, parser metadata,
-  relation types, optional local-only features, and network requirements.
-- `snapshot --format ndjson` emits a header plus file, external endpoint,
-  symbol, and relation records.
-- `symbols --format ndjson` emits the same header followed by symbol records.
-- `edges --format ndjson` emits the same header followed by relation records.
-- `search --query ...` emits ranked, qrel-blind source regions as JSON, NDJSON,
-  or text without network access or a hosted model. Search output is bounded to
-  16 KiB of serialized result context by default; use `--max-context-bytes 0`
-  for an unbounded diagnostic ranking.
-
-Snapshot headers include the schema version, provider version, repository key,
-`HEAD` commit and tree when available, parsed languages, capability labels,
-warnings, partial failures, and aggregate completeness stats. File records include
-stable file IDs so `DEFINES` relation endpoints can be resolved. Symbol records
-include stable compound IDs, `stable_id_version`, kind, qualified name, source
-range, signature, body hash, language, and container ID when the symbol is nested.
-External endpoint records describe relation targets such as imported modules,
-routes, and tool handlers.
-
-Schema 1.1 defines 30 relation types. Structural: `DEFINES`, `CONTAINS`,
-`IMPORTS`. Calls and construction: `CALLS`, `CONSTRUCTS`, `ASYNC_CALLS`.
-Types and inheritance: `EXTENDS`, `INHERITS`, `IMPLEMENTS`, `OVERRIDES`,
-`USES_TYPE`, `PARAM_TYPE`, `RETURNS_TYPE`. Fields: `READS_FIELD`,
-`WRITES_FIELD`, `ACCESSES`. Boundaries: `HANDLES_ROUTE`, `HANDLES_GRPC`,
-`HANDLES_GRAPHQL`, `HANDLES_TRPC`, `HTTP_CALLS`, `EMITS`, `LISTENS_ON`,
-`HANDLES_TOOL`. Configuration and analysis: `CONFIGURES`, `SIMILAR_TO`,
-`TESTS`, `RESOURCE_DEPENDS_ON`, `DATA_FLOWS`, `FILE_CHANGES_WITH`.
-
-Indexing profiles emit subsets: `syntax-only` emits `DEFINES` and `CONTAINS`,
-`fast` adds imports, shallow calls, and boundary relations, and `full` emits
-every relation type with evidence fields. `capabilities --json` reports the
-supported relation types per language.
-
-Unsupported but detected source files are reported as machine-readable partial
-failures instead of disappearing silently. Supported files with tree-sitter syntax
-errors are also reported as partial failures while any recoverable symbols are
-still emitted. Repositories without a readable `HEAD` fall back to the working tree
-and include a warning in the snapshot header.
-
-`compound-v1` IDs are stable across ordinary body/signature edits because they use
-repo key, language, path, kind, and qualified name. Duplicate same-name symbols in
-one file are disambiguated with source ranges, so inserted lines above duplicates
-can change those duplicate IDs; move/rename reconciliation is left to semantic diff
-records.
-
-## Why This Exists
-
-When an agent changes a repo, you often need to decide if the checkpoint is safe
-to keep, revert, or continue from. File names are not enough. `entire-graph` shows
-the actual code entities, workflow sections, signatures, and renames that changed,
-so you can understand the checkpoint before reading the full diff.
-
-Issue [entireio/cli#589](https://github.com/entireio/cli/issues/589) proposes showing
-checkpoint context at the entity level instead of stopping at "this file changed."
-`entire-graph` is a plugin-shaped implementation of that idea:
-
-- parse the before and after git trees with tree-sitter
-- extract named entities like functions, classes, methods, structs, traits, types,
-  YAML workflow sections, and GitHub Actions jobs
-- compare signatures and normalized bodies
-- build a heuristic dependent count from parsed references in the target tree
-- report added, removed, renamed, signature-changed, and body-changed entities
-- expose the same parser through local-only provider commands that emit
-  JSON/NDJSON snapshot, symbol, and relation records
-
-## Licensing
-
-The implementation does not copy or vendor Ataraxy Labs code. The runtime parser
-dependency is `github.com/smacker/go-tree-sitter`, which is MIT-licensed. This
-repository additionally vendors three tree-sitter grammars as source, each under
-its own upstream MIT license: Dart (`internal/sem/grammars/dart/`), PostgreSQL
-(`internal/sem/pgsql/`), and Zsh (`internal/sem/zsh/`).
-
-## Current Limits
+## ⚠️ Current Limits
 
 - Dependent counts are heuristic, not compiler/type-checker accurate.
 - `CALLS`, `HANDLES_ROUTE`, and `HANDLES_TOOL` relations are heuristic.
 - Rename detection is heuristic.
 - Unsupported languages are reported as partial failures, not parsed semantically.
-- The plugin is invoked as `entire graph ...`; it does not require changes to the
-  main Entire CLI repository.
+- The plugin is invoked as `entire graph ...`; it requires no changes to the main Entire CLI.
+
+---
+
+## 📄 License
+
+MIT. The runtime parser dependency is `github.com/smacker/go-tree-sitter` (MIT). Three tree-sitter grammars are vendored as source under their own upstream MIT licenses: Dart (`internal/sem/grammars/dart/`), PostgreSQL (`internal/sem/pgsql/`), and Zsh (`internal/sem/zsh/`). This implementation does not copy or vendor Ataraxy Labs code.
+
+Issue [entireio/cli#589](https://github.com/entireio/cli/issues/589) proposes entity-level checkpoint context instead of stopping at "this file changed." entire-graph is a plugin-shaped implementation of that idea.
