@@ -571,6 +571,61 @@ func TestTreeSitterParserTypeScriptMasksStaticAccessorMethod(t *testing.T) {
 	t.Fatalf("missing class entity after masking static accessor method: %#v", entities)
 }
 
+func TestMaskTypeScriptStaticAccessorMethodPreservesLength(t *testing.T) {
+	t.Parallel()
+	for _, in := range []string{
+		"  static accessor() { return 1; }",
+		"  static  accessor() { return 1; }",
+		"  static   accessor  () { return 1; }",
+	} {
+		out := maskTypeScriptStaticAccessorMethod(in)
+		if len(out) != len(in) {
+			t.Fatalf("mask changed length: input %q (%d) -> output %q (%d)", in, len(in), out, len(out))
+		}
+	}
+}
+
+func TestTreeSitterParserTypeScriptStaticAccessorMaskPreservesFollowingEntity(t *testing.T) {
+	t.Parallel()
+	find := func(entities []Entity, name string) (Entity, bool) {
+		for _, e := range entities {
+			if e.Name == name {
+				return e, true
+			}
+		}
+		return Entity{}, false
+	}
+	oneSpace := "class C {\n  static accessor() { return 1; }\n  bar() { return 42; }\n}\n"
+	twoSpace := "class C {\n  static  accessor() { return 1; }\n  bar() { return 42; }\n}\n"
+
+	oneEntities, _, oneStatus := TreeSitterParser{}.ParseWithStatus("c.ts", oneSpace)
+	if oneStatus.ParseError {
+		t.Fatalf("one-space parse error: %#v", oneStatus)
+	}
+	twoEntities, _, twoStatus := TreeSitterParser{}.ParseWithStatus("c.ts", twoSpace)
+	if twoStatus.ParseError {
+		t.Fatalf("two-space parse error: %#v", twoStatus)
+	}
+
+	oneBar, ok := find(oneEntities, "C.bar")
+	if !ok {
+		t.Fatalf("one-space: missing C.bar entity: %#v", oneEntities)
+	}
+	twoBar, ok := find(twoEntities, "C.bar")
+	if !ok {
+		t.Fatalf("two-space: missing C.bar entity (mask corrupted following entity): %#v", twoEntities)
+	}
+	if twoBar.Name != oneBar.Name {
+		t.Fatalf("name mismatch: one-space %q vs two-space %q", oneBar.Name, twoBar.Name)
+	}
+	if twoBar.Signature != oneBar.Signature {
+		t.Fatalf("signature mismatch: one-space %q vs two-space %q", oneBar.Signature, twoBar.Signature)
+	}
+	if twoBar.BodyHash != oneBar.BodyHash {
+		t.Fatalf("body-hash mismatch: one-space %q vs two-space %q", oneBar.BodyHash, twoBar.BodyHash)
+	}
+}
+
 func TestTreeSitterParserTypeScriptMasksGenericCallableTypeSignatures(t *testing.T) {
 	_, language, status := TreeSitterParser{}.ParseWithStatus("callable.ts", `export interface TakePattern<State> {
   <Predicate extends AnyListenerPredicate<State>>(

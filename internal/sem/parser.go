@@ -392,7 +392,7 @@ func sourceLineAt(src []byte, line int) string {
 var (
 	tsKeywordTypePropertyPattern  = regexp.MustCompile(`^(\s*)in(\??\s*:)`)
 	tsTypeImportPattern           = regexp.MustCompile(`typeof\s+import\(([^)]*)\)`)
-	tsStaticAccessorMethodPattern = regexp.MustCompile(`\bstatic\s+accessor(\s*\()`)
+	tsStaticAccessorMethodPattern = regexp.MustCompile(`(\bstatic\s+accesso)r(\s*\()`)
 )
 
 func maskTypeScriptUnsupportedSyntax(content string) string {
@@ -458,7 +458,7 @@ func maskTypeScriptKeywordTypeProperty(line string) string {
 }
 
 func maskTypeScriptStaticAccessorMethod(line string) string {
-	return tsStaticAccessorMethodPattern.ReplaceAllString(line, "static accessoR${1}")
+	return tsStaticAccessorMethodPattern.ReplaceAllString(line, "${1}R${2}")
 }
 
 // rustItemWrapperMacroHint cheaply detects source that may contain a
