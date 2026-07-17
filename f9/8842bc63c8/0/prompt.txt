@@ -1,9 +1,1 @@
-Just do it, make sure to commit and push to GitHub and open a PR for Entire Graph when ready and tested.
-
----
-
-Erm, and you ran the 3-repo benchmark again and now Entire Graph wins all metrics?
-
----
-
 Well, you know what to do then
