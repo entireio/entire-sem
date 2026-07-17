@@ -34,9 +34,10 @@ const (
 	sparseSearchFileRankWeight     = 2
 	deepSearchSparseNumerator      = 5
 	deepSearchSparseDenominator    = 8
-	deepSearchSemanticHeadDivisor  = 10
+	deepSearchSemanticHeadDivisor  = 32
 	maxDeepSearchSemanticHead      = 10
 	maxSparseSearchQueryTerms      = 64
+	maxSparseSearchFileBytes       = 2 * 1024 * 1024
 )
 
 // SearchOptions controls local issue-to-code retrieval. Search reads the same
@@ -187,7 +188,7 @@ func SearchRepository(ctx context.Context, repo, providerVersion, query string, 
 	sparseQuery := buildSparseSearchQuery(query)
 	searchStarted := time.Now()
 	preselectStarted := time.Now()
-	selection, err := preselectSearchFiles(ctx, repo, q, options)
+	selection, err := preselectSearchFiles(ctx, repo, q, sparseQuery, options)
 	if err != nil {
 		return SearchResponse{}, err
 	}
@@ -260,11 +261,14 @@ func SearchRepository(ctx context.Context, repo, providerVersion, query string, 
 	}
 
 	fileDF := make(map[string]int, len(q.terms))
-	sparseDF := make(map[string]int, len(q.terms))
-	sparseDocumentCount := 0
-	sparseDocumentLength := 0
+	sparseDF := selection.sparseDF
+	if sparseDF == nil {
+		sparseDF = make(map[string]int, len(sparseQuery.terms))
+	}
+	sparseDocumentCount := selection.sparseDocumentCount
+	sparseDocumentLength := selection.sparseDocumentLength
 	var candidates []searchCandidate
-	var sparseCandidates []searchCandidate
+	sparseCandidates := append([]searchCandidate(nil), selection.sparseCandidates...)
 	for _, filePath := range selectedFiles {
 		if err := ctx.Err(); err != nil {
 			return SearchResponse{}, err
@@ -284,7 +288,23 @@ func SearchRepository(ctx context.Context, repo, providerVersion, query string, 
 		candidates = append(candidates, candidatesForFile(
 			q, filePath, fileLanguages[filePath], lines, symbolsByFile[filePath], options,
 		)...)
-		if options.TopK > defaultSearchTopK {
+	}
+	if options.TopK > defaultSearchTopK {
+		for _, filePath := range selection.sparseFiles {
+			if selection.sparsePrecomputedFiles[filePath] {
+				continue
+			}
+			if err := ctx.Err(); err != nil {
+				return SearchResponse{}, err
+			}
+			content, ok := read(filePath)
+			if !ok || len(content) > maxSparseSearchFileBytes || strings.IndexByte(content, 0) >= 0 {
+				continue
+			}
+			lines := strings.Split(strings.TrimSuffix(content, "\n"), "\n")
+			if len(lines) == 1 && lines[0] == "" {
+				continue
+			}
 			fileSparse, documentCount, documentLength := sparseCandidatesForFile(
 				q, sparseQuery, filePath, fileLanguages[filePath], lines, options,
 			)
@@ -296,6 +316,12 @@ func SearchRepository(ctx context.Context, repo, providerVersion, query string, 
 					sparseDF[term]++
 				}
 			}
+		}
+		if len(selection.sparseFiles) > 0 && len(selection.sparseFiles) < selection.filesScanned {
+			sparseDocumentCount = maxInt(
+				sparseDocumentCount,
+				sparseDocumentCount*selection.filesScanned/len(selection.sparseFiles),
+			)
 		}
 	}
 
@@ -499,16 +525,24 @@ type searchFileCandidate struct {
 }
 
 type searchFileSelection struct {
-	files            []string
-	repoRoot         string
-	commit           string
-	tree             string
-	warnings         []ProviderWarning
-	filesScanned     int
-	filesContentRead int
+	files                  []string
+	sparseFiles            []string
+	sparseCandidates       []searchCandidate
+	sparseDF               map[string]int
+	sparsePrecomputedFiles map[string]bool
+	sparseDocumentCount    int
+	sparseDocumentLength   int
+	repoRoot               string
+	commit                 string
+	tree                   string
+	warnings               []ProviderWarning
+	filesScanned           int
+	filesContentRead       int
 }
 
-func preselectSearchFiles(ctx context.Context, repo string, q searchQuery, options SearchOptions) (searchFileSelection, error) {
+func preselectSearchFiles(
+	ctx context.Context, repo string, q, sparseQuery searchQuery, options SearchOptions,
+) (searchFileSelection, error) {
 	source, err := prepareSource(ctx, repo, ProviderSnapshotOptions{
 		NoNetwork:    true,
 		Worktree:     options.Worktree,
@@ -522,11 +556,14 @@ func preselectSearchFiles(ctx context.Context, repo string, q searchQuery, optio
 		defer source.close()
 	}
 	selection := searchFileSelection{
-		repoRoot:     source.absRepo,
-		commit:       source.commit,
-		tree:         source.tree,
-		warnings:     append([]ProviderWarning{}, source.warnings...),
-		filesScanned: len(source.paths),
+		repoRoot:               source.absRepo,
+		commit:                 source.commit,
+		tree:                   source.tree,
+		warnings:               append([]ProviderWarning{}, source.warnings...),
+		filesScanned:           len(source.paths),
+		sparseFiles:            append([]string(nil), source.paths...),
+		sparseDF:               make(map[string]int, len(sparseQuery.terms)),
+		sparsePrecomputedFiles: make(map[string]bool),
 	}
 	if options.IndexAllFiles || len(source.paths) <= options.MaxIndexedFiles {
 		selection.files = append([]string(nil), source.paths...)
@@ -605,6 +642,11 @@ func preselectSearchFiles(ctx context.Context, repo string, q searchQuery, optio
 				poolLimit = options.MaxIndexedFiles * 4
 			}
 			scanPaths = make([]string, 0, poolLimit+len(untracked))
+			selection.sparseFiles = make([]string, 0, len(provisional)+len(untracked))
+			for _, candidate := range provisional {
+				selection.sparseFiles = append(selection.sparseFiles, candidate.path)
+			}
+			selection.sparseFiles = append(selection.sparseFiles, untracked...)
 			for _, candidate := range provisional[:poolLimit] {
 				scanPaths = append(scanPaths, candidate.path)
 			}
@@ -614,6 +656,7 @@ func preselectSearchFiles(ctx context.Context, repo string, q searchQuery, optio
 			}
 		}
 	}
+	var sparseMu sync.Mutex
 	scoreFile := func(filePath string) (searchFileCandidate, bool) {
 		if err := ctx.Err(); err != nil {
 			return searchFileCandidate{}, false
@@ -621,6 +664,25 @@ func preselectSearchFiles(ctx context.Context, repo string, q searchQuery, optio
 		content, ok := source.read(filePath)
 		if !ok || strings.IndexByte(content, 0) >= 0 {
 			return searchFileCandidate{}, false
+		}
+		if options.TopK > defaultSearchTopK && len(sparseQuery.terms) > 0 && len(content) <= maxSparseSearchFileBytes {
+			lines := strings.Split(strings.TrimSuffix(content, "\n"), "\n")
+			if len(lines) > 1 || lines[0] != "" {
+				fileSparse, documentCount, documentLength := sparseCandidatesForFile(
+					q, sparseQuery, filePath, "", lines, options,
+				)
+				sparseMu.Lock()
+				selection.sparseCandidates = append(selection.sparseCandidates, fileSparse...)
+				selection.sparseDocumentCount += documentCount
+				selection.sparseDocumentLength += documentLength
+				selection.sparsePrecomputedFiles[filePath] = true
+				for _, candidate := range fileSparse {
+					for term := range candidate.termCounts {
+						selection.sparseDF[term]++
+					}
+				}
+				sparseMu.Unlock()
+			}
 		}
 		pathScore := pathSearchScore(q, filePath)
 		matchedWeight := 0.0
@@ -1196,7 +1258,10 @@ func selectHybridCandidates(semantic, sparse []searchCandidate, topK int) []sear
 			semanticFileRank[candidate.result.FilePath] = index + 1
 		}
 	}
-	fusedSparse := append([]searchCandidate(nil), sparse...)
+	// RRF combines rankings at the requested retrieval depth. Allowing the
+	// entire sparse tail to participate lets weak chunks from a highly ranked
+	// file leapfrog genuinely strong top-K sparse regions.
+	fusedSparse := append([]searchCandidate(nil), sparse[:minInt(topK, len(sparse))]...)
 	for index := range fusedSparse {
 		sparseRank := index + 1
 		fusedSparse[index].score = 1 / float64(sparseSearchRRFConstant+sparseRank)
@@ -1582,15 +1647,35 @@ func searchTokenVariants(raw string) []string {
 func sparseSearchTokens(text string) []string {
 	var out []string
 	for _, raw := range sparseSearchWordPattern.FindAllString(text, -1) {
-		variants := searchTokenVariants(raw)
-		if len(variants) > 1 {
-			full := strings.ToLower(strings.Trim(raw, "./:-"))
-			variants = variants[1:]
-			for len(variants) > 0 && variants[0] == full {
-				variants = variants[1:]
+		var current []rune
+		currentDigit := false
+		flush := func() {
+			if len(current) > 0 {
+				out = append(out, strings.ToLower(string(current)))
+				current = nil
 			}
 		}
-		out = append(out, variants...)
+		runes := []rune(raw)
+		for index, character := range runes {
+			if character == '_' {
+				flush()
+				continue
+			}
+			isDigit := unicode.IsDigit(character)
+			if len(current) > 0 && isDigit != currentDigit {
+				flush()
+			}
+			if len(current) > 0 && !isDigit && unicode.IsUpper(character) {
+				previous := runes[index-1]
+				nextLower := index+1 < len(runes) && unicode.IsLower(runes[index+1])
+				if unicode.IsLower(previous) || (unicode.IsUpper(previous) && nextLower) {
+					flush()
+				}
+			}
+			currentDigit = isDigit
+			current = append(current, character)
+		}
+		flush()
 	}
 	return out
 }

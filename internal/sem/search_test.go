@@ -240,7 +240,7 @@ func TestSelectHybridCandidatesBalancesSparseDepthAndFileDiversity(t *testing.T)
 	if len(selected) != 100 {
 		t.Fatalf("hybrid selection returned %d candidates, want 100", len(selected))
 	}
-	for index := 0; index < 10; index++ {
+	for index := 0; index < 3; index++ {
 		if selected[index].result.FilePath != semantic[index].result.FilePath {
 			t.Fatalf("hybrid semantic head[%d] = %#v", index, selected[index])
 		}
@@ -262,10 +262,39 @@ func TestSelectHybridCandidatesBalancesSparseDepthAndFileDiversity(t *testing.T)
 }
 
 func TestBuildSparseSearchQueryUsesLexicalSubtokens(t *testing.T) {
-	query := buildSparseSearchQuery("HTTPServer foo_bar and 123")
-	want := []string{"http", "server", "foo", "bar", "123"}
+	query := buildSparseSearchQuery("HTTPServer foo_bar and build2D 123")
+	want := []string{"http", "server", "foo", "bar", "build", "123"}
 	if fmt.Sprint(query.terms) != fmt.Sprint(want) {
 		t.Fatalf("sparse query terms = %v, want %v", query.terms, want)
+	}
+}
+
+func TestSelectHybridCandidatesBoundsSparseFusionAtTopK(t *testing.T) {
+	semantic := []searchCandidate{{
+		result: SearchResult{FilePath: "strong.go", StartLine: 1, EndLine: 10},
+		score:  100,
+	}}
+	sparse := make([]searchCandidate, 101)
+	for index := range sparse {
+		sparse[index] = searchCandidate{
+			result: SearchResult{
+				FilePath:  fmt.Sprintf("weak/%03d.go", index),
+				StartLine: 1,
+				EndLine:   80,
+				Signals:   []string{"sparse-region"},
+			},
+			score: float64(101 - index),
+		}
+	}
+	sparse[100].result.FilePath = "strong.go"
+	sparse[100].result.StartLine = 1001
+	sparse[100].result.EndLine = 1080
+
+	selected := selectHybridCandidates(semantic, sparse, 100)
+	for _, candidate := range selected {
+		if candidate.result.FilePath == "strong.go" && candidate.result.StartLine == 1001 {
+			t.Fatal("sparse candidate below TopK participated in reciprocal-rank fusion")
+		}
 	}
 }
 
