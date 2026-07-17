@@ -1,0 +1,29 @@
+Well, you know what to do then
+
+---
+
+Ok, review your approach until here. Is your benchmark aligned on how an agent like Codex, Claude, or Cursor would actually use Entire Graph, CBM, or the built-in file search? Or did you construct hypothetical methods that are not matching on how you analyze a codebase yourself?
+
+---
+
+Ok, do that.
+
+---
+
+Try again?
+
+---
+
+Summarize the results until this point
+
+---
+
+Commit/push if you haven't already
+
+---
+
+Ok, what's next?
+
+---
+
+Do it
