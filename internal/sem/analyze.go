@@ -47,23 +47,32 @@ func AnalyzeGitRange(ctx context.Context, repo, base, head string, paths []strin
 		if language == "" {
 			language = afterLanguage
 		}
-		// A hard parse failure yields ZERO entities with no signal, which would
-		// otherwise make compareEntities report every entity on that side as a
-		// phantom removed/added. Surface it as a machine-readable partial failure
-		// and skip the delta instead. We gate on zero entities rather than merely
-		// ParseError: tree-sitter also flags recoverable syntax errors
-		// (root.HasError) while still extracting a complete entity set, and those
-		// diffs are correct and must be kept. A validly-emptied file (ParseError
-		// false) is likewise never suppressed, so its real removed changes stand.
+		// A parse failure on either side degrades the diff. A TOTAL failure
+		// (ParseError with ZERO recovered entities) gives compareEntities no
+		// signal at all and would make it report every entity on that side as
+		// a phantom removed/added, so the delta is skipped and a
+		// machine-readable warning is surfaced instead. A PARTIAL recovery
+		// (ParseError with some entities extracted) keeps the diff — the
+		// recovered changes are real — but is still flagged with a warning,
+		// because symbols missing from the recovered set can surface as
+		// phantom removed/added. A validly-emptied file (ParseError false) is
+		// never suppressed or flagged, so its real removed changes stand.
 		afterParseFailed := afterStatus.ParseError && len(afterEntities) == 0
 		beforeParseFailed := beforeStatus.ParseError && len(beforeEntities) == 0
 		if afterParseFailed || beforeParseFailed {
-			status := afterStatus
+			status, warnPath := afterStatus, path
 			if !afterParseFailed {
-				status = beforeStatus
+				status, warnPath = beforeStatus, oldPath
 			}
-			result.Warnings = append(result.Warnings, parseFailureWarning(path, status))
+			result.Warnings = append(result.Warnings, parseFailureWarning(warnPath, status, true))
 			continue
+		}
+		if afterStatus.ParseError || beforeStatus.ParseError {
+			status, warnPath := afterStatus, path
+			if !afterStatus.ParseError {
+				status, warnPath = beforeStatus, oldPath
+			}
+			result.Warnings = append(result.Warnings, parseFailureWarning(warnPath, status, false))
 		}
 		if !beforeOK {
 			beforeEntities = nil
@@ -116,18 +125,26 @@ func AnalyzeGitRange(ctx context.Context, repo, base, head string, paths []strin
 	return result, nil
 }
 
-// parseFailureWarning builds the partial-failure warning emitted when a changed
-// file cannot be parsed on one side of the diff. It mirrors the provider path's
-// parseStatus.ParseError → PartialFailure mapping so both surfaces stay
-// consistent (see provider.go).
-func parseFailureWarning(path string, status ParseStatus) ProviderWarning {
+// parseFailureWarning builds the warning emitted when a changed file fails to
+// parse on one side of the diff. It reuses the provider path's machine-readable
+// codes (parseStatus.ParseError → PartialFailure, see provider.go), and both
+// surfaces warn on any ParseError — but the effect wording is diff-specific:
+// the provider always emits its (possibly partial) output, while the diff path
+// suppresses the file's delta entirely on a total failure (suppressed == true)
+// and keeps a possibly-degraded diff on a partial recovery.
+func parseFailureWarning(path string, status ParseStatus, suppressed bool) ProviderWarning {
 	code := status.Code
 	if code == "" {
 		code = "E_PARSE_ERROR"
 	}
-	effect := "file parsed with syntax errors; semantic facts may be incomplete"
-	if code == "E_PARSE_TIMEOUT" {
-		effect = "file record emitted but symbol parsing skipped because parser time budget was exceeded"
+	var effect string
+	switch {
+	case suppressed && code == "E_PARSE_TIMEOUT":
+		effect = "file diff suppressed; changes omitted because parser time budget was exceeded"
+	case suppressed:
+		effect = "file diff suppressed; changes omitted because the file could not be parsed"
+	default:
+		effect = "file parsed with syntax errors on one side; diff kept but may be incomplete or contain phantom changes"
 	}
 	return ProviderWarning{
 		Code:                 code,

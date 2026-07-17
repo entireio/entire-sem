@@ -3,6 +3,8 @@ package sem
 import (
 	"context"
 	"testing"
+
+	"github.com/entireio/entire-graph/internal/gitutil"
 )
 
 // pfValidTS parses to two top-level entities with no parse error.
@@ -14,7 +16,8 @@ const pfBrokenTS = "type Broken = <\n\nexport function alpha(){return 1}\nexport
 
 // pfSoftTS is a recoverable syntax error: tree-sitter flags root.HasError but
 // still extracts the `ok` function. This is the "soft recovery with entities"
-// class the fix must NOT suppress (the earlier Kotlin CI failure pattern).
+// class the fix must NOT suppress (the earlier Kotlin CI failure pattern) but
+// must still flag with a degraded-diff warning.
 const pfSoftTS = "export function ok() {\n    return 1\n}\n@@@ !!! broken <<<\n"
 const pfSoftTSChanged = "export function ok() {\n    return 2\n}\n@@@ !!! broken <<<\n"
 
@@ -104,9 +107,10 @@ func TestAnalyzeGitRange_BothSidesUnparseable(t *testing.T) {
 }
 
 // A soft syntax error that still extracts entities must NOT be suppressed: its
-// real change (body_changed for `ok`) must surface and no parse-failure warning
-// should be emitted for it.
-func TestAnalyzeGitRange_SoftErrorWithEntitiesNotSuppressed(t *testing.T) {
+// real change (body_changed for `ok`) must surface. But because the recovered
+// entity set may be incomplete, the diff is degraded and a parse warning must
+// accompany it.
+func TestAnalyzeGitRange_SoftErrorWithEntitiesKeptWithWarning(t *testing.T) {
 	t.Parallel()
 	repo := buildLinearRepo(t, func(r string) {
 		write(t, r, "svc.ts", pfSoftTS)
@@ -117,8 +121,12 @@ func TestAnalyzeGitRange_SoftErrorWithEntitiesNotSuppressed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if w := pfParseWarning(res, "svc.ts"); w != nil {
-		t.Fatalf("soft-error-with-entities must not be suppressed, but got warning: %#v", w)
+	w := pfParseWarning(res, "svc.ts")
+	if w == nil {
+		t.Fatalf("soft-error-with-entities must carry a degraded-diff warning, got %#v", res.Warnings)
+	}
+	if w.EffectOnCompleteness != "file parsed with syntax errors on one side; diff kept but may be incomplete or contain phantom changes" {
+		t.Fatalf("degraded-diff effect wrong: %q", w.EffectOnCompleteness)
 	}
 	var sawChange bool
 	for _, f := range res.Files {
@@ -133,26 +141,126 @@ func TestAnalyzeGitRange_SoftErrorWithEntitiesNotSuppressed(t *testing.T) {
 	}
 }
 
-// parseFailureWarning maps both error codes (and defaults an empty code) exactly
-// like the provider path, without needing a slow real timeout to exercise the
+// pfPartialHeadTS keeps alpha (with a changed body relative to pfValidTS) but
+// corrupts beta's declaration so badly that tree-sitter recovers ONLY alpha:
+// ParseError == true with a PARTIAL entity set. This is the reviewer's repro
+// for the phantom-removal-without-warning gap: beta vanishes from the
+// recovered set, so the diff reports it removed even though it may still exist.
+const pfPartialHeadTS = "export function alpha() {\n    return 42\n}\n\nexport function bet@@@ <<<\n"
+
+// The high-severity repro: base has alpha+beta (clean), head keeps alpha but
+// corrupts beta's declaration. Tree-sitter recovers a partial entity set
+// (ParseError=true, entities=[alpha]). The diff must be KEPT (alpha's real
+// body change surfaces) but flagged with a parse warning, because the missing
+// beta shows up as a potentially-phantom removal.
+func TestAnalyzeGitRange_PartialRecoveryKeepsDiffWithWarning(t *testing.T) {
+	t.Parallel()
+	// Guard the fixture: the corruption must actually yield a partial recovery
+	// (ParseError with a non-empty entity set) on this parser, or the test
+	// would silently exercise the wrong branch.
+	entities, _, status := TreeSitterParser{}.ParseWithStatus("svc.ts", pfPartialHeadTS)
+	if !status.ParseError || len(entities) == 0 {
+		t.Fatalf("fixture must parse as partial recovery, got ParseError=%v entities=%#v", status.ParseError, entities)
+	}
+
+	repo := buildLinearRepo(t, func(r string) {
+		write(t, r, "svc.ts", pfValidTS)
+	}, func(r string) {
+		write(t, r, "svc.ts", pfPartialHeadTS)
+	})
+	res, err := AnalyzeGitRange(context.Background(), repo.repo, repo.base, repo.head, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := pfParseWarning(res, "svc.ts")
+	if w == nil {
+		t.Fatalf("expected degraded-diff warning for partial recovery, got %#v", res.Warnings)
+	}
+	if w.EffectOnCompleteness != "file parsed with syntax errors on one side; diff kept but may be incomplete or contain phantom changes" {
+		t.Fatalf("degraded-diff effect wrong: %q", w.EffectOnCompleteness)
+	}
+	var sawAlphaChange bool
+	for _, f := range res.Files {
+		for _, c := range f.Changes {
+			if c.Name == "alpha" && (c.Type == "body_changed" || c.Type == "signature_changed") {
+				sawAlphaChange = true
+			}
+		}
+	}
+	if !sawAlphaChange {
+		t.Fatalf("partial-recovery diff must be kept (alpha's real change), got %#v", res.Files)
+	}
+}
+
+// A rename where only the BEFORE side fails to parse must warn about the OLD
+// path — that is where the unparseable blob lives; the new path parses fine.
+func TestAnalyzeGitRange_RenameBeforeSideParseFailureWarnsOldPath(t *testing.T) {
+	t.Parallel()
+	// Head content: the base content minus the broken first line, so git's
+	// rename detection pairs the delete+add and the after side parses cleanly.
+	const renamedTS = "\nexport function alpha(){return 1}\nexport function beta(){return 2}\n"
+	repo := buildLinearRepo(t, func(r string) {
+		write(t, r, "broken.ts", pfBrokenTS)
+		write(t, r, "seed.txt", "seed\n")
+	}, func(r string) {
+		git(t, r, "rm", "broken.ts")
+		write(t, r, "moved.ts", renamedTS)
+	})
+
+	// Guard the fixture: git must actually report a rename, or the test would
+	// exercise the plain delete/add paths instead of the rename path.
+	changed, err := gitutil.ChangedFiles(context.Background(), repo.repo, repo.base, repo.head, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sawRename bool
+	for _, f := range changed {
+		if f.Status == "R" && f.OldPath == "broken.ts" && f.Path == "moved.ts" {
+			sawRename = true
+		}
+	}
+	if !sawRename {
+		t.Fatalf("fixture must produce a git rename broken.ts -> moved.ts, got %#v", changed)
+	}
+
+	res, err := AnalyzeGitRange(context.Background(), repo.repo, repo.base, repo.head, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w := pfParseWarning(res, "moved.ts"); w != nil {
+		t.Fatalf("warning must not point at the new path (it parses fine): %#v", w)
+	}
+	if pfParseWarning(res, "broken.ts") == nil {
+		t.Fatalf("expected parse-failure warning on old path broken.ts, got %#v", res.Warnings)
+	}
+}
+
+// parseFailureWarning reuses the provider path's error codes (and defaults an
+// empty code) but with diff-specific effect wording that distinguishes a
+// suppressed delta (total failure) from a kept-but-degraded diff (partial
+// recovery), without needing a slow real timeout to exercise the
 // E_PARSE_TIMEOUT branch.
 func TestParseFailureWarning_CodeMapping(t *testing.T) {
 	t.Parallel()
-	e := parseFailureWarning("a.ts", ParseStatus{ParseError: true, Code: "E_PARSE_ERROR", Detail: "d"})
+	e := parseFailureWarning("a.ts", ParseStatus{ParseError: true, Code: "E_PARSE_ERROR", Detail: "d"}, true)
 	if e.Code != "E_PARSE_ERROR" || e.Severity != "warning" || e.FilePath != "a.ts" || e.Detail != "d" {
 		t.Fatalf("error mapping wrong: %#v", e)
 	}
-	if e.EffectOnCompleteness != "file parsed with syntax errors; semantic facts may be incomplete" {
-		t.Fatalf("error effect wrong: %q", e.EffectOnCompleteness)
+	if e.EffectOnCompleteness != "file diff suppressed; changes omitted because the file could not be parsed" {
+		t.Fatalf("suppressed effect wrong: %q", e.EffectOnCompleteness)
 	}
-	tmo := parseFailureWarning("b.ts", ParseStatus{ParseError: true, Code: "E_PARSE_TIMEOUT", Detail: "slow"})
+	tmo := parseFailureWarning("b.ts", ParseStatus{ParseError: true, Code: "E_PARSE_TIMEOUT", Detail: "slow"}, true)
 	if tmo.Code != "E_PARSE_TIMEOUT" {
 		t.Fatalf("timeout code wrong: %#v", tmo)
 	}
-	if tmo.EffectOnCompleteness != "file record emitted but symbol parsing skipped because parser time budget was exceeded" {
-		t.Fatalf("timeout effect wrong: %q", tmo.EffectOnCompleteness)
+	if tmo.EffectOnCompleteness != "file diff suppressed; changes omitted because parser time budget was exceeded" {
+		t.Fatalf("suppressed timeout effect wrong: %q", tmo.EffectOnCompleteness)
 	}
-	def := parseFailureWarning("c.ts", ParseStatus{ParseError: true})
+	deg := parseFailureWarning("d.ts", ParseStatus{ParseError: true, Code: "E_PARSE_ERROR"}, false)
+	if deg.EffectOnCompleteness != "file parsed with syntax errors on one side; diff kept but may be incomplete or contain phantom changes" {
+		t.Fatalf("degraded effect wrong: %q", deg.EffectOnCompleteness)
+	}
+	def := parseFailureWarning("c.ts", ParseStatus{ParseError: true}, true)
 	if def.Code != "E_PARSE_ERROR" {
 		t.Fatalf("empty code should default to E_PARSE_ERROR, got %q", def.Code)
 	}
