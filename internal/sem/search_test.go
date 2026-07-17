@@ -918,3 +918,52 @@ func TestExpandGraphCandidatesIncludesInRangeSymbol(t *testing.T) {
 		t.Fatalf("expected in-range target candidate to be included, got %d candidates", len(out))
 	}
 }
+
+func TestExpandGraphCandidatesClampsNonPositiveRegionLines(t *testing.T) {
+	seeds := []searchCandidate{{
+		result: SearchResult{SymbolID: "seed", FilePath: "seed.go"},
+		score:  5,
+	}}
+	relations := []RelationRecord{{
+		FromID:     "seed",
+		ToID:       "target",
+		Type:       "CALLS",
+		Confidence: 1.0,
+	}}
+	symbolsByID := map[string]SymbolRecord{
+		"seed":   {ID: "seed", Name: "Seed", FilePath: "seed.go", StartLine: 1, EndLine: 3},
+		"target": {ID: "target", Name: "Target", FilePath: "target.go", StartLine: 2, EndLine: 3},
+	}
+	read := func(path string) (string, bool) {
+		if path == "target.go" {
+			return "line1\nline2\nline3", true
+		}
+		return "", false
+	}
+
+	for _, maxRegionLines := range []int{-1, 0} {
+		// Pre-clamp, MaxRegionLines <= -1 shrinks end below start
+		// (end = start+MaxRegionLines-1) and the snippet slice panics with
+		// "slice bounds out of range" (low > high).
+		options := SearchOptions{MaxRegionLines: maxRegionLines, MaxSnippetLines: -1}
+		out := expandGraphCandidates(seeds, relations, symbolsByID, read, nil, options)
+
+		found := false
+		for _, candidate := range out {
+			if candidate.result.SymbolID == "target" {
+				found = true
+				if candidate.result.SnippetEndLine < candidate.result.SnippetStartLine {
+					t.Fatalf("MaxRegionLines=%d produced inverted snippet region %d-%d",
+						maxRegionLines, candidate.result.SnippetStartLine, candidate.result.SnippetEndLine)
+				}
+				if candidate.result.Snippet == "" {
+					t.Fatalf("MaxRegionLines=%d: expected target candidate to carry a snippet", maxRegionLines)
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("MaxRegionLines=%d: expected in-range target candidate to be included, got %d candidates",
+				maxRegionLines, len(out))
+		}
+	}
+}
