@@ -282,10 +282,14 @@ func TestAnalyzeCheckpointResolvesAssociatedCommit(t *testing.T) {
 }
 
 func TestCompareEntitiesDisambiguatesSameNameOverloads(t *testing.T) {
-	// Two same-name, same-Kind overloads (reachable in C#/Java) must not
-	// collide in the diff keys. Editing the FIRST overload's signature must be
-	// reported, and the untouched SECOND overload must not become a spurious
-	// remove/add.
+	// Issue #35 repro and regression guard for the phase-2 positional
+	// fallback: two same-name, same-Kind overloads (reachable in C#/Java)
+	// must not collide in the diff keys. Editing the FIRST overload's
+	// signature (F(int) -> F(long)) must be reported as signature_changed,
+	// and the untouched SECOND overload must not become a spurious
+	// remove/add. A naive pure-signature key would regress this to
+	// removed+added because the rename reconciler's signature similarity
+	// (~0.33) is below renameThreshold.
 	before := []Entity{
 		{Kind: "method", Name: "C.F", Signature: "F(int)", StartLine: 1},
 		{Kind: "method", Name: "C.F", Signature: "F(string)", StartLine: 5},
@@ -360,7 +364,7 @@ func TestCompareEntitiesSingleEntityUnchangedBehavior(t *testing.T) {
 func TestCompareEntitiesAddedOverloadReportedAsAdded(t *testing.T) {
 	// Adding a third overload (before has 2, after has 3, appended in file
 	// order) must surface exactly one `added` for the new overload; the two
-	// pre-existing overloads stay paired by ordinal and produce no churn.
+	// pre-existing overloads pair by exact signature and produce no churn.
 	before := []Entity{
 		{Kind: "method", Name: "C.F", Signature: "F(int)", StartLine: 1},
 		{Kind: "method", Name: "C.F", Signature: "F(string)", StartLine: 5},
@@ -419,8 +423,9 @@ func TestCompareEntitiesTrueDuplicatesEditOne(t *testing.T) {
 	// Two entities with identical Kind:Name:Signature on both sides (true
 	// duplicates). Editing the body of one must surface exactly one
 	// body_changed and no spurious remove/add for the untouched duplicate.
-	// This works precisely because entities are keyed by positional ordinal
-	// rather than signature (which would collide for true duplicates).
+	// This works because true duplicates are paired by occurrence index in
+	// file order, so the Nth duplicate on each side pairs with the Nth on
+	// the other (a plain signature key would collide for true duplicates).
 	before := []Entity{
 		{Kind: "method", Name: "C.F", Signature: "F()", BodyHash: "h1", StartLine: 1},
 		{Kind: "method", Name: "C.F", Signature: "F()", BodyHash: "h1", StartLine: 5},
@@ -439,6 +444,87 @@ func TestCompareEntitiesTrueDuplicatesEditOne(t *testing.T) {
 	}
 	if changes[0].Type != "body_changed" || changes[0].Kind != "method" || changes[0].Name != "C.F" {
 		t.Fatalf("change = %#v, want body_changed for method C.F", changes[0])
+	}
+}
+
+func TestCompareEntitiesRemoveFirstOverloadNoCascade(t *testing.T) {
+	// Removing the FIRST of three same-name overloads must report exactly one
+	// `removed F(int)`. Pure positional-ordinal keying used to cascade here:
+	// signature_changed F(int)->F(string), signature_changed
+	// F(string)->F(bool), removed F(bool) -- all phantom. Two-phase matching
+	// pairs the surviving overloads by exact signature first, leaving only
+	// the truly removed one.
+	before := []Entity{
+		{Kind: "method", Name: "C.F", Signature: "F(int)", StartLine: 1},
+		{Kind: "method", Name: "C.F", Signature: "F(string)", StartLine: 5},
+		{Kind: "method", Name: "C.F", Signature: "F(bool)", StartLine: 9},
+	}
+	after := []Entity{
+		{Kind: "method", Name: "C.F", Signature: "F(string)", StartLine: 1},
+		{Kind: "method", Name: "C.F", Signature: "F(bool)", StartLine: 5},
+	}
+
+	changes, removed, added := compareEntities(before, after)
+	if len(changes) != 0 {
+		t.Fatalf("unexpected changes on surviving overloads: %#v", changes)
+	}
+	if len(added) != 0 {
+		t.Fatalf("unexpected added: %#v", added)
+	}
+	if len(removed) != 1 {
+		t.Fatalf("removed = %#v, want exactly one removed overload", removed)
+	}
+	if removed[0].Signature != "F(int)" {
+		t.Fatalf("removed signature = %q, want F(int)", removed[0].Signature)
+	}
+}
+
+func TestCompareEntitiesMidListInsertOnlyAdded(t *testing.T) {
+	// Inserting an overload in the MIDDLE of the list must surface exactly
+	// one `added F(string)` and leave the surrounding overloads untouched
+	// (no phantom signature_changed on the shifted tail).
+	before := []Entity{
+		{Kind: "method", Name: "C.F", Signature: "F(int)", StartLine: 1},
+		{Kind: "method", Name: "C.F", Signature: "F(bool)", StartLine: 5},
+	}
+	after := []Entity{
+		{Kind: "method", Name: "C.F", Signature: "F(int)", StartLine: 1},
+		{Kind: "method", Name: "C.F", Signature: "F(string)", StartLine: 5},
+		{Kind: "method", Name: "C.F", Signature: "F(bool)", StartLine: 9},
+	}
+
+	changes, removed, added := compareEntities(before, after)
+	if len(changes) != 0 {
+		t.Fatalf("unexpected changes on stable overloads: %#v", changes)
+	}
+	if len(removed) != 0 {
+		t.Fatalf("unexpected removed: %#v", removed)
+	}
+	if len(added) != 1 {
+		t.Fatalf("added = %#v, want exactly one added overload", added)
+	}
+	if added[0].Signature != "F(string)" {
+		t.Fatalf("added signature = %q, want F(string)", added[0].Signature)
+	}
+}
+
+func TestCompareEntitiesReorderedOverloadsNoChanges(t *testing.T) {
+	// Purely reordering same-name overloads (identical signatures and bodies,
+	// only file positions swapped) must produce no events at all: exact
+	// signature pairing matches each overload to itself regardless of
+	// position.
+	before := []Entity{
+		{Kind: "method", Name: "C.F", Signature: "F(int)", BodyHash: "hi", StartLine: 1},
+		{Kind: "method", Name: "C.F", Signature: "F(string)", BodyHash: "hs", StartLine: 5},
+	}
+	after := []Entity{
+		{Kind: "method", Name: "C.F", Signature: "F(string)", BodyHash: "hs", StartLine: 1},
+		{Kind: "method", Name: "C.F", Signature: "F(int)", BodyHash: "hi", StartLine: 5},
+	}
+
+	changes, removed, added := compareEntities(before, after)
+	if len(changes) != 0 || len(removed) != 0 || len(added) != 0 {
+		t.Fatalf("reorder must be inert: changes=%#v removed=%#v added=%#v", changes, removed, added)
 	}
 }
 

@@ -258,8 +258,7 @@ func Compare(before, after []Entity) []EntityChange {
 // removed and added entities that were not reconciled, sorted deterministically
 // so callers can run a cross-file reconciliation pass over the leftovers.
 func compareEntities(before, after []Entity) (changes []EntityChange, removed, added []Entity) {
-	beforeByKey := keyedEntities(before)
-	afterByKey := keyedEntities(after)
+	beforeByKey, afterByKey := keyedEntityMaps(before, after)
 
 	deleted := map[string]Entity{}
 	addedByKey := map[string]Entity{}
@@ -380,26 +379,69 @@ func key(entity Entity) string {
 	return entity.Kind + ":" + entity.Name
 }
 
-// keyedEntities maps each entity to a stable key within its parse. Entities that
-// share a Kind:Name (same-name overloads, reachable in languages like C#/Java)
-// are disambiguated by a positional ordinal assigned in file order, so
-// before[Kind:Name#0] pairs with after[Kind:Name#0]. A lone entity is always
-// #0, preserving the pre-ordinal single-entity behavior. Using an ordinal rather
-// than the full signature keeps a signature edit to an overload paired across
-// sides (so it surfaces as signature_changed, not a spurious remove+add).
+func sigKey(entity Entity) string {
+	return entity.Kind + ":" + entity.Name + ":" + entity.Signature
+}
+
+// keyedEntityMaps assigns each entity an ephemeral key such that entities that
+// should be diffed against each other receive the same key on both sides. The
+// keys are opaque: they are used only inside compareEntities/bestRename and are
+// never persisted or emitted.
 //
-// Known limitation: ordinal pairing can misattribute when overloads are
-// reordered or one is inserted/removed mid-list, but that is a strict
-// improvement over last-write-wins dropping all but one same-name overload.
-func keyedEntities(entities []Entity) map[string]Entity {
-	out := make(map[string]Entity, len(entities))
-	counts := map[string]int{}
-	for _, entity := range entities {
-		base := key(entity)
-		out[fmt.Sprintf("%s#%d", base, counts[base])] = entity
-		counts[base]++
+// Matching is two-phase:
+//
+//  1. Entities that share an exact Kind:Name:Signature across sides pair up
+//     first. True duplicates (an identical Kind:Name:Signature appearing more
+//     than once on one side) are disambiguated by occurrence index in file
+//     order, so the Nth duplicate on each side pairs with the Nth on the
+//     other. Exact pairing makes mid-list overload insertions, removals, and
+//     reorders inert for the untouched overloads instead of cascading phantom
+//     signature_changed events down the list (e.g. removing the first of
+//     three overloads now reports just that one removal).
+//
+//  2. The leftovers -- entities whose exact signature has no counterpart on
+//     the other side -- are assigned positional ordinals per Kind:Name in
+//     file order. An in-place signature edit of one overload leaves exactly
+//     one leftover with that name on each side, so the edit still pairs and
+//     surfaces as signature_changed rather than remove+add (issue #35). A
+//     naive always-signature key would regress that case: the rename
+//     reconciler's signature similarity for e.g. F(int) -> F(long) falls well
+//     below renameThreshold.
+//
+// The "=" and "~" key prefixes keep phase-1 and phase-2 keys from colliding.
+func keyedEntityMaps(before, after []Entity) (map[string]Entity, map[string]Entity) {
+	sigCounts := func(entities []Entity) map[string]int {
+		counts := make(map[string]int, len(entities))
+		for _, entity := range entities {
+			counts[sigKey(entity)]++
+		}
+		return counts
 	}
-	return out
+	beforeSigs := sigCounts(before)
+	afterSigs := sigCounts(after)
+
+	keySide := func(entities []Entity, otherSigs map[string]int) map[string]Entity {
+		out := make(map[string]Entity, len(entities))
+		sigSeen := map[string]int{}
+		leftoverSeen := map[string]int{}
+		for _, entity := range entities {
+			sk := sigKey(entity)
+			occurrence := sigSeen[sk]
+			sigSeen[sk]++
+			if occurrence < otherSigs[sk] {
+				// Phase 1: the other side has a matching Nth occurrence of
+				// this exact Kind:Name:Signature.
+				out[fmt.Sprintf("=%s#%d", sk, occurrence)] = entity
+				continue
+			}
+			// Phase 2: positional ordinal among this side's leftovers.
+			base := key(entity)
+			out[fmt.Sprintf("~%s#%d", base, leftoverSeen[base])] = entity
+			leftoverSeen[base]++
+		}
+		return out
+	}
+	return keySide(before, afterSigs), keySide(after, beforeSigs)
 }
 
 func lineForSort(change EntityChange) int {
