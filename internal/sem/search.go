@@ -25,6 +25,8 @@ const (
 	defaultSearchMaxSnippetLines   = 40
 	defaultSearchMaxRegionsPerFile = 3
 	defaultSearchMaxIndexedFiles   = 96
+	deepSearchMaxIndexedFiles      = 256
+	searchIndexedFilesPerResult    = 3
 	maxSearchQueryTerms            = 48
 	minGitGrepPreselectionFiles    = 10_000
 )
@@ -153,7 +155,7 @@ func SearchRepository(ctx context.Context, repo, providerVersion, query string, 
 		options.MaxRegionsPerFile = defaultSearchMaxRegionsPerFile
 	}
 	if options.MaxIndexedFiles <= 0 {
-		options.MaxIndexedFiles = defaultSearchMaxIndexedFiles
+		options.MaxIndexedFiles = defaultSearchIndexedFiles(options.TopK)
 	}
 	if options.Profile == "" {
 		options.Profile = ProfileSyntaxOnly
@@ -302,6 +304,16 @@ func SearchRepository(ctx context.Context, repo, providerVersion, query string, 
 		Stats:    stats,
 		Warnings: snapshot.Header.Warnings,
 	}, nil
+}
+
+func defaultSearchIndexedFiles(topK int) int {
+	// Shallow interactive searches keep the original cold-start bound. Deeper
+	// rankings need a wider file pool or preselection becomes the recall limit
+	// before TopK and per-file diversity can take effect.
+	return minInt(
+		deepSearchMaxIndexedFiles,
+		maxInt(defaultSearchMaxIndexedFiles, topK*searchIndexedFilesPerResult),
+	)
 }
 
 func fitSearchResultsToBudget(results []SearchResult, q searchQuery, budget int) ([]SearchResult, int, int, int) {

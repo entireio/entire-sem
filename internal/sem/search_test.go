@@ -390,6 +390,24 @@ func NeedleTarget() bool { return true }
 	}
 }
 
+func TestDefaultSearchIndexedFilesScalesWithRequestedDepth(t *testing.T) {
+	tests := []struct {
+		topK int
+		want int
+	}{
+		{topK: 1, want: defaultSearchMaxIndexedFiles},
+		{topK: defaultSearchTopK, want: defaultSearchMaxIndexedFiles},
+		{topK: 40, want: 120},
+		{topK: 100, want: deepSearchMaxIndexedFiles},
+		{topK: 1_000, want: deepSearchMaxIndexedFiles},
+	}
+	for _, test := range tests {
+		if got := defaultSearchIndexedFiles(test.topK); got != test.want {
+			t.Fatalf("defaultSearchIndexedFiles(%d) = %d, want %d", test.topK, got, test.want)
+		}
+	}
+}
+
 func TestSearchRepositoryDoesNotTreatPathPriorAsEvidence(t *testing.T) {
 	repo := t.TempDir()
 	write(t, repo, "src/target.go", "package source\nfunc TargetNeedle() bool { return true }\n")
