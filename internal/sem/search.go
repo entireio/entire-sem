@@ -997,7 +997,14 @@ func hydrateSparseCandidates(candidates []searchCandidate, read contentReader) i
 	reads := 0
 	for index := range candidates {
 		candidate := &candidates[index]
-		if candidate.result.Snippet != "" || !containsString(candidate.result.Signals, "sparse-region") {
+		isSparse := false
+		for _, signal := range candidate.result.Signals {
+			if signal == "sparse-region" {
+				isSparse = true
+				break
+			}
+		}
+		if candidate.result.Snippet != "" || !isSparse {
 			continue
 		}
 		filePath := candidate.result.FilePath
