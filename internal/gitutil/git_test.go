@@ -262,6 +262,27 @@ func TestShowFileClassifiesErrorsByStderrNotPath(t *testing.T) {
 	}
 }
 
+func TestNewCmdPinsSubprocessLocaleToC(t *testing.T) {
+	// ShowFile classifies file-absent by matching git's English stderr text, so
+	// every git subprocess must run with a pinned C locale. LC_ALL=C must come
+	// after os.Environ() so it overrides any inherited LC_ALL/LANG/LC_MESSAGES.
+	t.Setenv("LC_ALL", "fr_FR.UTF-8")
+	t.Setenv("LANG", "fr_FR.UTF-8")
+	cmd := newCmd(context.Background(), t.TempDir(), "git", "version")
+	lcAll, lang := "", ""
+	for _, kv := range cmd.Env {
+		if v, ok := strings.CutPrefix(kv, "LC_ALL="); ok {
+			lcAll = v
+		}
+		if v, ok := strings.CutPrefix(kv, "LANG="); ok {
+			lang = v
+		}
+	}
+	if lcAll != "C" || lang != "C" {
+		t.Fatalf("effective subprocess locale LC_ALL=%q LANG=%q, want both \"C\"", lcAll, lang)
+	}
+}
+
 func git(t *testing.T, repo string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", args...)

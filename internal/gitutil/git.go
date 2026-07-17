@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"sort"
 	"strconv"
@@ -120,8 +121,7 @@ func GrepIndexMatches(ctx context.Context, repo string, patterns []string, maxPe
 		return []GrepMatch{}, nil
 	}
 	args = append(args, "--")
-	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Dir = repo
+	cmd := newCmd(ctx, repo, "git", args...)
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -321,8 +321,7 @@ type BatchFileReader struct {
 }
 
 func NewBatchFileReader(ctx context.Context, repo, rev string) (*BatchFileReader, error) {
-	cmd := exec.CommandContext(ctx, "git", "cat-file", "--batch")
-	cmd.Dir = repo
+	cmd := newCmd(ctx, repo, "git", "cat-file", "--batch")
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -452,12 +451,23 @@ func run(ctx context.Context, dir, name string, args ...string) (string, error) 
 	return stdout, nil
 }
 
+// newCmd builds the exec.Cmd every subprocess in this package runs through.
+// It pins the subprocess locale to C (LC_ALL=C overrides LANG and any LC_*;
+// LANG=C is set as a belt-and-braces default) so git's stderr messages are
+// always the English ones our error classification matches — e.g. ShowFile's
+// absent-file detection would otherwise break under a non-English git locale.
+func newCmd(ctx context.Context, dir, name string, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "LC_ALL=C", "LANG=C")
+	return cmd
+}
+
 // runWithStderr runs a command and returns its stdout and trimmed stderr
 // separately, so callers can classify failures against git's own message
 // without the wrapped error text (which echoes the argv, including paths).
 func runWithStderr(ctx context.Context, dir, name string, args ...string) (string, string, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Dir = dir
+	cmd := newCmd(ctx, dir, name, args...)
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.Stdout = &stdout
