@@ -34,7 +34,9 @@ const (
 	sparseSearchFileRankWeight     = 2
 	deepSearchSparseNumerator      = 5
 	deepSearchSparseDenominator    = 8
-	deepSearchSemanticHeadDivisor  = 32
+	deepSearchSemanticHeadDivisor  = 10
+	maxDeepSearchSemanticHead      = 10
+	maxSparseSearchQueryTerms      = 64
 )
 
 // SearchOptions controls local issue-to-code retrieval. Search reads the same
@@ -123,6 +125,7 @@ type searchCandidate struct {
 }
 
 var searchWordPattern = regexp.MustCompile(`[[:alnum:]_./:+#-]+`)
+var sparseSearchWordPattern = regexp.MustCompile(`[[:alpha:]][[:alnum:]_]*|[[:digit:]]+`)
 
 var searchStopWords = map[string]bool{
 	"a": true, "an": true, "and": true, "are": true, "as": true,
@@ -134,6 +137,20 @@ var searchStopWords = map[string]bool{
 	"this": true, "to": true, "use": true, "uses": true, "using": true,
 	"we": true, "what": true, "when": true, "where": true, "which": true,
 	"with": true, "without": true,
+}
+
+var sparseSearchStopWords = map[string]bool{
+	"a": true, "an": true, "and": true, "are": true, "as": true,
+	"at": true, "be": true, "been": true, "but": true, "by": true,
+	"can": true, "could": true, "do": true, "does": true, "for": true,
+	"from": true, "had": true, "has": true, "have": true, "how": true,
+	"i": true, "if": true, "in": true, "into": true, "is": true,
+	"it": true, "its": true, "may": true, "not": true, "of": true,
+	"on": true, "or": true, "our": true, "should": true, "that": true,
+	"the": true, "their": true, "then": true, "this": true, "to": true,
+	"was": true, "we": true, "were": true, "what": true, "when": true,
+	"where": true, "which": true, "why": true, "will": true, "with": true,
+	"would": true, "you": true, "your": true,
 }
 
 // SearchRepository performs local hybrid lexical/semantic retrieval. It uses
@@ -167,6 +184,7 @@ func SearchRepository(ctx context.Context, repo, providerVersion, query string, 
 	if options.Profile == "" {
 		options.Profile = ProfileSyntaxOnly
 	}
+	sparseQuery := buildSparseSearchQuery(query)
 	searchStarted := time.Now()
 	preselectStarted := time.Now()
 	selection, err := preselectSearchFiles(ctx, repo, q, options)
@@ -268,7 +286,7 @@ func SearchRepository(ctx context.Context, repo, providerVersion, query string, 
 		)...)
 		if options.TopK > defaultSearchTopK {
 			fileSparse, documentCount, documentLength := sparseCandidatesForFile(
-				q, filePath, fileLanguages[filePath], lines, options,
+				q, sparseQuery, filePath, fileLanguages[filePath], lines, options,
 			)
 			sparseCandidates = append(sparseCandidates, fileSparse...)
 			sparseDocumentCount += documentCount
@@ -302,7 +320,7 @@ func SearchRepository(ctx context.Context, repo, providerVersion, query string, 
 	semantic := selectDiverseCandidates(candidates, options.TopK, options.MaxRegionsPerFile)
 	selected := semantic
 	if len(sparseCandidates) > 0 {
-		scoreSparseCandidates(sparseCandidates, q, sparseDF, sparseDocumentCount, sparseDocumentLength)
+		scoreSparseCandidates(sparseCandidates, sparseQuery, sparseDF, sparseDocumentCount, sparseDocumentLength)
 		sortSearchCandidates(sparseCandidates)
 		selected = selectHybridCandidates(semantic, sparseCandidates, options.TopK)
 	}
@@ -828,7 +846,10 @@ func candidatesForFile(q searchQuery, filePath, language string, lines []string,
 // of a large symbol or prose-heavy file; overlapping windows preserve those
 // locations for deeper rankings without changing the interactive search path.
 func sparseCandidatesForFile(
-	q searchQuery, filePath, language string, lines []string, options SearchOptions,
+	focusQuery, sparseQuery searchQuery,
+	filePath, language string,
+	lines []string,
+	options SearchOptions,
 ) ([]searchCandidate, int, int) {
 	if len(lines) == 0 {
 		return nil, 0, 0
@@ -841,11 +862,11 @@ func sparseCandidatesForFile(
 	for start := 1; start <= len(lines); start += stride {
 		end := minInt(len(lines), start+chunkLines-1)
 		text := filepath.ToSlash(filePath) + "\n" + strings.Join(lines[start-1:end], "\n")
-		counts, length := searchTermCounts(text, q.termSet)
+		counts, length := sparseSearchTermCounts(text, sparseQuery.termSet)
 		documentCount++
 		documentLength += maxInt(1, length)
 		if len(counts) > 0 {
-			focus := searchFocusLine(q, lines, start, end)
+			focus := searchFocusLine(focusQuery, lines, start, end)
 			snippetStart, snippetEnd := focusedSnippetRegion(start, end, focus, options.MaxSnippetLines)
 			out = append(out, searchCandidate{
 				result: SearchResult{
@@ -1185,7 +1206,10 @@ func selectHybridCandidates(semantic, sparse []searchCandidate, topK int) []sear
 	}
 	sortSearchCandidates(fusedSparse)
 
-	semanticHead := minInt(len(semantic), maxInt(1, topK/deepSearchSemanticHeadDivisor))
+	semanticHead := minInt(
+		len(semantic),
+		minInt(maxDeepSearchSemanticHead, maxInt(1, topK/deepSearchSemanticHeadDivisor)),
+	)
 	sparseTarget := minInt(len(fusedSparse), topK*deepSearchSparseNumerator/deepSearchSparseDenominator)
 	selected := make([]searchCandidate, 0, minInt(topK, len(semantic)+len(fusedSparse)))
 	selected = append(selected, semantic[:semanticHead]...)
@@ -1436,6 +1460,29 @@ func buildSearchQuery(query string) searchQuery {
 	}
 }
 
+func buildSparseSearchQuery(query string) searchQuery {
+	terms := make([]string, 0, maxSparseSearchQueryTerms)
+	termSet := make(map[string]bool, maxSparseSearchQueryTerms)
+	weights := make(map[string]float64, maxSparseSearchQueryTerms)
+	for _, term := range sparseSearchTokens(query) {
+		if len(term) < 2 || sparseSearchStopWords[term] || termSet[term] {
+			continue
+		}
+		termSet[term] = true
+		weights[term] = 1
+		terms = append(terms, term)
+		if len(terms) == maxSparseSearchQueryTerms {
+			break
+		}
+	}
+	return searchQuery{
+		rawLower: strings.ToLower(strings.TrimSpace(query)),
+		terms:    terms,
+		termSet:  termSet,
+		weights:  weights,
+	}
+}
+
 func codeLikeSearchWeight(raw string) float64 {
 	trimmed := strings.Trim(raw, "./:+-")
 	letters := 0
@@ -1530,6 +1577,33 @@ func searchTokenVariants(raw string) []string {
 	}
 	flush()
 	return appendUnique(nil, variants...)
+}
+
+func sparseSearchTokens(text string) []string {
+	var out []string
+	for _, raw := range sparseSearchWordPattern.FindAllString(text, -1) {
+		variants := searchTokenVariants(raw)
+		if len(variants) > 1 {
+			full := strings.ToLower(strings.Trim(raw, "./:-"))
+			variants = variants[1:]
+			for len(variants) > 0 && variants[0] == full {
+				variants = variants[1:]
+			}
+		}
+		out = append(out, variants...)
+	}
+	return out
+}
+
+func sparseSearchTermCounts(text string, queryTerms map[string]bool) (map[string]int, int) {
+	counts := map[string]int{}
+	tokens := sparseSearchTokens(text)
+	for _, token := range tokens {
+		if queryTerms[token] {
+			counts[token]++
+		}
+	}
+	return counts, len(tokens)
 }
 
 func searchTermCounts(text string, queryTerms map[string]bool) (map[string]int, int) {

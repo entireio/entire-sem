@@ -240,10 +240,10 @@ func TestSelectHybridCandidatesBalancesSparseDepthAndFileDiversity(t *testing.T)
 	if len(selected) != 100 {
 		t.Fatalf("hybrid selection returned %d candidates, want 100", len(selected))
 	}
-	if selected[0].result.FilePath != semantic[0].result.FilePath ||
-		selected[1].result.FilePath != semantic[1].result.FilePath ||
-		selected[2].result.FilePath != semantic[2].result.FilePath {
-		t.Fatalf("hybrid semantic head = %#v", selected[:3])
+	for index := 0; index < 10; index++ {
+		if selected[index].result.FilePath != semantic[index].result.FilePath {
+			t.Fatalf("hybrid semantic head[%d] = %#v", index, selected[index])
+		}
 	}
 	sparseCount := 0
 	files := map[string]bool{}
@@ -258,6 +258,14 @@ func TestSelectHybridCandidatesBalancesSparseDepthAndFileDiversity(t *testing.T)
 	}
 	if len(files) < 90 {
 		t.Fatalf("hybrid selection covered only %d distinct files", len(files))
+	}
+}
+
+func TestBuildSparseSearchQueryUsesLexicalSubtokens(t *testing.T) {
+	query := buildSparseSearchQuery("HTTPServer foo_bar and 123")
+	want := []string{"http", "server", "foo", "bar", "123"}
+	if fmt.Sprint(query.terms) != fmt.Sprint(want) {
+		t.Fatalf("sparse query terms = %v, want %v", query.terms, want)
 	}
 }
 
