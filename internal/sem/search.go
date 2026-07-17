@@ -21,7 +21,7 @@ import (
 const (
 	defaultSearchTopK              = 20
 	defaultSearchContextLines      = 8
-	defaultSearchMaxRegionLines    = 120
+	defaultSearchMaxRegionLines    = 80
 	defaultSearchMaxSnippetLines   = 40
 	defaultSearchMaxRegionsPerFile = 3
 	defaultSearchMaxIndexedFiles   = 96

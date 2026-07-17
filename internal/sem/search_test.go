@@ -114,6 +114,31 @@ func NewTimingWheel(interval int) *Wheel {
 	return newTimingWheelWithClock(interval, systemClock{})
 }
 
+func TestSearchRepositoryUsesFocusedDefaultRegions(t *testing.T) {
+	repo := t.TempDir()
+	body := "package source\n\nfunc LargeHandler() {\n" +
+		strings.Repeat("\t// unrelated implementation detail\n", 90) +
+		"\t// rare retrieval needle\n}\n"
+	write(t, repo, "source/large.go", body)
+
+	response, err := SearchRepository(t.Context(), repo, "test", "rare retrieval needle", SearchOptions{
+		Worktree: true,
+		Profile:  ProfileSyntaxOnly,
+		TopK:     5,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Results) == 0 {
+		t.Fatal("focused default search returned no results")
+	}
+	for _, result := range response.Results {
+		if lines := result.EndLine - result.StartLine + 1; lines > defaultSearchMaxRegionLines {
+			t.Fatalf("default result spans %d lines, want at most %d: %#v", lines, defaultSearchMaxRegionLines, result)
+		}
+	}
+}
+
 // newTimingWheelWithClock creates the timing wheel with an injected clock.
 func newTimingWheelWithClock(interval int, clock Clock) *Wheel {
 	return &Wheel{}
