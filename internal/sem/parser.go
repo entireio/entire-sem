@@ -458,6 +458,11 @@ func maskTypeScriptKeywordTypeProperty(line string) string {
 }
 
 func maskTypeScriptStaticAccessorMethod(line string) string {
+	// Flip only the trailing `r` of `accessor` to `R`, reconstructing the
+	// surrounding whitespace from capture groups, so the replacement is
+	// byte-length-preserving: entity offsets are computed against the masked
+	// source but sliced from the original, so any length drift corrupts every
+	// following entity (same constraint as the Java module-import mask).
 	return tsStaticAccessorMethodPattern.ReplaceAllString(line, "${1}R${2}")
 }
 

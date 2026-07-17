@@ -586,6 +586,20 @@ func TestMaskTypeScriptStaticAccessorMethodPreservesLength(t *testing.T) {
 			t.Fatalf("mask changed length: input %q (%d) -> output %q (%d)", in, len(in), out, len(out))
 		}
 	}
+	// CRLF content exercises the full per-line mask path: splitLineEnding
+	// special-cases \r\n, so verify the mask stays length-preserving and keeps
+	// the \r\n endings intact around the masked construct.
+	crlf := "class C {\r\n  static  accessor() { return 1; }\r\n  bar() { return 42; }\r\n}\r\n"
+	out := maskTypeScriptUnsupportedSyntax(crlf)
+	if len(out) != len(crlf) {
+		t.Fatalf("mask changed length of CRLF input: %q (%d) -> %q (%d)", crlf, len(crlf), out, len(out))
+	}
+	if !strings.Contains(out, "accessoR") {
+		t.Fatalf("expected mask to fire on CRLF input: %q", out)
+	}
+	if got, want := strings.Count(out, "\r\n"), strings.Count(crlf, "\r\n"); got != want {
+		t.Fatalf("mask altered CRLF line endings: got %d, want %d in %q", got, want, out)
+	}
 }
 
 func TestMaskTypeScriptStaticAccessorMethodOnlyMasksStaticAccessorCalls(t *testing.T) {
@@ -898,6 +912,20 @@ func TestMaskJavaModuleImportPreservesLength(t *testing.T) {
 		if len(out) != len(in) {
 			t.Fatalf("mask changed length: input %q (%d) -> output %q (%d)", in, len(in), out, len(out))
 		}
+	}
+	// CRLF content exercises the full per-line mask path: splitLineEnding
+	// special-cases \r\n, so verify the mask stays length-preserving and keeps
+	// the \r\n endings intact around the masked construct.
+	crlf := "import module  java.base;\r\nclass C {\r\n  int bar() { return 42; }\r\n}\r\n"
+	out := maskJavaUnsupportedSyntax(crlf)
+	if len(out) != len(crlf) {
+		t.Fatalf("mask changed length of CRLF input: %q (%d) -> %q (%d)", crlf, len(crlf), out, len(out))
+	}
+	if strings.Contains(out, "module") {
+		t.Fatalf("expected mask to blank `module` in CRLF input: %q", out)
+	}
+	if got, want := strings.Count(out, "\r\n"), strings.Count(crlf, "\r\n"); got != want {
+		t.Fatalf("mask altered CRLF line endings: got %d, want %d in %q", got, want, out)
 	}
 }
 
