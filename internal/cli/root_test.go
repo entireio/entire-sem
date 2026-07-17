@@ -320,6 +320,20 @@ func TestSearchCommandAgentFormatIsCompactAndFocused(t *testing.T) {
 	}
 }
 
+func TestAgentSearchBudgetsFavorHigherRanks(t *testing.T) {
+	budgets := rankedAgentSearchBudgets(4, 1000)
+	if len(budgets) != 4 || budgets[0] <= budgets[1] || budgets[1] <= budgets[2] || budgets[2] <= budgets[3] {
+		t.Fatalf("budgets are not rank weighted: %#v", budgets)
+	}
+	total := 0
+	for _, budget := range budgets {
+		total += budget
+	}
+	if total != 1000 {
+		t.Fatalf("budget total = %d, want 1000: %#v", total, budgets)
+	}
+}
+
 func TestProviderCommandsAcceptIgnoreFile(t *testing.T) {
 	repo := t.TempDir()
 	write(t, repo, ".brainignore", "ignored/\n")

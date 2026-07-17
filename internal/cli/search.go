@@ -146,11 +146,11 @@ func writeAgentSearch(out interface{ Write([]byte) (int, error) }, results []sem
 
 func fitAgentSearchResults(results []sem.SearchResult, budget int) []byte {
 	if budget <= 0 {
-		return renderAgentSearchResults(results, 0)
+		return renderAgentSearchResults(results, nil)
 	}
 	for count := len(results); count > 0; count-- {
-		perResult := maxIntCLI(128, (budget-(count-1))/count)
-		formatted := renderAgentSearchResults(results[:count], perResult)
+		resultBudgets := rankedAgentSearchBudgets(count, budget-(count-1))
+		formatted := renderAgentSearchResults(results[:count], resultBudgets)
 		if len(formatted) <= budget {
 			return formatted
 		}
@@ -158,13 +158,43 @@ func fitAgentSearchResults(results []sem.SearchResult, budget int) []byte {
 	return nil
 }
 
-func renderAgentSearchResults(results []sem.SearchResult, perResult int) []byte {
+func rankedAgentSearchBudgets(count, budget int) []int {
+	if count <= 0 {
+		return nil
+	}
+	budgets := make([]int, count)
+	minimum := minIntCLI(128, budget/count)
+	remaining := budget - minimum*count
+	weightTotal := count * (count + 1) / 2
+	allocated := 0
+	for index := range budgets {
+		extra := 0
+		if weightTotal > 0 {
+			extra = remaining * (count - index) / weightTotal
+		}
+		budgets[index] = minimum + extra
+		allocated += extra
+	}
+	// Integer division can leave a few bytes. They are most valuable at the
+	// top of the ranking, where agents make their first navigation decision.
+	for index := 0; allocated < remaining; index = (index + 1) % count {
+		budgets[index]++
+		allocated++
+	}
+	return budgets
+}
+
+func renderAgentSearchResults(results []sem.SearchResult, budgets []int) []byte {
 	var output bytes.Buffer
 	for index, result := range results {
 		if index > 0 {
 			output.WriteByte('\n')
 		}
-		output.Write(agentSearchBlock(result, perResult))
+		budget := 0
+		if index < len(budgets) {
+			budget = budgets[index]
+		}
+		output.Write(agentSearchBlock(result, budget))
 	}
 	return output.Bytes()
 }
@@ -203,8 +233,8 @@ func agentSearchBlock(result sem.SearchResult, budget int) []byte {
 	return []byte(header + best + "\n")
 }
 
-func maxIntCLI(left, right int) int {
-	if left > right {
+func minIntCLI(left, right int) int {
+	if left < right {
 		return left
 	}
 	return right

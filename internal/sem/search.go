@@ -1446,6 +1446,7 @@ func selectDiverseCandidates(candidates []searchCandidate, topK, maxPerFile int)
 	perFile := map[string]int{}
 	perSymbolName := map[string]int{}
 	perBaseName := map[string]int{}
+	distinctFileTarget := minInt(topK, (topK+1)/2)
 	for len(selected) < topK {
 		// Search is primarily a discovery operation for coding agents. Give the
 		// agent one strong location from each candidate file before spending the
@@ -1454,7 +1455,7 @@ func selectDiverseCandidates(candidates []searchCandidate, topK, maxPerFile int)
 		// the context window even when other relevant implementation files ranked
 		// close behind them.
 		fileLimit := maxPerFile
-		if hasUnseenSearchFile(remaining, perFile) {
+		if len(perFile) < distinctFileTarget && hasUnseenSearchFile(remaining, perFile) {
 			fileLimit = 1
 		}
 		bestIndex := -1
