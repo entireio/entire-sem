@@ -194,6 +194,14 @@ func (TreeSitterParser) ParseWithStatus(path, content string) ([]Entity, string,
 	}
 	src := []byte(content)
 	parseSrc := src
+	entitySrc := src
+	entityLineOffset := 0
+	if spec.language == "Protocol Buffers" {
+		prepared, original, lineOffset := prepareProtocolBuffersParseSource(content)
+		parseSrc = []byte(prepared)
+		entitySrc = []byte(original)
+		entityLineOffset = lineOffset
+	}
 	if spec.language == "SQL" {
 		parseSrc = []byte(maskPostgresUnsupportedSyntax(content))
 	}
@@ -282,7 +290,7 @@ func (TreeSitterParser) ParseWithStatus(path, content string) ([]Entity, string,
 	}
 
 	var entities []Entity
-	walkEntities(root, src, spec.language, "", &entities)
+	walkEntities(root, entitySrc, spec.language, "", &entities)
 	if spec.language == "C++" {
 		entities = appendMissingEntities(entities, cPlusPlusTypeAliasEntities(content)...)
 	}
@@ -314,6 +322,12 @@ func (TreeSitterParser) ParseWithStatus(path, content string) ([]Entity, string,
 		// only brace-backed implementation methods; header prototypes end in ';'.
 		entities = appendMissingEntities(entities, objectiveCMethodEntities(content)...)
 	}
+	if entityLineOffset > 0 {
+		for index := range entities {
+			entities[index].StartLine -= entityLineOffset
+			entities[index].EndLine -= entityLineOffset
+		}
+	}
 	sort.Slice(entities, func(i, j int) bool {
 		if entities[i].StartLine == entities[j].StartLine {
 			return entities[i].Name < entities[j].Name
@@ -322,20 +336,24 @@ func (TreeSitterParser) ParseWithStatus(path, content string) ([]Entity, string,
 	})
 	status := ParseStatus{}
 	if root.HasError() {
-		status = ParseStatus{ParseError: true, Code: "E_PARSE_ERROR", Detail: parseErrorDetail(root, src)}
+		status = ParseStatus{ParseError: true, Code: "E_PARSE_ERROR", Detail: parseErrorDetailWithLineOffset(root, entitySrc, entityLineOffset)}
 	}
 	return entities, spec.language, status
 }
 
 func parseErrorDetail(root *sitter.Node, src []byte) string {
-	details := collectParseErrorDetails(root, src, 5)
+	return parseErrorDetailWithLineOffset(root, src, 0)
+}
+
+func parseErrorDetailWithLineOffset(root *sitter.Node, src []byte, lineOffset int) string {
+	details := collectParseErrorDetails(root, src, 5, lineOffset)
 	if len(details) == 0 {
 		return "tree-sitter syntax error nodes present"
 	}
 	return "tree-sitter syntax error nodes present: " + strings.Join(details, "; ")
 }
 
-func collectParseErrorDetails(root *sitter.Node, src []byte, limit int) []string {
+func collectParseErrorDetails(root *sitter.Node, src []byte, limit, lineOffset int) []string {
 	if root == nil || root.IsNull() || limit <= 0 {
 		return nil
 	}
@@ -358,7 +376,11 @@ func collectParseErrorDetails(root *sitter.Node, src []byte, limit int) []string
 			if len(snippet) > 80 {
 				snippet = snippet[:80] + "..."
 			}
-			details = append(details, fmt.Sprintf("%s %s at line %d column %d near %q", kind, node.Type(), point.Row+1, point.Column+1, snippet))
+			line := int(point.Row) + 1 - lineOffset
+			if line < 1 {
+				line = 1
+			}
+			details = append(details, fmt.Sprintf("%s %s at line %d column %d near %q", kind, node.Type(), line, point.Column+1, snippet))
 		}
 		for i := 0; i < int(node.ChildCount()) && len(details) < limit; i++ {
 			walk(node.Child(i))
@@ -4678,6 +4700,12 @@ func entityFromNode(node *sitter.Node, src []byte, language, scope string) (Enti
 		name = cueFieldName(node, src)
 	case "message":
 		kind = "message"
+		name = nodeName(node, src)
+	case "enum":
+		if language != "Protocol Buffers" {
+			return Entity{}, false
+		}
+		kind = "enum"
 		name = nodeName(node, src)
 	case "service":
 		kind = "service"
