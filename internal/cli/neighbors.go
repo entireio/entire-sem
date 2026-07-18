@@ -417,8 +417,18 @@ func writeNeighborEdgeList(out io.Writer, label string, edges []neighborEdge) {
 	}
 	for _, edge := range edges {
 		fmt.Fprintf(out, "- %s", formatNeighborEndpoint(edge.Endpoint))
+		annotations := make([]string, 0, 3)
+		if edge.Endpoint.Kind == "file" {
+			annotations = append(annotations, "file-level")
+		}
+		if edge.Relation != "CALLS" {
+			annotations = append(annotations, edge.Relation)
+		}
 		if edge.Resolution != "" {
-			fmt.Fprintf(out, " [%s]", edge.Resolution)
+			annotations = append(annotations, edge.Resolution)
+		}
+		if len(annotations) > 0 {
+			fmt.Fprintf(out, " [%s]", strings.Join(annotations, ", "))
 		}
 		fmt.Fprintln(out)
 	}

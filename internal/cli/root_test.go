@@ -412,8 +412,8 @@ func TestNeighborsIncludesTopLevelFileCallersAndConstructors(t *testing.T) {
 	}
 	text := out.String()
 	for _, expected := range []string{
-		"Callers:\n- entry.py (entry.py)",
-		"Callees:\n- Result (target.py:1)",
+		"Callers:\n- entry.py (entry.py) [file-level, import_resolved]",
+		"Callees:\n- Result (target.py:1) [CONSTRUCTS, exact]",
 		"entry.py -> target -> Result",
 	} {
 		if !strings.Contains(text, expected) {
