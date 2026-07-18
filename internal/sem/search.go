@@ -38,6 +38,7 @@ const (
 	maxDeepSearchSemanticHead      = 10
 	maxSparseSearchQueryTerms      = 64
 	maxSparseSearchFileBytes       = 2 * 1024 * 1024
+	searchDiversityRelevanceRatio  = 0.75
 )
 
 // SearchOptions controls local issue-to-code retrieval. Search reads the same
@@ -1453,9 +1454,13 @@ func selectDiverseCandidates(candidates []searchCandidate, topK, maxPerFile int)
 		// remaining result budget on additional regions in files it has already
 		// seen. Without this first pass, a few large or repetitive files can fill
 		// the context window even when other relevant implementation files ranked
-		// close behind them.
+		// close behind them. The reserve is relevance-bounded: an exact usage or
+		// second requested symbol must not be buried under weak matches merely
+		// because it shares a file with an earlier result.
 		fileLimit := maxPerFile
-		if len(perFile) < distinctFileTarget && hasUnseenSearchFile(remaining, perFile) {
+		if len(perFile) < distinctFileTarget && shouldReserveUnseenSearchFile(
+			remaining, selected, perFile, perSymbolName, perBaseName, maxPerFile,
+		) {
 			fileLimit = 1
 		}
 		bestIndex := -1
@@ -1465,19 +1470,7 @@ func selectDiverseCandidates(candidates []searchCandidate, topK, maxPerFile int)
 			if perFile[candidate.result.FilePath] >= fileLimit || overlapsSelected(candidate, selected) {
 				continue
 			}
-			symbolKey := strings.ToLower(candidate.result.QualifiedName)
-			if symbolKey == "" {
-				symbolKey = strings.ToLower(candidate.result.SymbolName)
-			}
-			symbolPenalty := 0.0
-			if symbolKey != "" {
-				symbolPenalty = 4 * float64(perSymbolName[symbolKey])
-			}
-			baseKey := strings.ToLower(filepath.Base(candidate.result.FilePath))
-			adjusted := candidate.score -
-				0.8*float64(perFile[candidate.result.FilePath]) -
-				symbolPenalty -
-				2*float64(perBaseName[baseKey])
+			adjusted := adjustedSearchCandidateScore(candidate, perFile, perSymbolName, perBaseName)
 			if adjusted > bestAdjusted || (adjusted == bestAdjusted && searchCandidateLess(candidate, remaining[bestIndex])) {
 				bestIndex = i
 				bestAdjusted = adjusted
@@ -1502,13 +1495,51 @@ func selectDiverseCandidates(candidates []searchCandidate, topK, maxPerFile int)
 	return selected
 }
 
-func hasUnseenSearchFile(candidates []searchCandidate, perFile map[string]int) bool {
+func shouldReserveUnseenSearchFile(
+	candidates, selected []searchCandidate,
+	perFile, perSymbolName, perBaseName map[string]int,
+	maxPerFile int,
+) bool {
+	bestAny := -math.MaxFloat64
+	bestUnseen := -math.MaxFloat64
 	for _, candidate := range candidates {
-		if perFile[candidate.result.FilePath] == 0 {
-			return true
+		if perFile[candidate.result.FilePath] >= maxPerFile || overlapsSelected(candidate, selected) {
+			continue
+		}
+		adjusted := adjustedSearchCandidateScore(candidate, perFile, perSymbolName, perBaseName)
+		if adjusted > bestAny {
+			bestAny = adjusted
+		}
+		if perFile[candidate.result.FilePath] == 0 && adjusted > bestUnseen {
+			bestUnseen = adjusted
 		}
 	}
-	return false
+	if bestUnseen == -math.MaxFloat64 {
+		return false
+	}
+	if bestAny <= 0 {
+		return true
+	}
+	return bestUnseen >= searchDiversityRelevanceRatio*bestAny
+}
+
+func adjustedSearchCandidateScore(
+	candidate searchCandidate,
+	perFile, perSymbolName, perBaseName map[string]int,
+) float64 {
+	symbolKey := strings.ToLower(candidate.result.QualifiedName)
+	if symbolKey == "" {
+		symbolKey = strings.ToLower(candidate.result.SymbolName)
+	}
+	symbolPenalty := 0.0
+	if symbolKey != "" {
+		symbolPenalty = 4 * float64(perSymbolName[symbolKey])
+	}
+	baseKey := strings.ToLower(filepath.Base(candidate.result.FilePath))
+	return candidate.score -
+		0.8*float64(perFile[candidate.result.FilePath]) -
+		symbolPenalty -
+		2*float64(perBaseName[baseKey])
 }
 
 func overlapsSelected(candidate searchCandidate, selected []searchCandidate) bool {

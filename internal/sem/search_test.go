@@ -1004,6 +1004,24 @@ func TestDiverseSelectionCoversFilesBeforeAddingRegions(t *testing.T) {
 	}
 }
 
+func TestDiverseSelectionDoesNotBuryExactSameFileUsages(t *testing.T) {
+	candidates := []searchCandidate{
+		{score: 88, result: SearchResult{FilePath: "src/snippets.ts", StartLine: 1, EndLine: 5, SymbolName: "guardDefinition"}},
+		{score: 58, result: SearchResult{FilePath: "src/snippets.ts", StartLine: 20, EndLine: 25, SymbolName: "guardUsageOne"}},
+		{score: 40, result: SearchResult{FilePath: "src/snippets.ts", StartLine: 40, EndLine: 45, SymbolName: "guardUsageTwo"}},
+		{score: 10, result: SearchResult{FilePath: "src/unrelated.ts", StartLine: 1, EndLine: 5, SymbolName: "fragment"}},
+	}
+	selected := selectDiverseCandidates(candidates, 4, 3)
+	if len(selected) != 4 {
+		t.Fatalf("selected %d candidates, want 4", len(selected))
+	}
+	for index, want := range []string{"guardDefinition", "guardUsageOne", "guardUsageTwo"} {
+		if selected[index].result.SymbolName != want {
+			t.Fatalf("rank %d = %q, want %q: %#v", index+1, selected[index].result.SymbolName, want, selected)
+		}
+	}
+}
+
 func TestSearchPathPriorPrefersProductCodeUnlessWorkflowRequested(t *testing.T) {
 	issue := buildSearchQuery("render account profile")
 	if source, workflow := searchPathPrior(issue, "src/profile/render.go"), searchPathPrior(issue, ".github/workflows/release.yml"); source <= workflow {
