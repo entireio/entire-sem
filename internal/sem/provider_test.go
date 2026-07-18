@@ -1210,6 +1210,35 @@ func TestPythonDottedImportedCallsAllowSingleSelectorAlias(t *testing.T) {
 	}
 }
 
+func TestPythonBareCallScannerIgnoresHashCommentsAndDocstrings(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "src/types.py", `class Path:
+    pass
+
+def real_call():
+    return 1
+`)
+	writeFile(t, repo, "src/consumer.py", `from .types import Path
+from .types import real_call
+
+def open_stream():
+    # Path("-") is documentation, not a constructor call.
+    """Likewise, neither Path("doc") nor real_call() executes here."""
+    return real_call()
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasRelationBySymbolNameAndFile(snapshot, "CONSTRUCTS", "open_stream", "src/consumer.py", "Path", "src/types.py") {
+		t.Fatalf("Python comment/docstring fabricated Path construction: %#v", relationsOfType(snapshot.Relations, "CONSTRUCTS"))
+	}
+	if !hasRelationBySymbolNameAndFile(snapshot, "CALLS", "open_stream", "src/consumer.py", "real_call", "src/types.py") {
+		t.Fatalf("real Python call was lost while masking comments/docstrings: %#v", relationsOfType(snapshot.Relations, "CALLS"))
+	}
+}
+
 func TestPythonDottedImportedModuleCallsResolveToLocalSymbols(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "src/acme_pkg/__init__.py", "")

@@ -12027,6 +12027,15 @@ func matchDelimiter(b []byte, openIdx int) int {
 
 func callLikeIdentifiers(content, language string) map[string]struct{} {
 	stripped := stripCodeLiteralsAndComments(content)
+	if language == "Python" {
+		// Python uses # line comments and triple-quoted strings. The generic
+		// C-family masker intentionally does not consume either, which allowed
+		// examples in comments and docstrings (for example `Path("-")`) to
+		// become real CALLS/CONSTRUCTS edges when a same-named repository symbol
+		// happened to exist. Reuse the Python-aware, length-preserving masker
+		// before scanning bare call expressions.
+		stripped = stripPythonLiteralsAndComments(content)
+	}
 	identifiers := map[string]struct{}{}
 	call := regexp.MustCompile(`\b([A-Za-z_$][A-Za-z0-9_$]*)\s*(?:<[^>\n;{}()]*>)?\(`)
 	for _, match := range call.FindAllStringSubmatchIndex(stripped, -1) {
