@@ -448,13 +448,43 @@ func TestSearchExpandsCompoundIdentifierConsumers(t *testing.T) {
 }
 
 func TestSearchUsageIdentifiersIncludeScreamingSnakeAndUnicode(t *testing.T) {
-	for _, name := range []string{"MAX_RETRY_COUNT", "überCache_Value"} {
+	for _, name := range []string{"MAX_RETRY_COUNT", "überCache_Value", "数据_缓存"} {
 		if !expandableUsageIdentifier(name) {
 			t.Fatalf("compound identifier %q was excluded", name)
 		}
 	}
 	if expandableUsageIdentifier("ordinary") {
 		t.Fatal("plain lowercase word was accepted as a compound identifier")
+	}
+}
+
+func TestSearchUsageExpansionHandlesEmptySeeds(t *testing.T) {
+	got := expandIdentifierUsageCandidates(
+		t.Context(), nil, buildSearchQuery("cache policy"), nil, nil,
+		func(string) (string, bool) { t.Fatal("empty seeds should not read content"); return "", false },
+		nil, SearchOptions{},
+	)
+	if got != nil {
+		t.Fatalf("empty seed expansion = %#v", got)
+	}
+}
+
+func TestCachedContentReaderBoundsLargeFiles(t *testing.T) {
+	calls := map[string]int{}
+	large := strings.Repeat("x", maxSearchContentCacheFileBytes+1)
+	read := cachedContentReader(func(path string) (string, bool) {
+		calls[path]++
+		if path == "large" {
+			return large, true
+		}
+		return "small", true
+	})
+	read("small")
+	read("small")
+	read("large")
+	read("large")
+	if calls["small"] != 1 || calls["large"] != 2 {
+		t.Fatalf("content reader calls = %#v", calls)
 	}
 }
 
@@ -1039,7 +1069,7 @@ func TestGitGrepPreselectionBoundsLargeRepoPatternFanout(t *testing.T) {
 	derived := false
 	query := buildSearchQuery("scheduled automation computer asleep misleading status catchup durable project memory")
 	for _, pattern := range patterns {
-		if query.weights[pattern] < 1 {
+		if weight, exists := query.weights[pattern]; exists && weight > 0 && weight < 1 {
 			derived = true
 		}
 	}

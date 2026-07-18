@@ -38,6 +38,8 @@ const (
 	maxDeepSearchSemanticHead      = 10
 	maxSparseSearchQueryTerms      = 64
 	maxSparseSearchFileBytes       = 2 * 1024 * 1024
+	maxSearchContentCacheBytes     = 32 * 1024 * 1024
+	maxSearchContentCacheFileBytes = 2 * 1024 * 1024
 	searchDiversityRelevanceRatio  = 0.75
 )
 
@@ -136,12 +138,16 @@ func cachedContentReader(read contentReader) contentReader {
 		ok      bool
 	}
 	cache := map[string]entry{}
+	cachedBytes := 0
 	return func(path string) (string, bool) {
 		if cached, exists := cache[path]; exists {
 			return cached.content, cached.ok
 		}
 		content, ok := read(path)
-		cache[path] = entry{content: content, ok: ok}
+		if len(content) <= maxSearchContentCacheFileBytes && cachedBytes+len(content) <= maxSearchContentCacheBytes {
+			cache[path] = entry{content: content, ok: ok}
+			cachedBytes += len(content)
+		}
 		return content, ok
 	}
 }
@@ -916,7 +922,7 @@ func searchGitGrepPreselectionPatterns(q searchQuery) []string {
 	direct := make([]string, 0, 6)
 	derived := make([]string, 0, 1)
 	for _, pattern := range patterns {
-		if q.termSet[pattern] && q.weights[pattern] >= 1 {
+		if q.weights[pattern] >= 1 {
 			direct = append(direct, pattern)
 		} else {
 			derived = append(derived, pattern)
@@ -1451,7 +1457,7 @@ func expandIdentifierUsageCandidates(
 	const maxRawUsagesPerSeed = 64
 	var selectedSeeds []usageSeed
 	seenSymbols := map[string]bool{}
-	if seeds[0].score <= 0 {
+	if len(seeds) == 0 || seeds[0].score <= 0 {
 		return nil
 	}
 	bestScore := seeds[0].score
@@ -1587,13 +1593,17 @@ func expandableUsageIdentifier(name string) bool {
 	if len(name) < 6 {
 		return false
 	}
-	hasLower, hasUpper, hasSeparator := false, false, false
+	hasLetter, hasLower, hasUpper, hasSeparator := false, false, false, false
 	for _, character := range name {
 		switch {
 		case unicode.IsLower(character):
+			hasLetter = true
 			hasLower = true
 		case unicode.IsUpper(character):
+			hasLetter = true
 			hasUpper = true
+		case unicode.IsLetter(character):
+			hasLetter = true
 		case character == '_' || character == '$':
 			hasSeparator = true
 		case unicode.IsDigit(character):
@@ -1601,7 +1611,7 @@ func expandableUsageIdentifier(name string) bool {
 			return false
 		}
 	}
-	return (hasLower && (hasUpper || hasSeparator)) || (hasUpper && hasSeparator)
+	return (hasLower && hasUpper) || (hasLetter && hasSeparator)
 }
 
 func containsIdentifierUsage(line, name string) bool {
@@ -1674,6 +1684,9 @@ func expandSameContainerNeighborCandidates(
 	seen := map[string]bool{}
 	var out []searchCandidate
 	for _, seed := range seeds[:limit] {
+		if ctx.Err() != nil {
+			return nil
+		}
 		if seed.score < 0.35*bestScore || !searchFlowSymbolKind(seed.result.Kind) {
 			continue
 		}
