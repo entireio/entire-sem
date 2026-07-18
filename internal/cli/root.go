@@ -104,7 +104,7 @@ Usage:
   entire graph edges --repo . --format ndjson [--worktree] [--progress] [--ignore-file path] [--include-file path]
   entire graph index --repo . [--profile syntax-only|fast|full] [--cache-dir path] [--format json] [--head] [--ignore-file path] [--include-file path]
   entire graph search --query "issue or concept" --repo . [--format json|ndjson|text|agent] [--top-k 20] [--max-context-bytes 16384] [--head] [--profile syntax-only|fast|full] [--max-indexed-files n|--index-all-files] [--cache-dir path|--no-cache]
-  entire graph neighbors --symbol NAME --repo . [--file path] [--relation CALLS] [--direction both|in|out] [--depth 1|2] [--limit 20] [--format json|text|agent] [--head] [--cache-dir path|--no-cache] [--internal-only] [--exclude-tests]`)
+  entire graph neighbors --symbol NAME --repo . [--file path] [--relation CALLS] [--direction both|in|out] [--depth 1|2] [--limit 20] [--format json|text|agent] [--max-context-bytes 16384] [--head] [--cache-dir path|--no-cache] [--internal-only] [--exclude-tests]`)
 }
 
 func runDoctor(ctx context.Context, opts Options, args []string) error {

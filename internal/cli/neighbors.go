@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,25 +15,29 @@ import (
 	"github.com/entireio/entire-graph/internal/sem"
 )
 
-const defaultNeighborLimit = 20
+const (
+	defaultNeighborLimit        = 20
+	defaultNeighborContextBytes = 16 * 1024
+)
 
 type neighborFlags struct {
-	Repo         string
-	Symbol       string
-	File         string
-	Format       string
-	Profile      string
-	Relation     string
-	Direction    string
-	Depth        int
-	Limit        int
-	Worktree     bool
-	IgnoreFile   []string
-	IncludeFile  []string
-	CacheDir     string
-	DisableCache bool
-	InternalOnly bool
-	ExcludeTests bool
+	Repo            string
+	Symbol          string
+	File            string
+	Format          string
+	Profile         string
+	Relation        string
+	Direction       string
+	Depth           int
+	Limit           int
+	Worktree        bool
+	IgnoreFile      []string
+	IncludeFile     []string
+	CacheDir        string
+	DisableCache    bool
+	InternalOnly    bool
+	ExcludeTests    bool
+	MaxContextBytes int
 }
 
 type neighborEndpoint struct {
@@ -139,7 +144,9 @@ func runNeighbors(ctx context.Context, opts Options, args []string) error {
 		encoder := json.NewEncoder(opts.Stdout)
 		encoder.SetEscapeHTML(false)
 		return encoder.Encode(response)
-	case "agent", "text":
+	case "agent":
+		return writeAgentNeighborsBounded(opts.Stdout, response, flags.MaxContextBytes)
+	case "text":
 		return writeAgentNeighbors(opts.Stdout, response)
 	default:
 		return fmt.Errorf("neighbors --format must be json, text, or agent, got %q", flags.Format)
@@ -150,6 +157,7 @@ func parseNeighborFlags(args []string) (neighborFlags, error) {
 	flags := neighborFlags{
 		Format: "json", Profile: "full", Relation: "CALLS", Direction: "both",
 		Depth: 1, Limit: defaultNeighborLimit, Worktree: true,
+		MaxContextBytes: defaultNeighborContextBytes,
 	}
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
@@ -215,6 +223,12 @@ func parseNeighborFlags(args []string) (neighborFlags, error) {
 				return flags, parseErr
 			}
 			flags.Limit, index = parsed, next
+		case "--max-context-bytes":
+			parsed, next, parseErr := searchPositiveIntFlag(args, index)
+			if parseErr != nil {
+				return flags, parseErr
+			}
+			flags.MaxContextBytes, index = parsed, next
 		case "--head":
 			flags.Worktree = false
 		case "--worktree":
@@ -510,6 +524,21 @@ func appendBoundedNeighborEdge(edges []neighborEdge, candidate neighborEdge, lim
 }
 
 func neighborEdgeLess(left, right neighborEdge) bool {
+	if leftTier, rightTier := neighborEndpointTier(left.Endpoint), neighborEndpointTier(right.Endpoint); leftTier != rightTier {
+		return leftTier < rightTier
+	}
+	if leftResolution, rightResolution := neighborResolutionTier(left.Resolution), neighborResolutionTier(right.Resolution); leftResolution != rightResolution {
+		return leftResolution < rightResolution
+	}
+	if left.Confidence != right.Confidence {
+		return left.Confidence > right.Confidence
+	}
+	if left.Endpoint.FilePath != right.Endpoint.FilePath {
+		return left.Endpoint.FilePath < right.Endpoint.FilePath
+	}
+	if left.Endpoint.StartLine != right.Endpoint.StartLine {
+		return left.Endpoint.StartLine < right.Endpoint.StartLine
+	}
 	leftName := left.Endpoint.QualifiedName
 	if leftName == "" {
 		leftName = left.Endpoint.Name
@@ -520,12 +549,6 @@ func neighborEdgeLess(left, right neighborEdge) bool {
 	}
 	if leftName != rightName {
 		return leftName < rightName
-	}
-	if left.Endpoint.FilePath != right.Endpoint.FilePath {
-		return left.Endpoint.FilePath < right.Endpoint.FilePath
-	}
-	if left.Endpoint.StartLine != right.Endpoint.StartLine {
-		return left.Endpoint.StartLine < right.Endpoint.StartLine
 	}
 	if left.Endpoint.ID != right.Endpoint.ID {
 		return left.Endpoint.ID < right.Endpoint.ID
@@ -542,10 +565,49 @@ func neighborEdgeLess(left, right neighborEdge) bool {
 	if left.Reason != right.Reason {
 		return left.Reason < right.Reason
 	}
-	return left.Confidence > right.Confidence
+	return false
+}
+
+func neighborEndpointTier(endpoint neighborEndpoint) int {
+	if endpoint.External {
+		return 2
+	}
+	if isConventionalTestPath(endpoint.FilePath) {
+		return 1
+	}
+	return 0
+}
+
+func neighborResolutionTier(resolution string) int {
+	switch resolution {
+	case "exact":
+		return 0
+	case "import_resolved":
+		return 1
+	default:
+		return 2
+	}
 }
 
 func writeAgentNeighbors(out io.Writer, response neighborResponse) error {
+	return writeAgentNeighborsFull(out, response)
+}
+
+func writeAgentNeighborsBounded(out io.Writer, response neighborResponse, budget int) error {
+	var full bytes.Buffer
+	if err := writeAgentNeighborsFull(&full, response); err != nil {
+		return err
+	}
+	if budget <= 0 || full.Len() <= budget {
+		_, err := out.Write(full.Bytes())
+		return err
+	}
+	payload := compactAgentNeighbors(response, budget)
+	_, err := out.Write(payload)
+	return err
+}
+
+func writeAgentNeighborsFull(out io.Writer, response neighborResponse) error {
 	cacheState := "miss"
 	if response.IndexCacheHit {
 		cacheState = "hit"
@@ -596,8 +658,109 @@ func writeAgentNeighbors(out io.Writer, response neighborResponse) error {
 	return nil
 }
 
+func compactAgentNeighbors(response neighborResponse, budget int) []byte {
+	if budget <= 0 {
+		return nil
+	}
+	coverageIssue := len(response.Warnings) > 0 || len(response.PartialFailures) > 0 ||
+		(response.Stats.CompletenessLevel != "" && response.Stats.CompletenessLevel != "ok")
+	marker := "!output-truncated"
+	if coverageIssue {
+		marker += "/coverage"
+	}
+	marker += "\n"
+	if len(marker) >= budget {
+		return []byte(marker[:budget])
+	}
+
+	var output bytes.Buffer
+	output.WriteString(marker)
+	appendVariant := func(variants ...string) bool {
+		for _, variant := range variants {
+			if variant == "" {
+				continue
+			}
+			if output.Len()+len(variant) <= budget {
+				output.WriteString(variant)
+				return true
+			}
+		}
+		return false
+	}
+
+	if len(response.Matches) == 0 {
+		appendVariant(
+			fmt.Sprintf("No symbols matched %q; try --file.\n", response.Query),
+			fmt.Sprintf("No match: %s\n", response.Query),
+		)
+	} else if response.DisambiguationRequired {
+		appendVariant(
+			fmt.Sprintf("Ambiguous %q: %d definitions; use --file.\n", response.Query, response.FocusMatchesTotal),
+			fmt.Sprintf("Ambiguous: %d; use --file.\n", response.FocusMatchesTotal),
+		)
+		for _, match := range response.Matches {
+			appendVariant("- " + formatNeighborEndpoint(match.Symbol) + "\n")
+		}
+	} else {
+		focus := response.Matches[0].Symbol
+		appendVariant(
+			"Focus: "+formatNeighborEndpoint(focus)+"\n",
+			fmt.Sprintf("F %s:%d %s\n", focus.FilePath, focus.StartLine, endpointDisplayName(focus)),
+			fmt.Sprintf("F %s:%d\n", focus.FilePath, focus.StartLine),
+		)
+	}
+
+	if coverageIssue {
+		level := response.Stats.CompletenessLevel
+		if level == "" {
+			level = "degraded"
+		}
+		appendVariant(
+			fmt.Sprintf("Coverage: %s %d/%d files W%d F%d\n", level, response.Stats.ParsedFiles, response.Stats.Files, len(response.Warnings), len(response.PartialFailures)),
+			fmt.Sprintf("C:%s %d/%d W%d F%d\n", level, response.Stats.ParsedFiles, response.Stats.Files, len(response.Warnings), len(response.PartialFailures)),
+		)
+		for _, warning := range response.Warnings {
+			appendVariant(fmt.Sprintf("W %s%s\n", warning.Code, agentDiagnosticPath(warning.FilePath)))
+		}
+		for _, failure := range response.PartialFailures {
+			appendVariant(fmt.Sprintf("F %s%s\n", failure.Code, agentDiagnosticPath(failure.FilePath)))
+		}
+	}
+	if response.endpointTruncated {
+		appendVariant("!neighbor-list-truncated; raise --limit\n", "!neighbors-truncated\n")
+	}
+	cacheState := "miss"
+	if response.IndexCacheHit {
+		cacheState = "hit"
+	}
+	appendVariant(fmt.Sprintf("I:%s/%d Q:%d T:%d\n", cacheState, response.IndexLatencyMS, response.QueryLatencyMS, response.TotalLatencyMS))
+
+	if len(response.Matches) > 0 && !response.DisambiguationRequired {
+		match := response.Matches[0]
+		for _, edge := range match.Incoming {
+			appendVariant(compactNeighborEdge("<", edge))
+		}
+		for _, edge := range match.Outgoing {
+			appendVariant(compactNeighborEdge(">", edge))
+		}
+		if len(match.Paths) > 0 {
+			pathCount := len(match.Incoming) * len(match.Outgoing)
+			appendVariant(fmt.Sprintf("Paths: %dx1x%d=%d (endpoints above)\n", len(match.Incoming), len(match.Outgoing), pathCount))
+		}
+	}
+	return output.Bytes()
+}
+
+func compactNeighborEdge(direction string, edge neighborEdge) string {
+	annotation := ""
+	if edge.Resolution != "" {
+		annotation = " [" + edge.Resolution + "]"
+	}
+	return fmt.Sprintf("%s %s%s\n", direction, formatNeighborEndpoint(edge.Endpoint), annotation)
+}
+
 func writeAgentNeighborCompleteness(out io.Writer, response neighborResponse) {
-	if len(response.PartialFailures) == 0 &&
+	if len(response.Warnings) == 0 && len(response.PartialFailures) == 0 &&
 		(response.Stats.CompletenessLevel == "" || response.Stats.CompletenessLevel == "ok") {
 		return
 	}
@@ -606,57 +769,58 @@ func writeAgentNeighborCompleteness(out io.Writer, response neighborResponse) {
 		level = "degraded"
 	}
 	if response.Stats.Files > 0 {
-		fmt.Fprintf(out, "Completeness: %s (%d/%d files parsed; %d partial failure%s)\n",
+		fmt.Fprintf(out, "Completeness: %s (%d/%d files parsed; %d warning%s; %d partial failure%s)\n",
 			level, response.Stats.ParsedFiles, response.Stats.Files,
+			len(response.Warnings), pluralSuffix(len(response.Warnings)),
 			len(response.PartialFailures), pluralSuffix(len(response.PartialFailures)),
 		)
 	} else {
-		fmt.Fprintf(out, "Completeness: %s (%d partial failure%s)\n",
-			level, len(response.PartialFailures), pluralSuffix(len(response.PartialFailures)),
+		fmt.Fprintf(out, "Completeness: %s (%d warning%s; %d partial failure%s)\n",
+			level, len(response.Warnings), pluralSuffix(len(response.Warnings)),
+			len(response.PartialFailures), pluralSuffix(len(response.PartialFailures)),
 		)
 	}
 	const maxAgentFailures = 3
-	visible := len(response.PartialFailures)
-	if visible > maxAgentFailures {
-		visible = maxAgentFailures
-	}
-	for _, failure := range response.PartialFailures[:visible] {
-		if failure.FilePath == "" {
-			fmt.Fprintf(out, "- %s\n", failure.Code)
-			continue
+	warningsVisible, failuresVisible := agentDiagnosticVisibility(
+		len(response.Warnings), len(response.PartialFailures), maxAgentFailures,
+	)
+	for _, warning := range response.Warnings[:warningsVisible] {
+		if warning.FilePath == "" {
+			fmt.Fprintf(out, "- warning %s\n", warning.Code)
+		} else {
+			fmt.Fprintf(out, "- warning %s: %s\n", warning.Code, warning.FilePath)
 		}
-		fmt.Fprintf(out, "- %s: %s\n", failure.Code, failure.FilePath)
 	}
-	if omitted := len(response.PartialFailures) - visible; omitted > 0 {
-		fmt.Fprintf(out, "- ... %d more partial failure%s in JSON output\n", omitted, pluralSuffix(omitted))
+	for _, failure := range response.PartialFailures[:failuresVisible] {
+		if failure.FilePath == "" {
+			fmt.Fprintf(out, "- partial %s\n", failure.Code)
+		} else {
+			fmt.Fprintf(out, "- partial %s: %s\n", failure.Code, failure.FilePath)
+		}
+	}
+	visible := warningsVisible + failuresVisible
+	if omitted := len(response.Warnings) + len(response.PartialFailures) - visible; omitted > 0 {
+		fmt.Fprintf(out, "- ... %d more diagnostic%s in JSON output\n", omitted, pluralSuffix(omitted))
 	}
 }
 
 func writeNeighborPathFamily(out io.Writer, match neighborFocus) {
-	callers := make([]neighborEndpoint, 0, len(match.Incoming))
-	for _, edge := range match.Incoming {
-		callers = append(callers, edge.Endpoint)
-	}
-	callees := make([]neighborEndpoint, 0, len(match.Outgoing))
-	for _, edge := range match.Outgoing {
-		callees = append(callees, edge.Endpoint)
-	}
-	pathCount := len(callers) * len(callees)
+	pathCount := len(match.Incoming) * len(match.Outgoing)
 	fmt.Fprintf(out, "Two-hop path family (%d caller%s × 1 focus × %d callee%s = %d path%s):\n",
-		len(callers), pluralSuffix(len(callers)), len(callees), pluralSuffix(len(callees)), pathCount, pluralSuffix(pathCount))
-	fmt.Fprintf(out, "- %s -> %s -> %s\n",
-		formatNeighborEndpointFamily(callers), endpointDisplayName(match.Symbol), formatNeighborEndpointFamily(callees))
+		len(match.Incoming), pluralSuffix(len(match.Incoming)), len(match.Outgoing), pluralSuffix(len(match.Outgoing)), pathCount, pluralSuffix(pathCount))
+	fmt.Fprintf(out, "- %s -> %s -> %s (locations above)\n",
+		neighborEndpointNames(match.Incoming), endpointDisplayName(match.Symbol), neighborEndpointNames(match.Outgoing))
 }
 
-func formatNeighborEndpointFamily(endpoints []neighborEndpoint) string {
-	if len(endpoints) == 1 {
-		return endpointDisplayName(endpoints[0])
+func neighborEndpointNames(edges []neighborEdge) string {
+	if len(edges) == 1 {
+		return endpointDisplayName(edges[0].Endpoint)
 	}
-	items := make([]string, 0, len(endpoints))
-	for _, endpoint := range endpoints {
-		items = append(items, formatNeighborEndpoint(endpoint))
+	names := make([]string, 0, len(edges))
+	for _, edge := range edges {
+		names = append(names, endpointDisplayName(edge.Endpoint))
 	}
-	return "{" + strings.Join(items, "; ") + "}"
+	return "{" + strings.Join(names, "; ") + "}"
 }
 
 func pluralSuffix(count int) string {

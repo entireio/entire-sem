@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -149,6 +150,59 @@ func TestNeighborsHighDegreeFocusKeepsOnlyDeterministicTopLimit(t *testing.T) {
 	incoming := response.Matches[0].Incoming
 	if len(incoming) != 2 || incoming[0].Endpoint.ID != "caller-a" || incoming[1].Endpoint.ID != "caller-b" {
 		t.Fatalf("bounded deterministic incoming = %#v", incoming)
+	}
+}
+
+func TestNeighborsHighDegreeRankingKeepsProductionCallerAheadOfTwentyTests(t *testing.T) {
+	snapshot := sem.ProviderSnapshot{
+		Symbols: []sem.SymbolRecord{
+			{ID: "focus", Name: "Focus", QualifiedName: "Focus", FilePath: "src/focus.go", StartLine: 1},
+			{ID: "production", Name: "ZuluProduction", QualifiedName: "ZuluProduction", FilePath: "src/production.go", StartLine: 9},
+		},
+		Relations: []sem.RelationRecord{{
+			FromID: "production", ToID: "focus", Type: "CALLS", Resolution: "import_resolved", Confidence: 0.7,
+		}},
+	}
+	for index := 0; index < 20; index++ {
+		id := fmt.Sprintf("test-%02d", index)
+		snapshot.Symbols = append(snapshot.Symbols, sem.SymbolRecord{
+			ID: id, Name: fmt.Sprintf("Alpha%02d", index), QualifiedName: fmt.Sprintf("Alpha%02d", index),
+			FilePath: fmt.Sprintf("tests/caller_%02d_test.go", index), StartLine: 1,
+		})
+		snapshot.Relations = append(snapshot.Relations, sem.RelationRecord{
+			FromID: id, ToID: "focus", Type: "CALLS", Resolution: "exact", Confidence: 1,
+		})
+	}
+
+	response := buildNeighborResponse(snapshot, neighborFlags{
+		Symbol: "Focus", Relation: "CALLS", Direction: "in", Depth: 1, Limit: 1,
+	})
+	if len(response.Matches) != 1 || len(response.Matches[0].Incoming) != 1 ||
+		response.Matches[0].Incoming[0].Endpoint.ID != "production" {
+		t.Fatalf("production caller was crowded out by test callers: %#v", response.Matches)
+	}
+}
+
+func TestNeighborRankingPrefersResolutionConfidenceThenPath(t *testing.T) {
+	edge := func(id, path, resolution string, confidence float64) neighborEdge {
+		return neighborEdge{
+			Endpoint:   neighborEndpoint{ID: id, Name: id, QualifiedName: id, FilePath: path, StartLine: 1},
+			Resolution: resolution, Confidence: confidence,
+		}
+	}
+	edges := []neighborEdge{
+		edge("weak-high", "src/a.go", "name_only", 1),
+		edge("import-low", "src/z.go", "import_resolved", 0.7),
+		edge("exact-low", "src/z.go", "exact", 0.6),
+		edge("exact-high-z", "src/z.go", "exact", 0.9),
+		edge("exact-high-a", "src/a.go", "exact", 0.9),
+	}
+	sortNeighborEdges(edges)
+	want := []string{"exact-high-a", "exact-high-z", "exact-low", "import-low", "weak-high"}
+	for index, id := range want {
+		if edges[index].Endpoint.ID != id {
+			t.Fatalf("rank %d = %q, want %q: %#v", index, edges[index].Endpoint.ID, id, edges)
+		}
 	}
 }
 
@@ -322,13 +376,70 @@ func TestAgentNeighborsCompactsCartesianPathsIntoExactFamily(t *testing.T) {
 		t.Fatalf("agent output omitted auditable cache state:\n%s", text)
 	}
 	if !strings.Contains(text, "2 callers × 1 focus × 2 callees = 4 paths") ||
-		!strings.Contains(text, "{CallerA (a.go:1); CallerB (b.go:2)} -> Focus -> {CalleeA (c.go:3); CalleeB (d.go:4)}") {
+		!strings.Contains(text, "{CallerA; CallerB} -> Focus -> {CalleeA; CalleeB} (locations above)") {
 		t.Fatalf("agent output omitted exact compact path family:\n%s", text)
 	}
-	if strings.Count(text, " -> ") != 2 {
-		t.Fatalf("agent output enumerated Cartesian paths instead of one family:\n%s", text)
+	for _, endpoint := range []string{"CallerA (a.go:1)", "CallerB (b.go:2)", "CalleeA (c.go:3)", "CalleeB (d.go:4)"} {
+		if strings.Count(text, endpoint) != 1 {
+			t.Fatalf("agent output repeated depth-2 endpoint %q:\n%s", endpoint, text)
+		}
 	}
 	if strings.Contains(text, "truncated") {
 		t.Fatalf("agent output treated JSON-only path expansion as truncated:\n%s", text)
+	}
+}
+
+func TestAgentNeighborsExactByteCapPreservesCoverageAndTruncationMarkers(t *testing.T) {
+	response := neighborResponse{
+		Query:           "Focus",
+		Stats:           sem.ProviderStats{Files: 5, ParsedFiles: 4, CompletenessLevel: "degraded"},
+		Warnings:        []sem.ProviderWarning{{Code: "W_DIRTY", FilePath: "src/focus.go"}},
+		PartialFailures: []sem.PartialFailure{{Code: "E_PARSE_ERROR", FilePath: "broken.go"}},
+		Matches: []neighborFocus{{
+			Symbol: neighborEndpoint{ID: "focus", Name: "Focus", FilePath: "src/focus.go", StartLine: 10},
+		}},
+	}
+	for index := 0; index < 20; index++ {
+		response.Matches[0].Incoming = append(response.Matches[0].Incoming, neighborEdge{
+			Direction: "in", Relation: "CALLS", Resolution: "exact",
+			Endpoint: neighborEndpoint{ID: fmt.Sprintf("caller-%d", index), Name: fmt.Sprintf("Caller%d", index), FilePath: fmt.Sprintf("src/caller_%d.go", index), StartLine: index + 1},
+		})
+	}
+
+	const capBytes = 180
+	var out bytes.Buffer
+	if err := writeAgentNeighborsBounded(&out, response, capBytes); err != nil {
+		t.Fatal(err)
+	}
+	if out.Len() > capBytes {
+		t.Fatalf("agent output used %d bytes, cap %d:\n%s", out.Len(), capBytes, out.String())
+	}
+	for _, want := range []string{"!output-truncated/coverage", "Focus: Focus (src/focus.go:10)", "Coverage: degraded", "W W_DIRTY", "F E_PARSE_ERROR"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("bounded agent output omitted %q:\n%s", want, out.String())
+		}
+	}
+	for _, tinyCap := range []int{1, 8, 20} {
+		var tiny bytes.Buffer
+		if err := writeAgentNeighborsBounded(&tiny, response, tinyCap); err != nil {
+			t.Fatal(err)
+		}
+		if tiny.Len() > tinyCap || !strings.HasPrefix(tiny.String(), "!") {
+			t.Fatalf("tiny output failed exact cap/marker at %d bytes: %q", tinyCap, tiny.String())
+		}
+	}
+}
+
+func TestNeighborMaxContextBytesMustBePositive(t *testing.T) {
+	_, err := parseNeighborFlags([]string{"--symbol", "Focus", "--max-context-bytes", "0"})
+	if err == nil || !strings.Contains(err.Error(), "must be positive") {
+		t.Fatalf("zero max context bytes error = %v", err)
+	}
+	flags, err := parseNeighborFlags([]string{"--symbol", "Focus"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if flags.MaxContextBytes != defaultNeighborContextBytes {
+		t.Fatalf("default max context bytes = %d, want %d", flags.MaxContextBytes, defaultNeighborContextBytes)
 	}
 }

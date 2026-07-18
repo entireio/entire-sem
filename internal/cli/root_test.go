@@ -396,7 +396,7 @@ func TestSearchCommandAgentFormatKeepsTopLocationUnderTightBudget(t *testing.T) 
 	if out.Len() > 64 {
 		t.Fatalf("tight agent output used %d bytes, budget 64: %q", out.Len(), out.String())
 	}
-	if !strings.Contains(out.String(), "1. a.py:1-2 target") {
+	if !strings.Contains(out.String(), "a.py:1") || !strings.Contains(out.String(), "target") || !strings.Contains(out.String(), "*") {
 		t.Fatalf("tight telemetry crowded out the top-ranked location: %q", out.String())
 	}
 	if !strings.HasPrefix(out.String(), "I:miss/") {
@@ -415,6 +415,23 @@ func TestAgentSearchBudgetsFavorHigherRanks(t *testing.T) {
 	}
 	if total != 1000 {
 		t.Fatalf("budget total = %d, want 1000: %#v", total, budgets)
+	}
+}
+
+func TestHelpDocumentsNeighborAgentContextCap(t *testing.T) {
+	var out bytes.Buffer
+	printHelp(&out)
+	lineStart := strings.Index(out.String(), "entire graph neighbors")
+	if lineStart < 0 {
+		t.Fatal("help omitted neighbors command")
+	}
+	lineEnd := strings.Index(out.String()[lineStart:], "\n")
+	line := out.String()[lineStart:]
+	if lineEnd >= 0 {
+		line = line[:lineEnd]
+	}
+	if !strings.Contains(line, "--max-context-bytes 16384") {
+		t.Fatalf("neighbors help omitted agent context cap: %q", line)
 	}
 }
 
