@@ -157,9 +157,11 @@ entire graph index --repo . --head --profile full --cache-dir /path/to/cache --f
 use the same repository scope—and therefore the same cache key—as later search
 and neighbor queries. Its JSON response
 binds the artifact to the exact repository root, commit, tree, profile, and
-provider version, and reports `index_cache_hit` plus indexing latency. A
-successful invocation verifies that the compressed cache artifact was written
-durably. Repeat the command to require a cache hit before starting measured or
+provider version, and reports `index_cache_hit` plus indexing latency. It also
+surfaces per-file partial failures and aggregate completeness, so a successful
+cache write cannot be mistaken for complete semantic coverage. A successful
+invocation verifies that the compressed cache artifact was written durably.
+Repeat the command to require a cache hit before starting measured or
 latency-sensitive work.
 
 ```sh
@@ -184,7 +186,7 @@ Behavior and budgets:
 
 - **Working tree by default**, so an agent sees its own dirty edits. Use `--head` for immutable committed-tree semantics.
 - **Bounded output.** Results are budgeted to **16 KiB** of serialized snippets by default, sized to drop straight into a model context window. Tune with `--top-k` and `--max-context-bytes` (`--max-context-bytes 0` for an unbounded diagnostic ranking).
-- **Agent-native output.** `--format agent` starts with an auditable cache hit/miss line, then emits only ranked locations, symbol names, and focused source, preserving more useful code inside the same budget. Use `json` or `ndjson` when a program needs the full result schema and search diagnostics.
+- **Agent-native output.** `--format agent` starts with auditable cache, index, preselection, query, and total latency telemetry, then emits only ranked locations, symbol names, and focused source. When the full header would crowd out a ranked location, tight positive budgets use compact telemetry when it fits; the complete wire output never exceeds the requested bytes. Use `json` or `ndjson` when a program needs the full result schema, completeness, partial failures, and search diagnostics.
 - **Focused regions.** Semantic results span at most 80 lines by default, keeping locations precise while snippets remain independently capped at 40 lines. Override with `--max-region-lines` and `--max-snippet-lines` when broader context is useful.
 - **Cold search** scans files without parsing, then indexes an adaptive pool of 96–256 query-relevant files based on the requested `--top-k`. Shallow searches of up to 20 results retain the 96-file interactive latency bound. Deeper rankings add a corpus-wide sparse pass over eligible files up to 2 MiB, while syntax parsing remains bounded to the adaptive pool; this deliberately spends more time for region recall inside large files. Override the parsing pool with `--max-indexed-files`, or force exhaustive parsing with `--index-all-files`.
 - **Profiles.** The default `syntax-only` profile avoids synchronous whole-repository graph construction; `--profile fast` adds local relation expansion when deeper semantic indexing is worth the cost.
@@ -203,7 +205,10 @@ preserving their `CONSTRUCTS` relation in JSON. `--depth 2` also returns bounded
 caller → focus → callee paths.
 `--relation` selects another relation family, `--direction` limits the side,
 `--internal-only` removes unresolved external endpoints, `--exclude-tests`
-removes conventional test-only neighbors, and `--limit` bounds neighbor lists.
+removes conventional test-only neighbors, and `--limit` bounds both ambiguous
+focus matches and per-focus neighbor lists. JSON reports how many focus matches
+were omitted and carries the underlying index's partial failures and
+completeness breakdown.
 Agent output represents a complete two-hop Cartesian family compactly instead
 of repeating every path. The default full profile favors
 relationship correctness; use `--profile fast` when shallow call resolution is
@@ -368,8 +373,8 @@ For Entire and other local tools that want a stable graph rather than human diff
 
 - `snapshot --format ndjson` emits one header record, then file, external-endpoint, symbol, and relation records.
 - `symbols` / `edges` emit the same header followed by their record type.
-- `search --query ...` emits ranked, qrel-blind source regions as JSON, NDJSON, or text, bounded to 16 KiB by default.
-- `index --head --format json` prepares a complete committed-tree search/neighbor cache and reports exact provenance and cache state.
+- `search --query ...` emits ranked, qrel-blind source regions as JSON, NDJSON, text, or compact agent output, bounded to 16 KiB by default; machine formats include partial failures, completeness, and phase-separated latency telemetry.
+- `index --head --format json` prepares a complete committed-tree search/neighbor cache and reports exact provenance, cache state, partial failures, and completeness.
 - `version`, `doctor`, and `capabilities` describe the provider, environment, and supported features.
 
 Snapshot headers carry the schema version, provider version, repository key, `HEAD` commit and tree when available, parsed languages, capability labels, warnings, partial failures, and aggregate completeness stats. File records include stable file IDs so `DEFINES` endpoints resolve. Symbol records include stable compound IDs, `stable_id_version`, kind, qualified name, source range, signature, body hash, language, and container ID when nested. External-endpoint records describe relation targets such as imported modules, routes, and tool handlers.

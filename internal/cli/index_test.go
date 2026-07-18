@@ -135,3 +135,38 @@ func TestIndexRequiresDurableCacheAndRejectsWorktree(t *testing.T) {
 		t.Fatal("expected --worktree to fail")
 	}
 }
+
+func TestIndexReportsPartialFailuresAndCompleteness(t *testing.T) {
+	repo := t.TempDir()
+	git(t, repo, "init")
+	git(t, repo, "config", "user.name", "Entire Graph Test")
+	git(t, repo, "config", "user.email", "graph@example.com")
+	write(t, repo, "supported.py", "def validate_token(token):\n    return bool(token)\n")
+	write(t, repo, "unsupported.f90", "subroutine unsupported\nend subroutine unsupported\n")
+	git(t, repo, "add", ".")
+	git(t, repo, "commit", "-m", "initial")
+
+	var output bytes.Buffer
+	if err := Run(t.Context(), Options{
+		Version: "test-version",
+		Env:     EntireEnv{RepoRoot: repo, PluginDataDir: t.TempDir()},
+		Stdout:  &output,
+	}, []string{"index", "--repo", repo, "--format", "json"}); err != nil {
+		t.Fatal(err)
+	}
+	var response indexResponse
+	if err := json.Unmarshal(output.Bytes(), &response); err != nil {
+		t.Fatalf("decode index response %q: %v", output.String(), err)
+	}
+	if len(response.PartialFailures) != 1 ||
+		response.PartialFailures[0].Code != "E_UNSUPPORTED_LANGUAGE" ||
+		response.PartialFailures[0].FilePath != "unsupported.f90" {
+		t.Fatalf("partial failures = %#v", response.PartialFailures)
+	}
+	if response.Counts.PartialFailures != len(response.PartialFailures) || response.Counts.CompletenessLevel == "ok" {
+		t.Fatalf("counts do not expose incomplete index: %#v", response.Counts)
+	}
+	if response.Completeness.Languages["Python"].Files != 1 {
+		t.Fatalf("completeness = %#v", response.Completeness)
+	}
+}

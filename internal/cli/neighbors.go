@@ -69,19 +69,26 @@ type neighborFocus struct {
 }
 
 type neighborResponse struct {
-	FormatVersion  int                   `json:"format_version"`
-	RepoRoot       string                `json:"repo_root"`
-	Commit         string                `json:"commit,omitempty"`
-	Tree           string                `json:"tree,omitempty"`
-	Profile        string                `json:"profile"`
-	Relation       string                `json:"relation"`
-	Query          string                `json:"query"`
-	File           string                `json:"file,omitempty"`
-	IndexCacheHit  bool                  `json:"index_cache_hit"`
-	IndexLatencyMS int64                 `json:"index_latency_ms"`
-	Truncated      bool                  `json:"truncated"`
-	Matches        []neighborFocus       `json:"matches"`
-	Warnings       []sem.ProviderWarning `json:"warnings,omitempty"`
+	FormatVersion         int                    `json:"format_version"`
+	RepoRoot              string                 `json:"repo_root"`
+	Commit                string                 `json:"commit,omitempty"`
+	Tree                  string                 `json:"tree,omitempty"`
+	Profile               string                 `json:"profile"`
+	Relation              string                 `json:"relation"`
+	Query                 string                 `json:"query"`
+	File                  string                 `json:"file,omitempty"`
+	IndexCacheHit         bool                   `json:"index_cache_hit"`
+	IndexLatencyMS        int64                  `json:"index_latency_ms"`
+	QueryLatencyMS        int64                  `json:"query_latency_ms"`
+	TotalLatencyMS        int64                  `json:"total_latency_ms"`
+	Truncated             bool                   `json:"truncated"`
+	FocusMatchesTotal     int                    `json:"focus_matches_total"`
+	FocusMatchesTruncated bool                   `json:"focus_matches_truncated"`
+	Matches               []neighborFocus        `json:"matches"`
+	Warnings              []sem.ProviderWarning  `json:"warnings,omitempty"`
+	PartialFailures       []sem.PartialFailure   `json:"partial_failures"`
+	Stats                 sem.ProviderStats      `json:"stats"`
+	Completeness          sem.CompletenessReport `json:"completeness"`
 
 	// endpointTruncated distinguishes a bounded neighbor list from the JSON-only
 	// explicit path expansion. Agent output can express the full Cartesian path
@@ -106,7 +113,8 @@ func runNeighbors(ctx context.Context, opts Options, args []string) error {
 	if cacheDir == "" {
 		cacheDir = opts.Env.PluginDataDir
 	}
-	indexStarted := time.Now()
+	totalStarted := time.Now()
+	indexStarted := totalStarted
 	snapshot, cacheHit, err := sem.LoadOrBuildProviderSnapshot(ctx, repo, opts.Version, sem.ProviderSnapshotOptions{
 		NoNetwork:    true,
 		Worktree:     flags.Worktree,
@@ -117,9 +125,14 @@ func runNeighbors(ctx context.Context, opts Options, args []string) error {
 	if err != nil {
 		return err
 	}
+	indexLatency := time.Since(indexStarted)
+	queryStarted := time.Now()
 	response := buildNeighborResponse(snapshot, flags)
+	queryLatency := time.Since(queryStarted)
 	response.IndexCacheHit = cacheHit
-	response.IndexLatencyMS = time.Since(indexStarted).Milliseconds()
+	response.IndexLatencyMS = indexLatency.Milliseconds()
+	response.QueryLatencyMS = queryLatency.Milliseconds()
+	response.TotalLatencyMS = time.Since(totalStarted).Milliseconds()
 	switch flags.Format {
 	case "json":
 		encoder := json.NewEncoder(opts.Stdout)
@@ -279,42 +292,73 @@ func buildNeighborResponse(snapshot sem.ProviderSnapshot, flags neighborFlags) n
 		}
 		return focuses[left].ID < focuses[right].ID
 	})
+	focusMatchesTotal := len(focuses)
+	focusMatchesTruncated := focusMatchesTotal > flags.Limit
+	if focusMatchesTruncated {
+		focuses = focuses[:flags.Limit]
+	}
+	partialFailures := snapshot.Header.PartialFailures
+	if partialFailures == nil {
+		partialFailures = []sem.PartialFailure{}
+	}
 	response := neighborResponse{
-		FormatVersion: 1,
-		RepoRoot:      snapshot.Header.RepoRoot,
-		Commit:        snapshot.Header.Commit,
-		Tree:          snapshot.Header.Tree,
-		Profile:       snapshot.Header.Profile,
-		Relation:      flags.Relation,
-		Query:         flags.Symbol,
-		File:          flags.File,
-		Matches:       make([]neighborFocus, 0, len(focuses)),
-		Warnings:      snapshot.Header.Warnings,
+		FormatVersion:         1,
+		RepoRoot:              snapshot.Header.RepoRoot,
+		Commit:                snapshot.Header.Commit,
+		Tree:                  snapshot.Header.Tree,
+		Profile:               snapshot.Header.Profile,
+		Relation:              flags.Relation,
+		Query:                 flags.Symbol,
+		File:                  flags.File,
+		Truncated:             focusMatchesTruncated,
+		FocusMatchesTotal:     focusMatchesTotal,
+		FocusMatchesTruncated: focusMatchesTruncated,
+		Matches:               make([]neighborFocus, 0, len(focuses)),
+		Warnings:              snapshot.Header.Warnings,
+		PartialFailures:       partialFailures,
+		Stats:                 snapshot.Header.Stats,
+		Completeness:          snapshot.Header.Completeness,
+	}
+
+	// Index the requested adjacency once. Ambiguous symbols can have many focus
+	// definitions, and rescanning every provider relation for every definition
+	// makes a bounded --limit query do unbounded repeated work.
+	focusIDs := make(map[string]bool, len(focuses))
+	for _, focus := range focuses {
+		focusIDs[focus.ID] = true
+	}
+	incomingByFocus := make(map[string][]neighborEdge, len(focuses))
+	outgoingByFocus := make(map[string][]neighborEdge, len(focuses))
+	for _, relation := range snapshot.Relations {
+		if !neighborRelationMatches(flags.Relation, relation.Type) {
+			continue
+		}
+		if flags.Direction != "out" && focusIDs[relation.ToID] {
+			if endpoint, ok := endpoints[relation.FromID]; ok && neighborEndpointAllowed(endpoint, flags) {
+				incomingByFocus[relation.ToID] = append(
+					incomingByFocus[relation.ToID], edgeForRelation("in", endpoint, relation),
+				)
+			}
+		}
+		if flags.Direction != "in" && focusIDs[relation.FromID] {
+			if endpoint, ok := endpoints[relation.ToID]; ok && neighborEndpointAllowed(endpoint, flags) {
+				outgoingByFocus[relation.FromID] = append(
+					outgoingByFocus[relation.FromID], edgeForRelation("out", endpoint, relation),
+				)
+			}
+		}
 	}
 	for _, focus := range focuses {
 		entry := neighborFocus{
 			Symbol:   endpointForSymbol(focus),
-			Incoming: []neighborEdge{},
-			Outgoing: []neighborEdge{},
+			Incoming: incomingByFocus[focus.ID],
+			Outgoing: outgoingByFocus[focus.ID],
 		}
-		for _, relation := range snapshot.Relations {
-			if !neighborRelationMatches(flags.Relation, relation.Type) {
-				continue
-			}
-			if relation.ToID == focus.ID && flags.Direction != "out" {
-				if endpoint, ok := endpoints[relation.FromID]; ok {
-					if neighborEndpointAllowed(endpoint, flags) {
-						entry.Incoming = append(entry.Incoming, edgeForRelation("in", endpoint, relation))
-					}
-				}
-			}
-			if relation.FromID == focus.ID && flags.Direction != "in" {
-				if endpoint, ok := endpoints[relation.ToID]; ok {
-					if neighborEndpointAllowed(endpoint, flags) {
-						entry.Outgoing = append(entry.Outgoing, edgeForRelation("out", endpoint, relation))
-					}
-				}
-			}
+		if entry.Incoming == nil {
+			entry.Incoming = []neighborEdge{}
+		}
+		if entry.Outgoing == nil {
+			entry.Outgoing = []neighborEdge{}
 		}
 		sortNeighborEdges(entry.Incoming)
 		sortNeighborEdges(entry.Outgoing)
@@ -329,11 +373,12 @@ func buildNeighborResponse(snapshot sem.ProviderSnapshot, flags neighborFlags) n
 			response.endpointTruncated = true
 		}
 		if flags.Depth == 2 && flags.Direction == "both" {
+		paths:
 			for _, incoming := range entry.Incoming {
 				for _, outgoing := range entry.Outgoing {
 					if len(entry.Paths) >= flags.Limit {
 						response.Truncated = true
-						break
+						break paths
 					}
 					entry.Paths = append(entry.Paths, neighborPath{
 						Caller: incoming.Endpoint,
@@ -452,10 +497,19 @@ func writeAgentNeighbors(out io.Writer, response neighborResponse) error {
 	if response.IndexCacheHit {
 		cacheState = "hit"
 	}
-	fmt.Fprintf(out, "Index: cache-%s (%dms)\n", cacheState, response.IndexLatencyMS)
+	fmt.Fprintf(out, "Index: cache-%s (%dms) | Query: %dms | Total: %dms\n",
+		cacheState, response.IndexLatencyMS, response.QueryLatencyMS, response.TotalLatencyMS,
+	)
+	writeAgentNeighborCompleteness(out, response)
 	if len(response.Matches) == 0 {
 		_, err := fmt.Fprintf(out, "No symbols matched %q. Add --file to disambiguate a known definition.\n", response.Query)
 		return err
+	}
+	if response.FocusMatchesTruncated {
+		fmt.Fprintf(out,
+			"Focus matches truncated: showing the first %d of %d in file/line order; use --file to select a definition.\n",
+			len(response.Matches), response.FocusMatchesTotal,
+		)
 	}
 	for index, match := range response.Matches {
 		if index > 0 {
@@ -472,6 +526,42 @@ func writeAgentNeighbors(out io.Writer, response neighborResponse) error {
 		fmt.Fprintln(out, "Neighbor lists truncated; increase --limit for more callers or callees.")
 	}
 	return nil
+}
+
+func writeAgentNeighborCompleteness(out io.Writer, response neighborResponse) {
+	if len(response.PartialFailures) == 0 &&
+		(response.Stats.CompletenessLevel == "" || response.Stats.CompletenessLevel == "ok") {
+		return
+	}
+	level := response.Stats.CompletenessLevel
+	if level == "" {
+		level = "degraded"
+	}
+	if response.Stats.Files > 0 {
+		fmt.Fprintf(out, "Completeness: %s (%d/%d files parsed; %d partial failure%s)\n",
+			level, response.Stats.ParsedFiles, response.Stats.Files,
+			len(response.PartialFailures), pluralSuffix(len(response.PartialFailures)),
+		)
+	} else {
+		fmt.Fprintf(out, "Completeness: %s (%d partial failure%s)\n",
+			level, len(response.PartialFailures), pluralSuffix(len(response.PartialFailures)),
+		)
+	}
+	const maxAgentFailures = 3
+	visible := len(response.PartialFailures)
+	if visible > maxAgentFailures {
+		visible = maxAgentFailures
+	}
+	for _, failure := range response.PartialFailures[:visible] {
+		if failure.FilePath == "" {
+			fmt.Fprintf(out, "- %s\n", failure.Code)
+			continue
+		}
+		fmt.Fprintf(out, "- %s: %s\n", failure.Code, failure.FilePath)
+	}
+	if omitted := len(response.PartialFailures) - visible; omitted > 0 {
+		fmt.Fprintf(out, "- ... %d more partial failure%s in JSON output\n", omitted, pluralSuffix(omitted))
+	}
 }
 
 func writeNeighborPathFamily(out io.Writer, match neighborFocus) {

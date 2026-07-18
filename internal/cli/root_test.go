@@ -249,6 +249,7 @@ func TestSearchCommandReturnsRankedJSON(t *testing.T) {
     """Validate a signed authentication token."""
     return bool(token)
 `)
+	write(t, repo, "unsupported.f90", "subroutine unsupported\nend subroutine unsupported\n")
 
 	var out bytes.Buffer
 	err := Run(t.Context(), Options{Version: "0.1.0", Env: EntireEnv{RepoRoot: repo}, Stdout: &out}, []string{
@@ -259,6 +260,7 @@ func TestSearchCommandReturnsRankedJSON(t *testing.T) {
 		"--profile", "syntax-only",
 		"--worktree",
 		"--top-k", "3",
+		"--index-all-files",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -272,7 +274,19 @@ func TestSearchCommandReturnsRankedJSON(t *testing.T) {
 		Stats struct {
 			ContextBudgetBytes int `json:"context_budget_bytes"`
 			ResultBytes        int `json:"result_bytes"`
+			QueryLatencyMS     int `json:"query_latency_ms"`
+			TotalLatencyMS     int `json:"total_latency_ms"`
+			SearchLatencyMS    int `json:"search_latency_ms"`
 		} `json:"stats"`
+		PartialFailures []struct {
+			Code     string `json:"code"`
+			FilePath string `json:"file_path"`
+		} `json:"partial_failures"`
+		Completeness struct {
+			Languages map[string]struct {
+				Files int `json:"files"`
+			} `json:"languages"`
+		} `json:"completeness"`
 	}
 	if err := json.Unmarshal(out.Bytes(), &response); err != nil {
 		t.Fatalf("invalid search JSON: %v\n%s", err, out.String())
@@ -282,6 +296,15 @@ func TestSearchCommandReturnsRankedJSON(t *testing.T) {
 	}
 	if response.Stats.ContextBudgetBytes != 16*1024 || response.Stats.ResultBytes > response.Stats.ContextBudgetBytes {
 		t.Fatalf("search context budget = %#v", response.Stats)
+	}
+	if response.Stats.SearchLatencyMS != response.Stats.TotalLatencyMS || response.Stats.TotalLatencyMS < response.Stats.QueryLatencyMS {
+		t.Fatalf("search telemetry = %#v", response.Stats)
+	}
+	if len(response.PartialFailures) != 1 || response.PartialFailures[0].Code != "E_UNSUPPORTED_LANGUAGE" || response.PartialFailures[0].FilePath != "unsupported.f90" {
+		t.Fatalf("search partial failures = %#v", response.PartialFailures)
+	}
+	if response.Completeness.Languages["Python"].Files != 1 {
+		t.Fatalf("search completeness = %#v", response.Completeness)
 	}
 }
 
@@ -318,6 +341,11 @@ func TestSearchCommandAgentFormatIsCompactAndFocused(t *testing.T) {
 	if strings.Contains(out.String(), `"symbol_id"`) || strings.Contains(out.String(), `"stats"`) {
 		t.Fatalf("agent output retained machine-schema overhead:\n%s", out.String())
 	}
+	for _, want := range []string{"Index: cache-", "Query:", "Preselect:", "Total:"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("agent output omitted %q telemetry:\n%s", want, out.String())
+		}
+	}
 }
 
 func TestSearchCommandAgentFormatDoesNotTreatHeaderSizedBudgetAsUnbounded(t *testing.T) {
@@ -343,8 +371,36 @@ func TestSearchCommandAgentFormatDoesNotTreatHeaderSizedBudgetAsUnbounded(t *tes
 	if !strings.HasPrefix(out.String(), "Index: cache-miss") {
 		t.Fatalf("agent output omitted cache state: %q", out.String())
 	}
-	if strings.Contains(out.String(), "validate_token") || out.Len() > 64 {
+	if strings.Contains(out.String(), "validate_token") || out.Len() > 20 {
 		t.Fatalf("header-sized positive budget became unbounded: %q", out.String())
+	}
+}
+
+func TestSearchCommandAgentFormatKeepsTopLocationUnderTightBudget(t *testing.T) {
+	repo := t.TempDir()
+	write(t, repo, "a.py", "def target():\n    return True\n")
+
+	var out bytes.Buffer
+	err := Run(t.Context(), Options{Version: "0.1.0", Env: EntireEnv{RepoRoot: repo}, Stdout: &out}, []string{
+		"search",
+		"--repo", repo,
+		"--query", "target",
+		"--format", "agent",
+		"--profile", "syntax-only",
+		"--worktree",
+		"--max-context-bytes", "64",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Len() > 64 {
+		t.Fatalf("tight agent output used %d bytes, budget 64: %q", out.Len(), out.String())
+	}
+	if !strings.Contains(out.String(), "1. a.py:1-2 target") {
+		t.Fatalf("tight telemetry crowded out the top-ranked location: %q", out.String())
+	}
+	if !strings.HasPrefix(out.String(), "I:miss/") {
+		t.Fatalf("tight output omitted compact telemetry: %q", out.String())
 	}
 }
 

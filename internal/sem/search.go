@@ -102,19 +102,26 @@ type SearchStats struct {
 	SnippetsTruncated  int   `json:"snippets_truncated_by_budget,omitempty"`
 	IndexCacheHit      bool  `json:"index_cache_hit"`
 	IndexLatencyMS     int64 `json:"index_latency_ms"`
+	QueryLatencyMS     int64 `json:"query_latency_ms"`
+	TotalLatencyMS     int64 `json:"total_latency_ms"`
+	// SearchLatencyMS is retained as the backwards-compatible name for total
+	// retrieval latency. New consumers should use TotalLatencyMS and the
+	// separate preselection, index, and query phases.
 	SearchLatencyMS    int64 `json:"search_latency_ms"`
 	PreselectLatencyMS int64 `json:"preselect_latency_ms"`
 }
 
 type SearchResponse struct {
-	Query    string            `json:"query"`
-	RepoRoot string            `json:"repo_root"`
-	Commit   string            `json:"commit,omitempty"`
-	Tree     string            `json:"tree,omitempty"`
-	Profile  string            `json:"profile"`
-	Results  []SearchResult    `json:"results"`
-	Stats    SearchStats       `json:"stats"`
-	Warnings []ProviderWarning `json:"warnings"`
+	Query           string             `json:"query"`
+	RepoRoot        string             `json:"repo_root"`
+	Commit          string             `json:"commit,omitempty"`
+	Tree            string             `json:"tree,omitempty"`
+	Profile         string             `json:"profile"`
+	Results         []SearchResult     `json:"results"`
+	Stats           SearchStats        `json:"stats"`
+	Warnings        []ProviderWarning  `json:"warnings"`
+	PartialFailures []PartialFailure   `json:"partial_failures"`
+	Completeness    CompletenessReport `json:"completeness"`
 }
 
 type searchQuery struct {
@@ -222,6 +229,7 @@ func SearchRepository(ctx context.Context, repo, providerVersion, query string, 
 	preselectLatency := time.Since(preselectStarted)
 	selectedFiles := selection.files
 	if len(selectedFiles) == 0 {
+		totalLatency := time.Since(searchStarted).Milliseconds()
 		return SearchResponse{
 			Query:    query,
 			RepoRoot: selection.repoRoot,
@@ -236,9 +244,15 @@ func SearchRepository(ctx context.Context, repo, providerVersion, query string, 
 				ResultBytes:        serializedSearchResultBytes([]SearchResult{}),
 				ContextBudgetBytes: options.MaxContextBytes,
 				PreselectLatencyMS: preselectLatency.Milliseconds(),
-				SearchLatencyMS:    time.Since(searchStarted).Milliseconds(),
+				TotalLatencyMS:     totalLatency,
+				SearchLatencyMS:    totalLatency,
 			},
-			Warnings: selection.warnings,
+			Warnings:        selection.warnings,
+			PartialFailures: []PartialFailure{},
+			Completeness: CompletenessReport{
+				Languages: map[string]LanguageCompleteness{},
+				Relations: map[string]int{},
+			},
 		}, nil
 	}
 
@@ -263,6 +277,7 @@ func SearchRepository(ctx context.Context, repo, providerVersion, query string, 
 		return SearchResponse{}, err
 	}
 	indexLatency := time.Since(indexStarted)
+	queryStarted := time.Now()
 	useHead := !options.Worktree && snapshot.Header.Commit != ""
 	_, read, _, closeSource, err := openSource(ctx, repo, useHead, options.IgnoreFiles, options.IncludeFiles)
 	if err != nil {
@@ -437,19 +452,27 @@ func SearchRepository(ctx context.Context, repo, providerVersion, query string, 
 	stats.ContextBudgetBytes = options.MaxContextBytes
 	stats.ResultsDropped = dropped
 	stats.SnippetsTruncated = truncated
-	stats.SearchLatencyMS = time.Since(searchStarted).Milliseconds()
+	stats.QueryLatencyMS = time.Since(queryStarted).Milliseconds()
+	stats.TotalLatencyMS = time.Since(searchStarted).Milliseconds()
+	stats.SearchLatencyMS = stats.TotalLatencyMS
 	if results == nil {
 		results = []SearchResult{}
 	}
+	partialFailures := snapshot.Header.PartialFailures
+	if partialFailures == nil {
+		partialFailures = []PartialFailure{}
+	}
 	return SearchResponse{
-		Query:    query,
-		RepoRoot: snapshot.Header.RepoRoot,
-		Commit:   snapshot.Header.Commit,
-		Tree:     snapshot.Header.Tree,
-		Profile:  string(options.Profile),
-		Results:  results,
-		Stats:    stats,
-		Warnings: snapshot.Header.Warnings,
+		Query:           query,
+		RepoRoot:        snapshot.Header.RepoRoot,
+		Commit:          snapshot.Header.Commit,
+		Tree:            snapshot.Header.Tree,
+		Profile:         string(options.Profile),
+		Results:         results,
+		Stats:           stats,
+		Warnings:        snapshot.Header.Warnings,
+		PartialFailures: partialFailures,
+		Completeness:    snapshot.Header.Completeness,
 	}, nil
 }
 

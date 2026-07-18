@@ -21,17 +21,19 @@ type indexFlags struct {
 }
 
 type indexResponse struct {
-	FormatVersion   int                   `json:"format_version"`
-	Provider        string                `json:"provider"`
-	ProviderVersion string                `json:"provider_version"`
-	RepoRoot        string                `json:"repo_root"`
-	Commit          string                `json:"commit"`
-	Tree            string                `json:"tree"`
-	Profile         string                `json:"profile"`
-	IndexCacheHit   bool                  `json:"index_cache_hit"`
-	IndexLatencyMS  int64                 `json:"index_latency_ms"`
-	Counts          sem.ProviderStats     `json:"counts"`
-	Warnings        []sem.ProviderWarning `json:"warnings"`
+	FormatVersion   int                    `json:"format_version"`
+	Provider        string                 `json:"provider"`
+	ProviderVersion string                 `json:"provider_version"`
+	RepoRoot        string                 `json:"repo_root"`
+	Commit          string                 `json:"commit"`
+	Tree            string                 `json:"tree"`
+	Profile         string                 `json:"profile"`
+	IndexCacheHit   bool                   `json:"index_cache_hit"`
+	IndexLatencyMS  int64                  `json:"index_latency_ms"`
+	Counts          sem.ProviderStats      `json:"counts"`
+	Warnings        []sem.ProviderWarning  `json:"warnings"`
+	PartialFailures []sem.PartialFailure   `json:"partial_failures"`
+	Completeness    sem.CompletenessReport `json:"completeness"`
 }
 
 func runIndex(ctx context.Context, opts Options, args []string) error {
@@ -74,6 +76,10 @@ func runIndex(ctx context.Context, opts Options, args []string) error {
 	if warnings == nil {
 		warnings = []sem.ProviderWarning{}
 	}
+	partialFailures := snapshot.Header.PartialFailures
+	if partialFailures == nil {
+		partialFailures = []sem.PartialFailure{}
+	}
 	response := indexResponse{
 		FormatVersion:   1,
 		Provider:        sem.ProviderName,
@@ -86,6 +92,8 @@ func runIndex(ctx context.Context, opts Options, args []string) error {
 		IndexLatencyMS:  time.Since(started).Milliseconds(),
 		Counts:          snapshot.Header.Stats,
 		Warnings:        warnings,
+		PartialFailures: partialFailures,
+		Completeness:    snapshot.Header.Completeness,
 	}
 	encoder := json.NewEncoder(opts.Stdout)
 	encoder.SetEscapeHTML(false)

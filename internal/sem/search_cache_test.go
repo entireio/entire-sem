@@ -323,3 +323,60 @@ func TestPreindexProviderSnapshotReusesTreeAcrossCommitsWithCurrentProvenance(t 
 		)
 	}
 }
+
+func TestSearchSnapshotCacheKeyPreservesIgnoreFileOrder(t *testing.T) {
+	repo := t.TempDir()
+	git(t, repo, "init")
+	git(t, repo, "config", "user.name", "Entire Graph Test")
+	git(t, repo, "config", "user.email", "graph@example.com")
+	write(t, repo, ".ignore-target", "target.go\n")
+	write(t, repo, ".reinclude-target", "!target.go\n")
+	write(t, repo, "target.go", "package target\nfunc Target() bool { return true }\n")
+	write(t, repo, "control.go", "package target\nfunc Control() bool { return true }\n")
+	git(t, repo, "add", ".")
+	git(t, repo, "commit", "-m", "initial")
+
+	cacheDir := t.TempDir()
+	includeTarget := ProviderSnapshotOptions{
+		Profile:     ProfileSyntaxOnly,
+		IgnoreFiles: []string{".ignore-target", ".reinclude-target"},
+	}
+	first, cacheHit, err := LoadOrBuildProviderSnapshot(t.Context(), repo, "test-version", includeTarget, cacheDir, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cacheHit {
+		t.Fatal("first ordered-ignore snapshot unexpectedly hit cache")
+	}
+	if !snapshotHasSymbol(first, "Target") {
+		t.Fatalf("later re-inclusion rule did not restore target: %#v", first.Symbols)
+	}
+
+	ignoreTarget := includeTarget
+	ignoreTarget.IgnoreFiles = []string{".reinclude-target", ".ignore-target"}
+	includeKey, err := searchSnapshotKey(repo, "test-version", first.Header.Tree, includeTarget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ignoreKey, err := searchSnapshotKey(repo, "test-version", first.Header.Tree, ignoreTarget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if includeKey == ignoreKey {
+		t.Fatalf("reversed order-sensitive ignore files produced the same cache key %q", includeKey)
+	}
+
+	second, cacheHit, err := LoadOrBuildProviderSnapshot(t.Context(), repo, "test-version", ignoreTarget, cacheDir, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cacheHit {
+		t.Fatal("reversed ignore-file order reused the incompatible cached snapshot")
+	}
+	if snapshotHasSymbol(second, "Target") {
+		t.Fatalf("later ignore rule did not exclude target: %#v", second.Symbols)
+	}
+	if !snapshotHasSymbol(second, "Control") {
+		t.Fatalf("reversed-rule snapshot lost control symbol: %#v", second.Symbols)
+	}
+}

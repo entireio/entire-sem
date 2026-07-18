@@ -17,7 +17,7 @@ import (
 	"github.com/entireio/entire-graph/internal/gitutil"
 )
 
-const searchSnapshotCacheVersion = "search-snapshot-v2"
+const searchSnapshotCacheVersion = "search-snapshot-v3"
 
 type cachedSearchSnapshot struct {
 	CacheVersion    string           `json:"cache_version"`
@@ -437,9 +437,9 @@ func searchSnapshotKey(absRepo, providerVersion, tree string, options ProviderSn
 	}
 	for groupIndex, group := range [][]string{options.IgnoreFiles, options.IncludeFiles} {
 		writePart(fmt.Sprintf("path-group-%d", groupIndex))
-		paths := append([]string(nil), group...)
-		sort.Strings(paths)
-		for _, path := range paths {
+		// Preserve caller order: ignore matching is last-rule-wins, including
+		// across repeatable ignore/include files within each group.
+		for _, path := range group {
 			resolved := path
 			if !filepath.IsAbs(resolved) {
 				resolved = filepath.Join(absRepo, resolved)

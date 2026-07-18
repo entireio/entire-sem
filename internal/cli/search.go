@@ -110,9 +110,11 @@ func runSearch(ctx context.Context, opts Options, args []string) error {
 			}
 		}
 		return encoder.Encode(map[string]any{
-			"record_type": "search_summary",
-			"stats":       response.Stats,
-			"warnings":    response.Warnings,
+			"record_type":      "search_summary",
+			"stats":            response.Stats,
+			"warnings":         response.Warnings,
+			"partial_failures": response.PartialFailures,
+			"completeness":     response.Completeness,
 		})
 	case "text":
 		for _, result := range response.Results {
@@ -139,27 +141,65 @@ func writeAgentSearch(out interface{ Write([]byte) (int, error) }, results []sem
 	if stats.IndexCacheHit {
 		cacheState = "hit"
 	}
-	header := []byte(fmt.Sprintf("Index: cache-%s (%dms)\n", cacheState, stats.IndexLatencyMS))
-	if _, err := out.Write(header); err != nil {
+	fullHeader := []byte(fmt.Sprintf(
+		"Index: cache-%s (%dms) | Query: %dms | Preselect: %dms | Total: %dms\n",
+		cacheState,
+		stats.IndexLatencyMS,
+		stats.QueryLatencyMS,
+		stats.PreselectLatencyMS,
+		stats.TotalLatencyMS,
+	))
+	if budget <= 0 {
+		payload := fullHeader
+		if len(results) == 0 {
+			payload = append(payload, "No search results.\n"...)
+		} else {
+			payload = append(payload, fitAgentSearchResults(results, 0)...)
+		}
+		_, err := out.Write(payload)
 		return err
 	}
-	if len(results) == 0 {
-		_, err := fmt.Fprintln(out, "No search results.")
-		return err
-	}
-	resultBudget := budget
-	if resultBudget > 0 {
-		resultBudget -= len(header)
-		if resultBudget <= 0 {
-			// A positive caller budget is always bounded. The cache-state header is
-			// intentionally indivisible, so a budget smaller than that header emits
-			// the header alone instead of accidentally switching to the zero-budget
-			// (unbounded diagnostic) behavior below.
-			return nil
+
+	// Preserve retrieval usefulness under tight budgets. The full telemetry
+	// header is preferred, but a compact equivalent leaves room for the
+	// top-ranked location at budgets where the expanded diagnostic otherwise
+	// crowds out every result.
+	compactHeader := []byte(fmt.Sprintf(
+		"I:%s/%d Q:%d P:%d T:%d\n",
+		cacheState,
+		stats.IndexLatencyMS,
+		stats.QueryLatencyMS,
+		stats.PreselectLatencyMS,
+		stats.TotalLatencyMS,
+	))
+	legacyHeader := []byte(fmt.Sprintf("Index: cache-%s (%dms)\n", cacheState, stats.IndexLatencyMS))
+	for _, header := range [][]byte{fullHeader, compactHeader, legacyHeader} {
+		remaining := budget - len(header)
+		if remaining <= 0 {
+			continue
+		}
+		if len(results) == 0 {
+			noResults := []byte("No search results.\n")
+			if len(noResults) <= remaining {
+				_, err := out.Write(append(header, noResults...))
+				return err
+			}
+			continue
+		}
+		formatted := fitAgentSearchResults(results, remaining)
+		if len(formatted) > 0 {
+			_, err := out.Write(append(header, formatted...))
+			return err
 		}
 	}
-	formatted := fitAgentSearchResults(results, resultBudget)
-	_, err := out.Write(formatted)
+
+	// Some positive budgets cannot hold even a single ranked location. Keep the
+	// legacy cache-state prefix, but never exceed the caller's exact byte cap.
+	payload := legacyHeader
+	if len(payload) > budget {
+		payload = payload[:budget]
+	}
+	_, err := out.Write(payload)
 	return err
 }
 

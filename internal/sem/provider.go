@@ -453,6 +453,8 @@ func Capabilities() CapabilityReport {
 			"hybrid_source_search": true,
 			"near_clone_detection": true,
 			"git_cochange_edges":   true,
+			"durable_preindex":     true,
+			"focused_neighbors":    true,
 		},
 		FeaturesRequiringNetworkAccess: map[string]bool{
 			"grammar_download":  false,
