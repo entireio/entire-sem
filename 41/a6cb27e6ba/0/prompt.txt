@@ -1,0 +1,37 @@
+Do it
+
+---
+
+Still terrible. Why did you stop? As long as you can't beat CBM and file tools, you didn't achieve your goal.
+
+---
+
+Why you testing VS Code?
+
+---
+
+Ah, I see. Which agent are you currently using for the benchmark?
+
+---
+
+And are you making sure that Claude Code is not using local memory?
+
+---
+
+Na, the CLAUDE.md is fine. Explain the reason for the Entire Graph failures.
+
+---
+
+So how can you do that? Ideally, with a smoke test first.
+
+---
+
+Say more on step 1
+
+---
+
+Erm, if you review entire-plan again, didn't we say we pick the repos out of existing predefined test sets?
+
+---
+
+Ok, do that then. Keep in mind the other steps.
