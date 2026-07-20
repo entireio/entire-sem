@@ -1,0 +1,26 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "030f3d39319d",
+  "strategy": "manual-commit",
+  "branch": "fix/35-diff-overload-key",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "internal/sem/analyze_test.go"
+  ],
+  "sessions": [
+    {
+      "metadata": "/03/0f3d39319d/0/metadata.json",
+      "transcript": "/03/0f3d39319d/0/full.jsonl",
+      "compact_transcript": "/03/0f3d39319d/0/transcript.jsonl",
+      "content_hash": "/03/0f3d39319d/0/content_hash.txt",
+      "prompt": ""
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 38658,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 1345280,
+    "output_tokens": 4856,
+    "api_call_count": 25
+  }
+}
