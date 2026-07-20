@@ -42,10 +42,37 @@ func AnalyzeGitRange(ctx context.Context, repo, base, head string, paths []strin
 			}
 		}
 
-		beforeEntities, language := parser.Parse(oldPath, before)
-		afterEntities, afterLanguage := parser.Parse(path, after)
+		beforeEntities, language, beforeStatus := parser.ParseWithStatus(oldPath, before)
+		afterEntities, afterLanguage, afterStatus := parser.ParseWithStatus(path, after)
 		if language == "" {
 			language = afterLanguage
+		}
+		// A parse failure on either side degrades the diff. A TOTAL failure
+		// (ParseError with ZERO recovered entities) gives compareEntities no
+		// signal at all and would make it report every entity on that side as
+		// a phantom removed/added, so the delta is skipped and a
+		// machine-readable warning is surfaced instead. A PARTIAL recovery
+		// (ParseError with some entities extracted) keeps the diff — the
+		// recovered changes are real — but is still flagged with a warning,
+		// because symbols missing from the recovered set can surface as
+		// phantom removed/added. A validly-emptied file (ParseError false) is
+		// never suppressed or flagged, so its real removed changes stand.
+		afterParseFailed := afterStatus.ParseError && len(afterEntities) == 0
+		beforeParseFailed := beforeStatus.ParseError && len(beforeEntities) == 0
+		if afterParseFailed || beforeParseFailed {
+			status, warnPath := afterStatus, path
+			if !afterParseFailed {
+				status, warnPath = beforeStatus, oldPath
+			}
+			result.Warnings = append(result.Warnings, parseFailureWarning(warnPath, status, true))
+			continue
+		}
+		if afterStatus.ParseError || beforeStatus.ParseError {
+			status, warnPath := afterStatus, path
+			if !afterStatus.ParseError {
+				status, warnPath = beforeStatus, oldPath
+			}
+			result.Warnings = append(result.Warnings, parseFailureWarning(warnPath, status, false))
 		}
 		if !beforeOK {
 			beforeEntities = nil
@@ -69,7 +96,7 @@ func AnalyzeGitRange(ctx context.Context, repo, base, head string, paths []strin
 		})
 	}
 
-	result.Warnings = reconcileMoves(deltas)
+	result.Warnings = append(result.Warnings, reconcileMoves(deltas)...)
 
 	for _, delta := range deltas {
 		changes := delta.changes
@@ -96,6 +123,36 @@ func AnalyzeGitRange(ctx context.Context, repo, base, head string, paths []strin
 		return Result{}, err
 	}
 	return result, nil
+}
+
+// parseFailureWarning builds the warning emitted when a changed file fails to
+// parse on one side of the diff. It reuses the provider path's machine-readable
+// codes (parseStatus.ParseError → PartialFailure, see provider.go), and both
+// surfaces warn on any ParseError — but the effect wording is diff-specific:
+// the provider always emits its (possibly partial) output, while the diff path
+// suppresses the file's delta entirely on a total failure (suppressed == true)
+// and keeps a possibly-degraded diff on a partial recovery.
+func parseFailureWarning(path string, status ParseStatus, suppressed bool) ProviderWarning {
+	code := status.Code
+	if code == "" {
+		code = "E_PARSE_ERROR"
+	}
+	var effect string
+	switch {
+	case suppressed && code == "E_PARSE_TIMEOUT":
+		effect = "file diff suppressed; changes omitted because parser time budget was exceeded"
+	case suppressed:
+		effect = "file diff suppressed; changes omitted because the file could not be parsed"
+	default:
+		effect = "file parsed with syntax errors on one side; diff kept but may be incomplete or contain phantom changes"
+	}
+	return ProviderWarning{
+		Code:                 code,
+		Severity:             "warning",
+		FilePath:             path,
+		EffectOnCompleteness: effect,
+		Detail:               status.Detail,
+	}
 }
 
 // fileDelta accumulates a file's resolved changes plus the removed/added

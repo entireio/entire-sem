@@ -775,6 +775,106 @@ func TestCompareEntitiesReorderedOverloadsNoChanges(t *testing.T) {
 	}
 }
 
+func TestAnalyzeGitRangeSurfacesParseFailures(t *testing.T) {
+	const validTS = "export function alpha() {\n    return 1\n}\n\nexport function beta() {\n    return 2\n}\n"
+	// Parses to zero entities with ParseStatus.ParseError == true.
+	const brokenTS = "type Broken = <\n\nexport function alpha(){return 1}\nexport function beta(){return 2}\n"
+	// Valid TypeScript with no top-level entities (a genuinely emptied file).
+	const emptiedTS = "// all symbols removed\n"
+
+	changesByType := func(result Result, changeType string) []EntityChange {
+		var out []EntityChange
+		for _, file := range result.Files {
+			for _, change := range file.Changes {
+				if change.Type == changeType {
+					out = append(out, change)
+				}
+			}
+		}
+		return out
+	}
+	parseWarning := func(result Result, path string) *ProviderWarning {
+		for i := range result.Warnings {
+			w := &result.Warnings[i]
+			if w.FilePath == path && (w.Code == "E_PARSE_ERROR" || w.Code == "E_PARSE_TIMEOUT") {
+				return w
+			}
+		}
+		return nil
+	}
+
+	t.Run("head unparseable surfaces warning without phantom removals", func(t *testing.T) {
+		repo, base, head := buildParseFailureRepo(t, "svc.ts", validTS, brokenTS)
+		result, err := AnalyzeGitRange(context.Background(), repo, base, head, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		w := parseWarning(result, "svc.ts")
+		if w == nil {
+			t.Fatalf("expected parse-failure warning for svc.ts, got %#v", result.Warnings)
+		}
+		if w.Code != "E_PARSE_ERROR" || w.Severity != "warning" || w.EffectOnCompleteness == "" {
+			t.Fatalf("unexpected warning shape: %#v", w)
+		}
+		for _, c := range changesByType(result, "removed") {
+			if c.Name == "alpha" || c.Name == "beta" {
+				t.Fatalf("phantom removed change for %q: %#v", c.Name, result.Files)
+			}
+		}
+	})
+
+	t.Run("base unparseable surfaces warning without phantom additions", func(t *testing.T) {
+		repo, base, head := buildParseFailureRepo(t, "svc.ts", brokenTS, validTS)
+		result, err := AnalyzeGitRange(context.Background(), repo, base, head, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if parseWarning(result, "svc.ts") == nil {
+			t.Fatalf("expected parse-failure warning for svc.ts, got %#v", result.Warnings)
+		}
+		for _, c := range changesByType(result, "added") {
+			if c.Name == "alpha" || c.Name == "beta" {
+				t.Fatalf("phantom added change for %q: %#v", c.Name, result.Files)
+			}
+		}
+	})
+
+	t.Run("genuinely emptied file still reports real removals with no warning", func(t *testing.T) {
+		repo, base, head := buildParseFailureRepo(t, "svc.ts", validTS, emptiedTS)
+		result, err := AnalyzeGitRange(context.Background(), repo, base, head, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if w := parseWarning(result, "svc.ts"); w != nil {
+			t.Fatalf("did not expect a parse-failure warning for a validly emptied file: %#v", w)
+		}
+		removed := map[string]bool{}
+		for _, c := range changesByType(result, "removed") {
+			removed[c.Name] = true
+		}
+		if !removed["alpha"] || !removed["beta"] {
+			t.Fatalf("expected real removed changes for alpha and beta, got %#v", result.Files)
+		}
+	})
+}
+
+func buildParseFailureRepo(t *testing.T, file, baseContent, headContent string) (repo, base, head string) {
+	t.Helper()
+	repo = t.TempDir()
+	git(t, repo, "init")
+	git(t, repo, "config", "user.name", "Entire Graph Test")
+	git(t, repo, "config", "user.email", "graph@example.com")
+	write(t, repo, file, baseContent)
+	git(t, repo, "add", ".")
+	git(t, repo, "commit", "-m", "initial")
+	base = rev(t, repo, "HEAD")
+	write(t, repo, file, headContent)
+	git(t, repo, "add", ".")
+	git(t, repo, "commit", "-m", "change")
+	head = rev(t, repo, "HEAD")
+	return repo, base, head
+}
+
 func write(t *testing.T, repo, path, content string) {
 	t.Helper()
 	full := filepath.Join(repo, path)

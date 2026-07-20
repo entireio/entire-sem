@@ -12,7 +12,9 @@ func writeText(out io.Writer, result Result) {
 	fmt.Fprintf(out, "%s %s\n\n", styles.title("Semantic changes"), styles.dim(result.Base+".."+result.Head))
 	if len(result.Files) == 0 {
 		fmt.Fprintln(out, styles.dim("No semantic entity changes detected."))
-		return
+		if len(result.Warnings) > 0 {
+			fmt.Fprintln(out)
+		}
 	}
 
 	for _, file := range result.Files {
@@ -29,6 +31,33 @@ func writeText(out io.Writer, result Result) {
 			fmt.Fprintf(out, "  %s\n", styles.describe(change))
 		}
 		fmt.Fprintln(out)
+	}
+
+	writeTextWarnings(out, styles, result.Warnings)
+}
+
+// writeTextWarnings renders result-level warnings (parse failures, ambiguous
+// moves) so a suppressed or degraded diff is visible in the default text
+// output rather than only in --json. It renders even when there are no file
+// changes, since a suppressed parse failure is exactly the case where the diff
+// would otherwise look empty.
+func writeTextWarnings(out io.Writer, styles textStyles, warnings []ProviderWarning) {
+	if len(warnings) == 0 {
+		return
+	}
+	fmt.Fprintln(out, styles.changed("Warnings"))
+	for _, warning := range warnings {
+		fmt.Fprintf(out, "  %s %s", styles.changed("!"), styles.changed(warning.Code))
+		if warning.FilePath != "" {
+			fmt.Fprintf(out, " %s", styles.file(warning.FilePath))
+		}
+		fmt.Fprintln(out)
+		if warning.EffectOnCompleteness != "" {
+			fmt.Fprintf(out, "    %s\n", styles.dim(warning.EffectOnCompleteness))
+		}
+		if warning.Detail != "" {
+			fmt.Fprintf(out, "    %s\n", styles.dim(warning.Detail))
+		}
 	}
 }
 
