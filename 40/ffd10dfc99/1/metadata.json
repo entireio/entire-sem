@@ -3,21 +3,22 @@
   "checkpoint_id": "40ffd10dfc99",
   "session_id": "fffff083-8032-496a-81ae-244c3c25ea0f",
   "strategy": "manual-commit",
-  "created_at": "2026-07-21T20:10:19.058452Z",
+  "created_at": "2026-07-21T21:00:15.388662Z",
   "branch": "feat/retrieval-followups",
-  "checkpoints_count": 6,
-  "save_step_count": 1,
+  "checkpoints_count": 3,
   "files_touched": [],
   "agent": "Claude Code",
   "model": "claude-fable-5",
-  "turn_id": "c3600b4aa9a0",
-  "compact_transcript_start": 0,
+  "turn_id": "9be571a0b925",
+  "checkpoint_transcript_start": 1656,
+  "transcript_lines_at_start": 1656,
+  "compact_transcript_start": 236,
   "token_usage": {
-    "input_tokens": 339,
-    "cache_creation_tokens": 284639,
-    "cache_read_tokens": 22929610,
-    "output_tokens": 131071,
-    "api_call_count": 171
+    "input_tokens": 0,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 0,
+    "output_tokens": 0,
+    "api_call_count": 0
   },
   "skill_events_version": 1,
   "skill_events": [
@@ -54,7 +55,7 @@
         "signal": "skill_tool_use",
         "confidence": "explicit"
       },
-      "turn_id": "c3600b4aa9a0",
+      "turn_id": "9be571a0b925",
       "transcript_anchor": {
         "unit": "line",
         "start": 21,
@@ -85,7 +86,7 @@
         "signal": "skill_tool_use",
         "confidence": "explicit"
       },
-      "turn_id": "c3600b4aa9a0",
+      "turn_id": "9be571a0b925",
       "transcript_anchor": {
         "unit": "line",
         "start": 1221,
@@ -107,6 +108,6 @@
     }
   ],
   "session_metrics": {
-    "turn_count": 36
+    "turn_count": 39
   }
 }
