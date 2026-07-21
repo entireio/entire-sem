@@ -307,7 +307,7 @@ func ShowFile(ctx context.Context, repo, rev, path string) (string, bool, error)
 		if msg == "" {
 			msg = err.Error()
 		}
-		return "", false, fmt.Errorf("git show %s:%s: %s", rev, path, msg)
+		return "", false, fmt.Errorf("git show %s: %s", objectSpec, msg)
 	}
 	return out, true, nil
 }
@@ -466,12 +466,12 @@ func run(ctx context.Context, dir, name string, args ...string) (string, error) 
 }
 
 // newCmd builds the exec.Cmd used by subprocesses whose diagnostics must be
-// stable. GrepIndexMatches intentionally preserves the caller's locale because
-// git grep uses LC_CTYPE for case folding.
-// It pins the subprocess locale to C (LC_ALL=C overrides LANG and any LC_*;
-// LANG=C is set as a belt-and-braces default) so git's stderr messages are
-// always the English ones our error classification matches — e.g. ShowFile's
-// absent-file detection would otherwise break under a non-English git locale.
+// stable. It pins the subprocess locale to C (LC_ALL=C overrides LANG and any
+// LC_*; LANG=C is set as a belt-and-braces default) so git's stderr messages
+// are always the English ones our error classification matches — e.g.
+// ShowFile's absent-file detection would otherwise break under a non-English
+// git locale. GrepIndexMatches intentionally bypasses this helper and keeps
+// the caller's locale because git grep uses LC_CTYPE for case folding.
 func newCmd(ctx context.Context, dir, name string, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
