@@ -3555,6 +3555,61 @@ function subscribe(bus) {
 	}
 }
 
+func TestNestJSMessagePatternListensOn(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "math.controller.ts", `import { Controller } from '@nestjs/common';
+import { MessagePattern, EventPattern } from '@nestjs/microservices';
+
+@Controller()
+export class MathController {
+  @MessagePattern({ cmd: 'sum' })
+  accumulate(data: number[]): number {
+    return data.reduce((a, b) => a + b, 0);
+  }
+
+  @EventPattern('user_created')
+  handleUserCreated(data: Record<string, unknown>): void {
+    return;
+  }
+}
+`)
+	writeFile(t, repo, "client.ts", `export function fire(client: any) {
+  client.emit('user_created', {});
+}
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	listens := map[string]RelationRecord{}
+	var emits RelationRecord
+	for _, r := range snapshot.Relations {
+		switch r.Type {
+		case "LISTENS_ON":
+			listens[r.ToID] = r
+		case "EMITS":
+			emits = r
+		}
+	}
+
+	sumNode := externalID("channel", "sum")
+	if r, ok := listens[sumNode]; !ok {
+		t.Fatalf("missing LISTENS_ON edge for @MessagePattern cmd 'sum' in %#v", snapshot.Relations)
+	} else if r.Reason != "NestJS @MessagePattern/@EventPattern handler" {
+		t.Fatalf("unexpected reason for message-pattern edge: %q", r.Reason)
+	}
+
+	userNode := externalID("channel", "user_created")
+	if _, ok := listens[userNode]; !ok {
+		t.Fatalf("missing LISTENS_ON edge for @EventPattern 'user_created' in %#v", snapshot.Relations)
+	}
+	if emits.ToID != userNode {
+		t.Fatalf("@EventPattern listener should share a channel node with client.emit: emit=%q listen=%q", emits.ToID, userNode)
+	}
+}
+
 func TestTestsRelationLinksTestToUnit(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "math.go", `package m
