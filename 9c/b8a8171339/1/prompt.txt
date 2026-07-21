@@ -1,0 +1,260 @@
+Review again
+
+---
+
+Fix the nits
+
+---
+
+Ok, let's get it merged then
+
+---
+
+What's still open on entire=graph then?
+
+---
+
+Word
+
+---
+
+You didn't push why?
+
+---
+
+Ok, so ready to merge?
+
+---
+
+<task-notification>
+<task-id>bkmpv5b2w</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-thomi-Projects-entire-graph/fffff083-8032-496a-81ae-244c3c25ea0f/tasks/bkmpv5b2w.output</output-file>
+<status>completed</status>
+<summary>Background command "Wait for checks to register, then watch until done" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+Ok, merge it
+
+---
+
+I am ready
+
+---
+
+"likely obsolete" is not good enough
+
+---
+
+Yes
+
+---
+
+<task-notification>
+<task-id>wgd0b1ugy</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-thomi-Projects-entire-graph/fffff083-8032-496a-81ae-244c3c25ea0f/tasks/wgd0b1ugy.output</output-file>
+<status>completed</status>
+<summary>Dynamic workflow "Proof-grade keep/delete verdict for each divergent local branch vs main" completed</summary>
+<result>[{"branch":"backup-ts-fix","verdict":"SAFE_DELETE","evidence":"Branch tip f72f7629; merge-base with main is 003b9856. Delta is exactly two non-merge commits: 25ecc7e \"Resolve TS abstract-class methods and inherited this/self calls\" and f72f762 \"Resolve static ClassName.method() calls and arrow-function class fields\". No PR exists for this head (gh pr list --head backup-ts-fix --state all returned []), and git cherry marks both commits \"+\" — but that is because the same work landed on main as reapplied commits with identical subjects: 2e58ec5 and e9394ee, both verified ancestors of main via git merge-base --is-ancestor. Proof of content containment: git diff f72f762 e9394ee (branch tip vs main's corresponding commit) removes zero branch content — it contains only main-side additions (an unrelated language_tiers snapshot-header feature, its test, golden-file updates, and a gofmt struct realignment). Every distinctive element of the branch exists in main's current tree, confirmed by git grep on main: superContainerByID, lookupMethodUpChain, firstTypeLikeNamedPreferFile, the abstract_class_declaration case in parser.go (line 4189, with its original comment), functionLikeValue, the signature multi-line collapse (parser.go line 6300), and the reason strings \"inherited from a base type\" and \"static method call resolved to the named type\". The features were subsequently extended in main to C#, Kotlin, Rust, Swift, and Dart (csharp.go, kotlin.go, rust.go, swift.go, dart.go all reference them), i.e. main has evolved past the branch, not diverged from it. The test fixture internal/sem/testdata/fixtures/typescript-oo/shapes.ts is byte-identical between branch tip and main; the golden-file differences vs main are solely from later main-side features (e.g. language_tiers header field).","unique_content":"none"},{"branch":"codex/docs-honor-ignore-lists","verdict":"SAFE_DELETE","evidence":"Branch tip 160fb81df6ac81a8c74461ed7bdf82517a1b22a5, merge-base with main 78d4950. The branch has exactly 2 non-merge commits: 0fd2317 \"Honor ignore files in worktree snapshots\" and 160fb81 \"Add include files for worktree snapshots\" (728 insertions across README.md, docs/semantic_provider_requirements.md, internal/cli/root.go(+test), internal/sem/ignore.go, provider.go, provider_test.go). No PR exists for this head (gh pr list returned []). However, `git cherry main codex/docs-honor-ignore-lists` marks BOTH commits with \"-\" (patch-equivalent in main), and git patch-id --stable proves exact matches: 0fd2317 (patch-id 6c7f6be2...) == main commit a55acac \"Honor ignore files in worktree snapshots\"; 160fb81 (patch-id 11b66210...) == main commit 1849a27 \"Add include files for worktree snapshots\". Both a55acac and 1849a27 are confirmed ancestors of main (git merge-base --is-ancestor). internal/sem/ignore.go exists in main and the feature has since evolved further there (e.g. commits 7c6b3c1, fb999ef touching ignore behavior). The branch was evidently rebased/cherry-picked onto main; its content landed byte-for-byte as patches.","unique_content":"none — both commits are patch-identical (same git patch-id) to main commits a55acac and 1849a27; no file content exists only on this branch"},{"branch":"codex/memory-large-repos","verdict":"SAFE_DELETE","evidence":"Branch tip 08fb1c6b8252f45c57372e30a6143fd13ad79147; merge-base with main is 6f567b81712f77d44438f909f1d64dafd058224c. The branch's 3 commits (0c0f398, 992599d, 08fb1c6; 8 files, +267/-22) were squash-landed into main as commit 4aa8d35189e50f46977466446e4229e0149b1b38 (\"compact syntax-only snapshot memory\"): its parent is exactly the merge-base 6f567b8, and `diff &lt;(git diff 6f567b8 codex/memory-large-repos) &lt;(git show 4aa8d35 --format=)` is byte-for-byte empty (IDENTICAL_PATCH). `git merge-base --is-ancestor 4aa8d35 main` confirms it is in main's history. No PR exists (`gh pr list --head codex/memory-large-repos --state all` returned []), and `git cherry` shows `+` for all three commits only because the squash defeats per-commit patch-id matching — the cumulative content match is exact.","unique_content":"none"},{"branch":"codex/speed-large-repos","verdict":"SAFE_DELETE","evidence":"Merge-base with main is e965a6f; the branch's entire delta is a single non-merge commit 0a8e7161aa10dc68dae953a67494122e8aa0e231 \"speed up large repo snapshots\" (7 files, +333/-31: internal/gitutil/git.go, internal/gitutil/git_test.go, internal/sem/provider.go, internal/sem/parser.go, internal/sem/provider_test.go, docs/benchmarks.md, docs/semantic_provider_requirements.md). No PR exists for this head (gh pr list --head returned []). However, git cherry main codex/speed-large-repos reports \"- 0a8e716\" (patch-equivalent in main), and a patch-id scan proves it: the branch commit's stable patch-id 96e462c4ccfaf3892189f9d53e3263c73248c7f5 exactly matches main commit 6f567b81712f77d44438f909f1d64dafd058224c \"speed up large repo snapshots\", confirmed an ancestor of main via git merge-base --is-ancestor. The identical change therefore landed in main verbatim. Remaining file differences between the branch and main are entirely main being ahead (e.g., internal/sem/provider.go is ~15k lines larger in main from later work like commits 0e071d1, 3b48412, d6e7f65), not branch-only content.","unique_content":"none"},{"branch":"feat/go-pkgvar-imported-type","verdict":"SAFE_DELETE","evidence":"Branch tip 2e2b768 is 1 commit ahead of merge-base 1a019d4 (\"Resolve method calls on package vars of package-qualified types\"; delta: internal/sem/pkgvar_test.go +49, internal/sem/provider.go +114/-17). GitHub shows two PRs for this head ref: PR #14 (head == 2e2b768) CLOSED unmerged, and PR #15 (same title, from fork suhaanthayyil/feat/go-pkgvar-imported-type, head 27d781f) MERGED 2026-06-28 via merge commit d83db6b; git branch --contains confirms 27d781f is in main. git cherry flags 2e2b768 as \"+\" only because 27d781f is a rebase — a textual diff of the two patches shows differences confined to hunk offsets and a pre-existing superContainerByID parameter in the newer base, no substantive divergence. Content verification against current main: (1) git diff 2e2b768 main -- internal/sem/pkgvar_test.go is empty (test file byte-identical); (2) collectPackageVarTypes and resolveQualifiedType function bodies are byte-identical between branch and main; (3) pkgQualVarRe regex present verbatim in main (provider.go:3488), pkgVarTypesByDir wiring at main provider.go:2333-2352 and passed into receiverCallRelations at :2960, the pkgVarTypes[call.Receiver] fallback at :4034, and the reason string \"method call on package var resolved via qualified imported type\" at :4044.","unique_content":"none — the branch's entire delta (pkgvar_test.go and the package-var-of-imported-type resolution in provider.go) landed in main via merged PR #15 (commit 27d781f, a rebased copy of branch commit 2e2b768) and survives verbatim or in evolved-but-superset form in main's current internal/sem/provider.go"},{"branch":"feat/hybrid-lsp-plan","verdict":"KEEP","evidence":"merge-base d3834666, tip 8491875c, main 3b48412e. Delta = 3 non-merge commits (84af3d7, bf844c9, 8491875), all adding/refining docs/hybrid-lsp-resolution-plan.md (+214 lines, only file changed). `gh pr list --head feat/hybrid-lsp-plan --state all` -&gt; [] (no PR ever opened, merged or otherwise). `git cherry main feat/hybrid-lsp-plan` marks all 3 commits '+' (no patch-equivalent in main). `git cat-file -e main:docs/hybrid-lsp-resolution-plan.md` -&gt; path does not exist in main. No superseding equivalent in main: `git grep -i lsp main -- docs/` matches only one incidental line in docs/v2-plan.md (\"Type/LSP-like resolution can become unbounded...\"), no doc covering the hybrid-LSP design, and main's tree contains no internal/sem/lsp package or any lsp-named file, so the plan was neither landed elsewhere nor implemented. `git branch -a --contains 8491875` shows only this branch holds the commits.","unique_content"
+... (truncated 7809 chars, full result in /private/tmp/claude-501/-Users-thomi-Projects-entire-graph/fffff083-8032-496a-81ae-244c3c25ea0f/tasks/wgd0b1ugy.output)</result>
+<diagnostics>Per-agent results: /Users/thomi/.claude/projects/-Users-thomi-Projects-entire-graph/fffff083-8032-496a-81ae-244c3c25ea0f/subagents/workflows/wf_9950af72-360/journal.jsonl — one {"type":"result",...} line per completed agent with its full return value.
+If the result above is empty or unexpected, Read this file BEFORE diagnosing — do not assume agents returned non-empty results.
+To re-run with edited post-processing: Workflow({scriptPath: '/Users/thomi/.claude/projects/-Users-thomi-Projects-entire-graph/fffff083-8032-496a-81ae-244c3c25ea0f/workflows/scripts/branch-obsolescence-audit-wf_9950af72-360.js', resumeFromRunId: 'wf_9950af72-360'}) — agents whose (prompt, opts) are unchanged replay from cache.</diagnostics>
+<usage><agent_count>11</agent_count><agents_done>11</agents_done><agents_error>0</agents_error><agents_skipped>0</agents_skipped><agents_empty_result>0</agents_empty_result><subagent_tokens>274383</subagent_tokens><tool_uses>104</tool_uses><duration_ms>189499</duration_ms></usage>
+</task-notification>
+
+---
+
+Do the 2 real worktrees have any changes in them?
+
+---
+
+Yes
+
+---
+
+What's next then?
+
+---
+
+Push the LSP pair on a remote, no PR needed. Then on #1, how do we validate that this doesn't break anything?
+
+---
+
+Yes
+
+---
+
+<task-notification>
+<task-id>b0joql747</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-thomi-Projects-entire-graph/fffff083-8032-496a-81ae-244c3c25ea0f/tasks/b0joql747.output</output-file>
+<status>completed</status>
+<summary>Background command "Run fast-tier bench for TS/JS/Go on WIP tree" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bp3wz34bw</task-id>
+<tool-use-id>toolu_01ACgthBZsvQ7tqwYvaoF7ip</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-thomi-Projects-entire-graph/fffff083-8032-496a-81ae-244c3c25ea0f/tasks/bp3wz34bw.output</output-file>
+<status>completed</status>
+<summary>Background command "Run same bench from main worktree with shared cache" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+Yes
+
+---
+
+Why do we need a split?
+
+---
+
+Ok, split it
+
+---
+
+Run an adverserial review on the PR
+
+---
+
+Update?
+
+---
+
+<task-notification>
+<task-id>we205ki8s</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-thomi-Projects-entire-graph/fffff083-8032-496a-81ae-244c3c25ea0f/tasks/we205ki8s.output</output-file>
+<status>completed</status>
+<summary>Dynamic workflow "Workflow-backed code review — one finder per correctness angle plus one finder covering all cleanup angles, an independent verifier for every distinct (file, line) location across the pooled candidates, then a ranked, capped findings report." completed</summary>
+<result>{"level":"high","target":"— review PR #45's diff: the four commits on feat/retrieval-followups vs main (proto2 extraction, neighbors symbol-ID support, binding-scope-aware JS/TS call resolution, search cache confinement/tie-breaking). Adversarial emphasis requested by the user: actively try to break the changes, especially scope-resolution edge cases in call_scanners.go/provider.go and cache-key/confinement correctness in search_cache.go.","summary":"High-effort review of the JS/TS namespace-call disambiguation and search-cache changes surfaced 10 distinct issues after merging duplicates. The most serious are empirically confirmed regressions that silently drop real CALLS edges (cross-file namespace merging at provider.go:2787 and the broadened TypeScript receiver guard at provider.go:4270), phantom or missing edges from regex-based scope tracking gaps (nested destructuring, regex-literal brace corruption, loop-head bindings), and a warm-path rewrite in search.go that both bypasses the persisted selective cache (re-running full relation resolution on every preindexed query) and hard-fails on provenance drift where the cold path falls back gracefully. Two CLI-level correctness bugs in neighbors (file-filter suppressing valid ID lookups, inconsistent --max-context-bytes semantics) and a quadratic jsBraceScopeAt scan round out the report.","findings":[{"file":"internal/sem/provider.go","line":2787,"summary":"Namespace-classified JS/TS calls no longer fall back to generic name resolution when resolveJSNamespaceCallTargets finds no same-file match, so calls into a namespace merged across files (a core TS namespace feature) lose their CALLS edge entirely. [same root cause also at: internal/sem/provider.go:1722]","failure_scenario":"Empirically confirmed: with src/a.ts `namespace A { export function run() { A.helper(); } }` and src/b.ts `namespace A { export function helper() {} }`, main emits CALLS run -&gt; helper ('direct call expression matched globally unique symbol name'); the branch emits no CALLS relation for the call. resolveJSNamespaceCallTargets (line 1722) only scans currentFileSymbols and returns nil unless exactly one same-file namespace member matches, and the call site takes the namespace branch instead of resolveCallTargets with no fallback (removed behavior: main added the terminal name to callNames and resolved it workspace-wide). User-visible: search relation expansion and `graph neighbors` report zero callers/callees across merged-namespace boundaries that were previously linked.","category":"correctness","verdict":"CONFIRMED"},{"file":"internal/sem/provider.go","line":4270,"summary":"The TypeScript inherited-method fallback guard was broadened from 'receiver typed with an imported type' to 'receiver has any parameter type annotation', dropping real CALLS edges when the annotation is a generic type parameter or otherwise unresolvable non-imported type.","failure_scenario":"Empirically confirmed by building snapshots on both revisions: for `class Base { helper(): void {} } class Worker extends Base { run&lt;T extends Base&gt;(item: T): void { item.helper(); } }`, main emits CALLS Worker.run -&gt; Base.helper (reason 'TypeScript receiver call matched unique same-file method on caller inheritance chain'); the branch emits no CALLS edge at all because varTypes[\"item\"]=\"T\" now unconditionally skips the fallback (old guard on main line 4172 was `typeName != \"\" &amp;&amp; len(importsByName[typeName]) &gt; 0`). User-visible: `graph neighbors --symbol helper --relation CALLS --direction in` no longer lists Worker.run, so an agent tracing callers of an inherited method misses a real call site.","category":"correctness","verdict":"CONFIRMED"},{"file":"internal/sem/call_scanners.go","line":318,"summary":"jsBraceScopeAt counts braces over stripCodeLiteralsAndComments output, which does not mask JS regex literals, so a `{` inside a regex (e.g. `s.replace(/\\{/g, '')`) permanently corrupts the brace stack and misassigns every subsequent binding scope.","failure_scenario":"A TS/JS file contains `const cleaned = s.replace(/\\{/g, '');` before `function A() {}` merged with `namespace A { export function parse() {} }`. The phantom `{` from the regex shifts jsBraceScopeAt results: jsNamespaceMergesBinding's equality check (binding scope == namespace parent scope) fails, so the merged `function A` binding is registered as a file-wide shadow of name `A`, and every `A.parse()` call in the file is suppressed by jsBindingShadowsAt — the CALLS edge disappears from snapshots, search, and neighbors output. The same miscount can also truncate jsNamespaceScopes' endByte (findMatchingStaticDelimiter closes on the regex brace's pairing), silently dropping namespace membership for symbols declared after the regex.","category":"correctness","verdict":"CONFIRMED"},{"file":"internal/sem/call_scanners.go","line":15,"summary":"jsDestructuredBindingRe ([^{}]*) and jsArrayBindingRe ([^\\[\\]]*) cannot match nested destructuring patterns, so locals bound via nested destructuring are never registered as binding scopes and fail to shadow same-file namespace names. [same root cause also at: internal/sem/call_scanners.go:15, internal/sem/call_scanners.go:15]","failure_scenario":"A TS file declares `namespace Utils { export function helper() {} }` and a function contains `const { config: { Utils } } = pkg; Utils.helper();`. The nested pattern never matches the binding regexes, so `Utils` is not recorded as a lexical binding, jsBindingShadowsAt returns false, and the call is classified as a namespace call and resolved to the same-file namespace's helper — emitting exactly the kind of phantom CALLS edge (wrong caller-&gt;callee in neighbors/search output) this PR claims to eliminate. Flat destructuring is handled; only nested patterns silently fall through.","category":"correctness","verdict":"CONFIRMED"},{"file":"internal/sem/call_scanners.go","line":227,"summary":"Loop-head const/let bindings (for (const X of ...), for (let X in ...)) are assigned the enclosing brace scope by jsBraceScopeAt because the for-parentheses are not braces, so the shadow covers the whole enclosing function (or the whole file at top level) instead of just the loop.","failure_scenario":"A file declares `namespace Ns { export function fn() {} }` and a function contains `for (const Ns of items) { ... }` in one branch plus a genuine `Ns.fn()` call elsewhere in the same function (outside the loop). jsBraceScopeAt at the loop-variable position returns the function's (or file's) brace pair, so the binding shadows the entire function/file and jsNamespaceCallIdentifiersAt drops the real namespace call — a silently missing CALLS edge, so `entire graph neighbors --symbol Ns.fn` omits a true caller. Common in minified bundles where short loop variables collide with namespace names.","category":"correctness","verdict":"CONFIRMED"},{"file":"internal/sem/search.go","line":354,"summary":"The warm path (preindex cache hit + selective query) unconditionally re-derives the selective snapshot via selectiveSearchSnapshotFromFull on every query, never consulting or persisting the per-query selective cache entry that loadOrBuildSearchSnapshot both reads and writes on the cold path. [same root cause also at: internal/sem/search.go:354, internal/sem/search.go:352, internal/sem/search.go:352]","failure_scenario":"With a complete `graph index --profile full` preindex present, every repeated identical `graph search` re-runs full relation resolution (forEachRelation over all selected files, plus FILE_CHANGES_WITH git scans) at query time; before this PR a preindex hit served with no query-time re-resolution, and the cold path persists the derived selective view precisely so repeated queries are instant. Users see warm full-profile searches become consistently slower than the same query without a preindex-then-repeat pattern, contradicting the cache's purpose on large repos.","category":"correctness","verdict":"CONFIRMED"},{"fi
+... (truncated 3726 chars, full result in /private/tmp/claude-501/-Users-thomi-Projects-entire-graph/fffff083-8032-496a-81ae-244c3c25ea0f/tasks/we205ki8s.output)</result>
+<diagnostics>Per-agent results: /Users/thomi/.claude/projects/-Users-thomi-Projects-entire-graph/fffff083-8032-496a-81ae-244c3c25ea0f/subagents/workflows/wf_a09e614c-708/journal.jsonl — one {"type":"result",...} line per completed agent with its full return value.
+If the result above is empty or unexpected, Read this file BEFORE diagnosing — do not assume agents returned non-empty results.
+To re-run with edited post-processing: Workflow({scriptPath: '/Users/thomi/.claude/projects/-Users-thomi-Projects-entire-graph/fffff083-8032-496a-81ae-244c3c25ea0f/workflows/scripts/code-review-wf_a09e614c-708.js', resumeFromRunId: 'wf_a09e614c-708', args: "high — review PR #45's diff: the four commits on feat/retrieval-followups vs main (proto2 extraction, neighbors symbol-ID support, binding-scope-aware JS/TS call resolution, search cache confinement/tie-breaking). Adversarial emphasis requested by the user: actively try to break the changes, especially scope-resolution edge cases in call_scanners.go/provider.go and cache-key/confinement correctness in search_cache.go."}) — agents whose (prompt, opts) are unchanged replay from cache.</diagnostics>
+<usage><agent_count>26</agent_count><agents_done>26</agents_done><agents_error>0</agents_error><agents_skipped>0</agents_skipped><agents_empty_result>0</agents_empty_result><subagent_tokens>1211568</subagent_tokens><tool_uses>346</tool_uses><duration_ms>1043630</duration_ms></usage>
+</task-notification>
+
+---
+
+Yes, fix them all
+
+---
+
+<task-notification>
+<task-id>a69ce696a1535259e</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-thomi-Projects-entire-graph/fffff083-8032-496a-81ae-244c3c25ea0f/tasks/a69ce696a1535259e.output</output-file>
+<status>completed</status>
+<summary>Agent "Fix neighbors CLI findings 8-9" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>Done. Only the two intended files were touched; nothing committed.
+
+**Finding 8 (ID lookup vs --file, `internal/cli/neighbors.go`)**
+- In `buildNeighborResponse`, an exact symbol-ID match no longer applies the `--file` filter at all. Rationale documented in a comment: the stable ID already encodes its defining file, so a stale or differently spelled `--file` must never turn an ID the tool itself printed into a silent empty result. `exactIDFound` still suppresses the name fallback, but the ID match is now always returned.
+- Added `normalizeNeighborFileFilter(raw, repoRoot)` and applied it to the name/qualified-name fallback path: converts backslashes to slashes, trims whitespace, `path.Clean`s away `./` prefixes and redundant separators, strips the repo root (case-insensitively) from absolute paths inside the repo, and treats `""`/`.`/root itself as "no filter". Comparison remains `EqualFold`, matching the prior case-insensitive behavior. No change to `search.go` was needed (`searchNonNegativeIntFlag` already exists there).
+
+**Finding 9 (`--max-context-bytes 0`)**
+- `parseNeighborFlags` now uses `searchNonNegativeIntFlag` (same helper as `graph search`) with a comment that 0 disables the cap. Downstream `writeAgentNeighborsBounded` already treats `budget &lt;= 0` as unbounded (writes the full agent output), so 0 behaves identically to search's unbounded semantics; negative values are still rejected.
+
+**Tests (`internal/cli/neighbors_efficiency_test.go`)**
+- `TestNeighborsExactSymbolIDDisambiguatesSameFileOverloads` — the mismatched-file block previously asserted the buggy empty result; now asserts the ID-matched definition is returned for stale `other.go`, `./service.go`, `sub\service.go`, and an absolute `/somewhere/else/service.go`.
+- `TestNeighborsFileFilterNormalizesPathSpellings` (new) — name lookup with `--file` spelled as `src/one.py`, `./src/one.py`, `src//one.py`, `src\one.py`, and repo-absolute `/repo/root/src/one.py` all select the same single definition.
+- `TestNeighborMaxContextBytesZeroMeansUnbounded` (replaces `TestNeighborMaxContextBytesMustBePositive`) — `0` is accepted and parsed as 0, `-1` is rejected with the "non-negative" error, the default remains 16384, and a zero budget produces byte-identical output to the unbounded writer (no `!output-truncated` marker) for a 50-caller response.
+
+**Verification**: `gofmt -l internal/cli/` clean, `go vet ./internal/cli/` clean, `go test -count=1 ./internal/cli/` → ok (2.674s), all three targeted tests PASS. (Build warnings from the third-party `go-tree-sitter/lua` C sources are pre-existing and unrelated.)</result>
+<usage><subagent_tokens>65921</subagent_tokens><tool_uses>20</tool_uses><duration_ms>205165</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>aa3d70b216564610b</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-thomi-Projects-entire-graph/fffff083-8032-496a-81ae-244c3c25ea0f/tasks/aa3d70b216564610b.output</output-file>
+<status>completed</status>
+<summary>Agent "Fix search warm-path findings 6-7" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>Done. My changes are confined to the sem files (the `internal/cli` modifications in git status are from a concurrent agent; `search_test.go` needed no changes).
+
+## Finding 6 — warm path bypassed the per-query selective cache
+
+- `/Users/thomi/Projects/entire-graph/internal/sem/search_cache.go`: added `loadOrDeriveSelectiveSearchSnapshot(ctx, repo, providerVersion, options, cacheDir, disableCache, full)`. It applies the exact cold-path discipline: check the per-query selective cache entry first (`readSearchSnapshot` + `validCachedSearchSnapshot`), on miss derive via `selectiveSearchSnapshotFromFull` from the in-memory preindexed snapshot and persist best-effort via `writeSearchSnapshot`/`newCachedSearchSnapshot` (same key computation as `loadOrBuildSearchSnapshot`). No logic duplicated beyond the shared helper calls; guard cases (disabled cache, worktree, empty cache dir, no OnlyFiles, HEAD-resolve failure) delegate to `loadOrBuildSearchSnapshot`.
+- `/Users/thomi/Projects/entire-graph/internal/sem/search.go` (warm branch, ~line 352): replaced the unconditional `selectiveSearchSnapshotFromFull` call with `loadOrDeriveSelectiveSearchSnapshot`, updating `cacheHit` from its return so `IndexCacheHit` stays accurate. Repeated identical warm queries now load the persisted selective entry instead of re-running relation resolution + FILE_CHANGES_WITH git scans.
+
+## Finding 7 — warm derivation error aborted the search
+
+- In `loadOrDeriveSelectiveSearchSnapshot`, a `selectiveSearchSnapshotFromFull` error is soft (mirrors the cold-path `deriveErr` fall-through at search_cache.go:136-146): it falls back to `loadOrBuildSearchSnapshot`, which builds fresh at the current HEAD. A stale preindex/provenance mismatch no longer surfaces "cached full snapshot provenance mismatch" from `SearchRepository`.
+
+## Tests (search_cache_test.go)
+
+- `TestWarmSelectiveSearchPersistsAndReusesPerQueryCache` (new): first warm query persists the selective entry at the computed key path; second identical query is a cache hit with identical results and unchanged file ModTime (no re-derive/rewrite); after deleting the full preindex entry (re-derivation impossible), the third query still reports `IndexCacheHit` with identical results, proving reuse of the persisted entry.
+- `TestWarmSelectiveDerivationFailureFallsBackToFreshBuild` (new): loads the preindexed full snapshot, advances HEAD with an empty commit (simulated provenance mismatch — confirmed `selectiveSearchSnapshotFromFull` errors on it), then asserts the warm loader returns nil error, no cache hit, a snapshot at the advanced HEAD, and `reflect.DeepEqual` with an uncached OnlyFiles build.
+- `TestPreindexProviderSnapshotServesSelectiveSearch` (updated): the assertion that warm search must NOT materialize a query-specific cache entry (which enforced the Finding 6 regression) now asserts the entry IS persisted. Its existing warm-vs-uncached result-equality check still passes, preserving the confinement invariant, as does `TestFullPreindexSearchMatchesColdSelectiveGraphExpansion` unchanged.
+
+## Verification
+
+- `gofmt -l` on touched files: clean.
+- `go vet ./internal/sem/`: pass (only a pre-existing C warning from the go-tree-sitter/lua dependency).
+- `go test -count=1 -run 'Search|Cache|Preindex|Selective' ./internal/sem/`: ok (10.6s).
+- Full `go test -count=1 ./internal/sem/`: ok (72.5s).</result>
+<usage><subagent_tokens>90517</subagent_tokens><tool_uses>21</tool_uses><duration_ms>551407</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>a7cc4e36cde1294ac</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-thomi-Projects-entire-graph/fffff083-8032-496a-81ae-244c3c25ea0f/tasks/a7cc4e36cde1294ac.output</output-file>
+<status>completed</status>
+<summary>Agent "Fix scanner findings 1-5,10" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>All six findings fixed. Only my three assigned files were touched (parser.go was not needed); the other modified files in `git status` belong to the concurrent agents.
+
+## Fixes
+
+**Finding 1 — namespace-call fallback** (`internal/sem/provider.go`)
+- `resolveJSNamespaceCallTargets` now returns `([]resolvedCallTarget, bool matched)`: `matched=false` means no same-file member of that namespace exists; ambiguous multi-match returns `(nil, true)` so it still refuses to guess.
+- Both call sites (per-symbol loop ~2790 and top-level loop ~3160) fall back to generic `resolveCallTargets` on the terminal segment when `!matched` (per-symbol site also guards `terminal != from.Name` and `!childNamesByContainer[from.ID][terminal]`). Shadowed receiver roots never enter `jsNamespaceCalls`, so precision is preserved.
+
+**Finding 2 — inherited-method fallback guard** (`internal/sem/provider.go` ~4280)
+- Guard changed from `varTypes[call.Receiver] != ""` to `typeName != "" &amp;&amp; typeScriptReceiverTypeResolvesElsewhere(...)`. New helpers `typeScriptReceiverTypeResolvesElsewhere` (imported type, or same-file type-like symbol outside the caller's chain) and `containerChainContains` (cycle/hop-guarded chain walk, mirroring `lookupMethodUpChain`). Bare generic params (`T`) and unknown names no longer suppress the fallback; the two existing skip-tests (imported / local-interface receiver) still pass.
+
+**Finding 3 — regex-literal masking** (`internal/sem/call_scanners.go`)
+- Added `stripJSScannedSource` = `maskJSRegexLiterals(stripCodeLiteralsAndComments(...))`, length-preserving. `maskJSRegexLiterals` starts a regex only after `( , = : [ ! &amp; | ? ; { } &lt; &gt; + - * % ~ ^`, start-of-content, or prefix keywords (`return`, `typeof`, `case`, …); body scan handles escapes and `[...]` classes; aborts at newline. Applied in `jsNamespaceScopes`, `jsNamespaceCallIdentifiersAt`, `jsFileBindingScopes`, `jsNamespaceBySymbolID`.
+
+**Finding 4 — nested destructuring** (`internal/sem/call_scanners.go`)
+- Replaced the single-level `jsDestructuredBindingRe`/`jsArrayBindingRe` with `jsDestructuringHeadRe` (`\b(const|let|var)\s*([{\[])`) + `findMatchingStaticDelimiter` + `jsAssignmentFollows`. `jsDestructuredNames` is now recursive: strips top-level defaults (`=`), object aliases via top-level `:` (new `jsTopLevelByteIndex` depth-aware scanner), rest `...`, and recurses into nested `{}`/`[]` patterns. Also improves nested destructured *parameters* via `jsParameterNames`.
+
+**Finding 5 — loop-head binding scope** (`internal/sem/call_scanners.go`)
+- New `jsForHeadBindingScope`: for `const`/`let` declared inside a `for (...)`/`for await (...)` head, the binding scope becomes the loop's following brace block; falls back to the enclosing brace scope when no block exists. `var` keeps its function-scope handling (correct JS semantics).
+
+**Finding 10 — quadratic brace scan** (`internal/sem/call_scanners.go`)
+- Removed `jsBraceScopeAt` (O(n) per binding). New `jsBraceScopes` struct built in one pass (`opens`/`closes`/`parents`), with `enclosing(position)` doing binary search + parent walk — O(n) build, O(log n + depth) per lookup, same semantics including unmatched-brace cases. Threaded through `jsFileBindingScopes` and `jsNamespaceMergesBinding`.
+
+## Tests added (internal/sem/typescript_test.go)
+
+- `TestTypeScriptCrossFileNamespaceMergeCallResolves` (finding 1)
+- `TestTypeScriptGenericReceiverKeepsInheritedMethodFallback` (finding 2)
+- `TestTypeScriptRegexLiteralBraceDoesNotCorruptBindingScopes` (finding 3)
+- `TestTypeScriptNestedDestructuringShadowsNamespaceCalls` (finding 4; object + array nesting, plus unshadowed control)
+- `TestTypeScriptLoopHeadBindingShadowConfinedToLoop` (finding 5; post-loop call resolves, in-loop call stays shadowed)
+
+All five verified to FAIL against the pre-fix HEAD (via a throwaway worktree, since removed) and pass with the fixes.
+
+## Verification
+
+- `gofmt -s -w` applied; `gofmt -l internal/sem` reports nothing for the touched files
+- `go vet ./internal/sem/` clean (only cgo warnings from the vendored tree-sitter dependency)
+- `go test -count=1 -run 'TypeScript|Javascript|JS|Namespace|Binding|Scope' ./internal/sem/` → ok
+- Full `go test -count=1 ./internal/sem/` → ok (30.8s), all pre-existing precision tests (shadowed-name suppression, minified-bundle false-positive guards) still pass</result>
+<usage><subagent_tokens>140671</subagent_tokens><tool_uses>50</tool_uses><duration_ms>837654</duration_ms></usage>
+</task-notification>
