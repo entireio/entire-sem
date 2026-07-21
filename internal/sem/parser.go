@@ -414,7 +414,7 @@ func sourceLineAt(src []byte, line int) string {
 var (
 	tsKeywordTypePropertyPattern  = regexp.MustCompile(`^(\s*)in(\??\s*:)`)
 	tsTypeImportPattern           = regexp.MustCompile(`typeof\s+import\(([^)]*)\)`)
-	tsStaticAccessorMethodPattern = regexp.MustCompile(`\bstatic\s+accessor(\s*\()`)
+	tsStaticAccessorMethodPattern = regexp.MustCompile(`(\bstatic\s+accesso)r(\s*\()`)
 )
 
 func maskTypeScriptUnsupportedSyntax(content string) string {
@@ -480,7 +480,12 @@ func maskTypeScriptKeywordTypeProperty(line string) string {
 }
 
 func maskTypeScriptStaticAccessorMethod(line string) string {
-	return tsStaticAccessorMethodPattern.ReplaceAllString(line, "static accessoR${1}")
+	// Flip only the trailing `r` of `accessor` to `R`, reconstructing the
+	// surrounding whitespace from capture groups, so the replacement is
+	// byte-length-preserving: entity offsets are computed against the masked
+	// source but sliced from the original, so any length drift corrupts every
+	// following entity (same constraint as the Java module-import mask).
+	return tsStaticAccessorMethodPattern.ReplaceAllString(line, "${1}R${2}")
 }
 
 // rustItemWrapperMacroHint cheaply detects source that may contain a
@@ -636,7 +641,7 @@ func rustTokenTreeStartsWithIf(src []byte, body *sitter.Node) bool {
 }
 
 var (
-	javaModuleImportPattern      = regexp.MustCompile(`^(\s*import\s+)module\s+`)
+	javaModuleImportPattern      = regexp.MustCompile(`^(\s*import\s+)module(\s+)`)
 	javaVarargsAnnotationPattern = regexp.MustCompile(`@[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*\s*\.\.\.`)
 )
 
@@ -644,7 +649,13 @@ func maskJavaUnsupportedSyntax(content string) string {
 	lines := strings.SplitAfter(content, "\n")
 	for i, line := range lines {
 		text, newline := splitLineEnding(line)
-		text = javaModuleImportPattern.ReplaceAllString(text, "${1}       ")
+		// Blank only the `module` contextual keyword (6 chars -> 6 spaces) and
+		// preserve the trailing whitespace group (${2}) verbatim, so the mask is
+		// length-preserving regardless of how much whitespace follows `module`.
+		// A literal replacement (e.g. 7 spaces) shortened multi-space imports and
+		// shifted every following entity's offsets, corrupting names/signatures/
+		// body-hashes (same bug class as the TS static-accessor mask).
+		text = javaModuleImportPattern.ReplaceAllString(text, "${1}      ${2}")
 		text = javaVarargsAnnotationPattern.ReplaceAllStringFunc(text, func(match string) string {
 			return strings.Repeat(" ", len(match)-3) + "..."
 		})

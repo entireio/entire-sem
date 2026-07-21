@@ -204,6 +204,9 @@ func grepFixedStringMatches(ctx context.Context, repo, treeish string, patterns 
 		args = append(args, treeish)
 	}
 	args = append(args, "--")
+	// Preserve the caller's locale here. Unlike the other git commands in this
+	// package, `git grep -i` uses LC_CTYPE for non-ASCII case folding; forcing
+	// the C locale would make Unicode matches disappear.
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = repo
 	var stdout bytes.Buffer
@@ -388,17 +391,35 @@ func FileCochanges(ctx context.Context, repo, revision string, maxCommits int) (
 }
 
 func ShowFile(ctx context.Context, repo, rev, path string) (string, bool, error) {
-	out, err := run(ctx, repo, "git", "show", rev+":"+path)
+	// Classify against git's stderr only, never the wrapped error that echoes
+	// the argv (which includes rev+":"+path). Matching the full error text made
+	// any real failure on a path containing a marker substring (e.g. "Path" in
+	// src/PathHelper.go) look like a missing file, swallowing the error.
+	// Peel the revision to a tree before resolving the path. Without the type
+	// constraint, a missing full object ID or a blob object can produce the
+	// same path-looking diagnostic as a genuinely absent file.
+	objectSpec := rev + "^{tree}:" + path
+	out, stderr, err := runWithStderr(ctx, repo, "git", "show", objectSpec)
 	if err != nil {
-		if strings.Contains(err.Error(), "exists on disk, but not in") ||
-			strings.Contains(err.Error(), "Path") ||
-			strings.Contains(err.Error(), "does not exist") ||
-			strings.Contains(err.Error(), "not found") {
+		if isMissingPathDiagnostic(stderr) {
 			return "", false, nil
 		}
-		return "", false, err
+		msg := stderr
+		if msg == "" {
+			msg = err.Error()
+		}
+		return "", false, fmt.Errorf("git show %s:%s: %s", rev, path, msg)
 	}
 	return out, true, nil
+}
+
+func isMissingPathDiagnostic(stderr string) bool {
+	// ShowFile runs git under the C locale, so only classify Git's specific
+	// missing-path diagnostics. Broad substring checks can match a bad revision
+	// or an unrelated error merely because an argv value contains the phrase.
+	return strings.HasPrefix(stderr, "fatal: path '") &&
+		(strings.Contains(stderr, "' does not exist in '") ||
+			strings.Contains(stderr, "' exists on disk, but not in '"))
 }
 
 // BatchFileReader reads blobs from one revision through a persistent
@@ -415,8 +436,7 @@ type BatchFileReader struct {
 }
 
 func NewBatchFileReader(ctx context.Context, repo, rev string) (*BatchFileReader, error) {
-	cmd := exec.CommandContext(ctx, "git", "cat-file", "--batch")
-	cmd.Dir = repo
+	cmd := newCmd(ctx, repo, "git", "cat-file", "--batch")
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -535,18 +555,42 @@ func RemoteURLs(ctx context.Context, repo string) ([]string, error) {
 }
 
 func run(ctx context.Context, dir, name string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Dir = dir
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		msg := strings.TrimSpace(stderr.String())
+	stdout, stderr, err := runWithStderr(ctx, dir, name, args...)
+	if err != nil {
+		msg := stderr
 		if msg == "" {
 			msg = err.Error()
 		}
 		return "", fmt.Errorf("%s %s: %s", name, strings.Join(args, " "), msg)
 	}
-	return stdout.String(), nil
+	return stdout, nil
+}
+
+// newCmd builds the exec.Cmd used by subprocesses whose diagnostics must be
+// stable. GrepIndexMatches intentionally preserves the caller's locale because
+// git grep uses LC_CTYPE for case folding.
+// It pins the subprocess locale to C (LC_ALL=C overrides LANG and any LC_*;
+// LANG=C is set as a belt-and-braces default) so git's stderr messages are
+// always the English ones our error classification matches — e.g. ShowFile's
+// absent-file detection would otherwise break under a non-English git locale.
+func newCmd(ctx context.Context, dir, name string, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Dir = dir
+	// Cmd.Environ observes Dir and updates PWD accordingly. Starting from
+	// os.Environ would leave child processes with the parent's stale PWD.
+	cmd.Env = append(cmd.Environ(), "LC_ALL=C", "LANG=C")
+	return cmd
+}
+
+// runWithStderr runs a command and returns its stdout and trimmed stderr
+// separately, so callers can classify failures against git's own message
+// without the wrapped error text (which echoes the argv, including paths).
+func runWithStderr(ctx context.Context, dir, name string, args ...string) (string, string, error) {
+	cmd := newCmd(ctx, dir, name, args...)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	return stdout.String(), strings.TrimSpace(stderr.String()), err
 }

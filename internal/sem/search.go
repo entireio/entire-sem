@@ -1722,6 +1722,16 @@ func expandGraphCandidates(seeds []searchCandidate, q searchQuery, relations []R
 	if len(seeds) == 0 || len(relations) == 0 {
 		return nil
 	}
+	// SearchRepository normalizes options before calling here, but direct
+	// callers (e.g. tests) may pass hand-built options. Mirror that
+	// normalization so a non-positive limit cannot shrink end below start
+	// and panic on the snippet slice below.
+	if options.MaxRegionLines <= 0 {
+		options.MaxRegionLines = defaultSearchMaxRegionLines
+	}
+	if options.MaxSnippetLines <= 0 {
+		options.MaxSnippetLines = defaultSearchMaxSnippetLines
+	}
 	seedScores := map[string]float64{}
 	for _, candidate := range seeds {
 		if len(seedScores) >= 10 {
@@ -1760,6 +1770,9 @@ func expandGraphCandidates(seeds []searchCandidate, q searchQuery, relations []R
 				contentCache[symbol.FilePath] = lines
 			}
 			start, end := clampRegion(symbol.StartLine, symbol.EndLine, len(lines))
+			if start == 0 {
+				continue
+			}
 			if end-start+1 > options.MaxRegionLines {
 				end = minInt(len(lines), start+options.MaxRegionLines-1)
 			}

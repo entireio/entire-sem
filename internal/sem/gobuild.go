@@ -9,7 +9,7 @@ import (
 
 // Go build-constraint evaluation. entire-graph parses with tree-sitter, which is
 // build-tag-blind: it would parse every .go file regardless of //go:build lines
-// or _GOOS/_GOARCH filename suffixes. The compiler (and brain-bench's go/types
+// or _GOOS/_GOARCH filename suffixes. The compiler (and GraphMark's go/types
 // oracle) compiles only the files in the default build for the host. Parsing the
 // excluded files poisons type inference — e.g. a package var declared with
 // conflicting types under mutually exclusive build tags (zerolog's `enc` is

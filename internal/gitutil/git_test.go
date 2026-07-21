@@ -179,6 +179,51 @@ func TestGrepTreePathsMatchesTextAPIAndHandlesUnusualPaths(t *testing.T) {
 	}
 }
 
+func TestGrepIndexMatchesPreservesUnicodeCaseFoldingLocale(t *testing.T) {
+	repo := t.TempDir()
+	git(t, repo, "init")
+	git(t, repo, "config", "user.name", "Entire Graph Test")
+	git(t, repo, "config", "user.email", "graph@example.com")
+
+	const path = "src/unicode.go"
+	full := filepath.Join(repo, path)
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(full, []byte("package source\n// wéird\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, repo, "add", ".")
+	git(t, repo, "commit", "-m", "add unicode content")
+
+	// Locale names vary across platforms. Find one under which this Git build
+	// supports the Unicode case fold before asserting that GrepIndexMatches
+	// preserves it; the regression forced LC_ALL=C after this probe succeeded.
+	unicodeLocale := ""
+	for _, candidate := range []string{"C.UTF-8", "en_US.UTF-8", "en_US.utf8"} {
+		cmd := exec.Command("git", "grep", "-q", "-i", "-F", "-e", "WÉIRD", "--")
+		cmd.Dir = repo
+		cmd.Env = append(cmd.Environ(), "LC_ALL="+candidate, "LANG="+candidate)
+		if err := cmd.Run(); err == nil {
+			unicodeLocale = candidate
+			break
+		}
+	}
+	if unicodeLocale == "" {
+		t.Skip("installed Git has no available UTF-8 locale with Unicode case folding")
+	}
+	t.Setenv("LC_ALL", unicodeLocale)
+	t.Setenv("LANG", unicodeLocale)
+
+	matches, err := GrepIndexMatches(t.Context(), repo, []string{"WÉIRD"}, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 1 || matches[0].Path != path || matches[0].Text != "wéird" {
+		t.Fatalf("unicode grep matches = %#v, want one case-folded match in %s", matches, path)
+	}
+}
+
 func TestChangedFilesHandlesNewlinesAndTabsInPaths(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Windows filenames cannot contain newlines")
@@ -368,6 +413,103 @@ func TestBatchFileReaderReadsMultipleFilesFromHead(t *testing.T) {
 	}
 	if _, ok, err := reader.ReadFile("missing.go"); err != nil || ok {
 		t.Fatalf("missing read ok=%v err=%v, want ok=false err=nil", ok, err)
+	}
+}
+
+func TestShowFileClassifiesErrorsByStderrNotPath(t *testing.T) {
+	repo := t.TempDir()
+	git(t, repo, "init")
+	git(t, repo, "config", "user.name", "Entire Graph Test")
+	git(t, repo, "config", "user.email", "graph@example.com")
+	git(t, repo, "config", "commit.gpgsign", "false")
+
+	// Path deliberately contains the substring "Path" — the old classifier
+	// treated any error mentioning "Path" as a missing file, and ShowFile's
+	// wrapped error always echoed the argv (which includes the path).
+	const path = "src/PathHelper.go"
+	const content = "package src\n\nfunc Help() {}\n"
+	full := filepath.Join(repo, path)
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, repo, "add", ".")
+	git(t, repo, "commit", "-m", "add path helper")
+
+	// Regression: a bad rev on a path containing "Path" must surface a real
+	// error, not be swallowed as file-absent.
+	if _, ok, err := ShowFile(t.Context(), repo, "BADREV", path); err == nil {
+		t.Fatalf("ShowFile with bad rev = (ok %v, err nil), want non-nil error", ok)
+	}
+
+	// A syntactically valid but unwritten object ID and an existing blob ID can
+	// both make an untyped `git show REV:PATH` emit a path-looking diagnostic.
+	// Neither is a valid tree revision, so both must remain hard errors.
+	unwrittenCmd := exec.Command("git", "hash-object", "--stdin")
+	unwrittenCmd.Dir = repo
+	unwrittenCmd.Stdin = strings.NewReader("entire-graph pr36 unwritten object\n")
+	unwrittenOut, err := unwrittenCmd.Output()
+	if err != nil {
+		t.Fatalf("git hash-object --stdin: %v", err)
+	}
+	unwrittenOID := strings.TrimSpace(string(unwrittenOut))
+	blobOID := gitOutput(t, repo, "rev-parse", "HEAD:"+path)
+
+	for _, tc := range []struct {
+		name string
+		rev  string
+		path string
+	}{
+		{name: "unwritten full object ID", rev: unwrittenOID, path: path},
+		{name: "blob object", rev: blobOID, path: path},
+		{name: "marker phrase in invalid revision", rev: "not found", path: path},
+		{name: "marker phrase in outside path", rev: "HEAD", path: "../not found"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if out, ok, err := ShowFile(t.Context(), repo, tc.rev, tc.path); err == nil || ok || out != "" {
+				t.Fatalf("ShowFile(%q, %q) = (%q, ok %v, err %v), want (\"\", false, non-nil)", tc.rev, tc.path, out, ok, err)
+			}
+		})
+	}
+
+	// A genuinely missing path at a valid rev is still reported as absent.
+	if out, ok, err := ShowFile(t.Context(), repo, "HEAD", "src/DoesNotExist.go"); err != nil || ok || out != "" {
+		t.Fatalf("ShowFile missing path = (%q, ok %v, err %v), want (\"\", false, nil)", out, ok, err)
+	}
+
+	// An existing file at HEAD returns its content.
+	if out, ok, err := ShowFile(t.Context(), repo, "HEAD", path); err != nil || !ok || out != content {
+		t.Fatalf("ShowFile existing = (%q, ok %v, err %v), want (%q, true, nil)", out, ok, err, content)
+	}
+}
+
+func TestNewCmdPinsSubprocessLocaleToC(t *testing.T) {
+	// ShowFile classifies file-absent by matching git's English stderr text, so
+	// diagnostic subprocesses run with a pinned C locale. LC_ALL=C must come
+	// after the inherited environment so it overrides LC_ALL/LANG/LC_MESSAGES.
+	t.Setenv("LC_ALL", "fr_FR.UTF-8")
+	t.Setenv("LANG", "fr_FR.UTF-8")
+	dir := t.TempDir()
+	cmd := newCmd(context.Background(), dir, "git", "version")
+	lcAll, lang, pwd := "", "", ""
+	for _, kv := range cmd.Env {
+		if v, ok := strings.CutPrefix(kv, "LC_ALL="); ok {
+			lcAll = v
+		}
+		if v, ok := strings.CutPrefix(kv, "LANG="); ok {
+			lang = v
+		}
+		if v, ok := strings.CutPrefix(kv, "PWD="); ok {
+			pwd = v
+		}
+	}
+	if lcAll != "C" || lang != "C" {
+		t.Fatalf("effective subprocess locale LC_ALL=%q LANG=%q, want both \"C\"", lcAll, lang)
+	}
+	if runtime.GOOS != "windows" && filepath.Clean(pwd) != filepath.Clean(dir) {
+		t.Fatalf("subprocess PWD=%q, want command directory %q", pwd, dir)
 	}
 }
 

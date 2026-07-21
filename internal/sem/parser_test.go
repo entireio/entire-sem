@@ -571,6 +571,112 @@ func TestTreeSitterParserTypeScriptMasksStaticAccessorMethod(t *testing.T) {
 	t.Fatalf("missing class entity after masking static accessor method: %#v", entities)
 }
 
+func TestMaskTypeScriptStaticAccessorMethodPreservesLength(t *testing.T) {
+	t.Parallel()
+	for _, in := range []string{
+		"  static accessor() { return 1; }",
+		"  static  accessor() { return 1; }",
+		"  static   accessor  () { return 1; }",
+		"  static\taccessor() { return 1; }",
+		"  static\t\taccessor () { return 1; }",
+		"  static \t accessor\t() { return 1; }",
+	} {
+		out := maskTypeScriptStaticAccessorMethod(in)
+		if len(out) != len(in) {
+			t.Fatalf("mask changed length: input %q (%d) -> output %q (%d)", in, len(in), out, len(out))
+		}
+	}
+	// CRLF content exercises the full per-line mask path: splitLineEnding
+	// special-cases \r\n, so verify the mask stays length-preserving and keeps
+	// the \r\n endings intact around the masked construct.
+	crlf := "class C {\r\n  static  accessor() { return 1; }\r\n  bar() { return 42; }\r\n}\r\n"
+	out := maskTypeScriptUnsupportedSyntax(crlf)
+	if len(out) != len(crlf) {
+		t.Fatalf("mask changed length of CRLF input: %q (%d) -> %q (%d)", crlf, len(crlf), out, len(out))
+	}
+	if !strings.Contains(out, "accessoR") {
+		t.Fatalf("expected mask to fire on CRLF input: %q", out)
+	}
+	if got, want := strings.Count(out, "\r\n"), strings.Count(crlf, "\r\n"); got != want {
+		t.Fatalf("mask altered CRLF line endings: got %d, want %d in %q", got, want, out)
+	}
+}
+
+func TestMaskTypeScriptStaticAccessorMethodOnlyMasksStaticAccessorCalls(t *testing.T) {
+	t.Parallel()
+	// Must NOT mask: `accessor` as a plain identifier (not preceded by static),
+	// and `static accessor` with no following paren.
+	for _, in := range []string{
+		"  const accessor = 1;",
+		"  accessor();",
+		"  this.accessor(x);",
+		"  static accessor;",
+		"  static accessor = 1;",
+	} {
+		if out := maskTypeScriptStaticAccessorMethod(in); out != in {
+			t.Fatalf("unexpectedly masked non-static-accessor input %q -> %q", in, out)
+		}
+	}
+	// Must mask (r -> R before the paren) exactly once per occurrence.
+	for _, in := range []string{
+		"  static accessor() {}",
+		"  static  accessor () {}",
+		"  static\taccessor() {}",
+	} {
+		out := maskTypeScriptStaticAccessorMethod(in)
+		if out == in {
+			t.Fatalf("expected mask to fire on %q", in)
+		}
+		if len(out) != len(in) {
+			t.Fatalf("mask changed length: %q -> %q", in, out)
+		}
+		if !strings.Contains(out, "accessoR") || strings.Contains(out, "accessor") {
+			t.Fatalf("expected accessor->accessoR in %q", out)
+		}
+	}
+}
+
+func TestTreeSitterParserTypeScriptStaticAccessorMaskPreservesFollowingEntity(t *testing.T) {
+	t.Parallel()
+	find := func(entities []Entity, name string) (Entity, bool) {
+		for _, e := range entities {
+			if e.Name == name {
+				return e, true
+			}
+		}
+		return Entity{}, false
+	}
+	oneSpace := "class C {\n  static accessor() { return 1; }\n  bar() { return 42; }\n}\n"
+	twoSpace := "class C {\n  static  accessor() { return 1; }\n  bar() { return 42; }\n}\n"
+
+	oneEntities, _, oneStatus := TreeSitterParser{}.ParseWithStatus("c.ts", oneSpace)
+	if oneStatus.ParseError {
+		t.Fatalf("one-space parse error: %#v", oneStatus)
+	}
+	twoEntities, _, twoStatus := TreeSitterParser{}.ParseWithStatus("c.ts", twoSpace)
+	if twoStatus.ParseError {
+		t.Fatalf("two-space parse error: %#v", twoStatus)
+	}
+
+	oneBar, ok := find(oneEntities, "C.bar")
+	if !ok {
+		t.Fatalf("one-space: missing C.bar entity: %#v", oneEntities)
+	}
+	twoBar, ok := find(twoEntities, "C.bar")
+	if !ok {
+		t.Fatalf("two-space: missing C.bar entity (mask corrupted following entity): %#v", twoEntities)
+	}
+	if twoBar.Name != oneBar.Name {
+		t.Fatalf("name mismatch: one-space %q vs two-space %q", oneBar.Name, twoBar.Name)
+	}
+	if twoBar.Signature != oneBar.Signature {
+		t.Fatalf("signature mismatch: one-space %q vs two-space %q", oneBar.Signature, twoBar.Signature)
+	}
+	if twoBar.BodyHash != oneBar.BodyHash {
+		t.Fatalf("body-hash mismatch: one-space %q vs two-space %q", oneBar.BodyHash, twoBar.BodyHash)
+	}
+}
+
 func TestTreeSitterParserTypeScriptMasksGenericCallableTypeSignatures(t *testing.T) {
 	_, language, status := TreeSitterParser{}.ParseWithStatus("callable.ts", `export interface TakePattern<State> {
   <Predicate extends AnyListenerPredicate<State>>(
@@ -791,6 +897,77 @@ class MultiplicationTests {
 		}
 	}
 	t.Fatalf("missing method entity after masking module import: %#v", entities)
+}
+
+func TestMaskJavaModuleImportPreservesLength(t *testing.T) {
+	t.Parallel()
+	for _, in := range []string{
+		"import module java.base;",
+		"import module  java.base;",
+		"import module   java.base;",
+		"\timport\tmodule\t\tjava.base;",
+		"  import module\tjava.base;",
+	} {
+		out := maskJavaUnsupportedSyntax(in)
+		if len(out) != len(in) {
+			t.Fatalf("mask changed length: input %q (%d) -> output %q (%d)", in, len(in), out, len(out))
+		}
+	}
+	// CRLF content exercises the full per-line mask path: splitLineEnding
+	// special-cases \r\n, so verify the mask stays length-preserving and keeps
+	// the \r\n endings intact around the masked construct.
+	crlf := "import module  java.base;\r\nclass C {\r\n  int bar() { return 42; }\r\n}\r\n"
+	out := maskJavaUnsupportedSyntax(crlf)
+	if len(out) != len(crlf) {
+		t.Fatalf("mask changed length of CRLF input: %q (%d) -> %q (%d)", crlf, len(crlf), out, len(out))
+	}
+	if strings.Contains(out, "module") {
+		t.Fatalf("expected mask to blank `module` in CRLF input: %q", out)
+	}
+	if got, want := strings.Count(out, "\r\n"), strings.Count(crlf, "\r\n"); got != want {
+		t.Fatalf("mask altered CRLF line endings: got %d, want %d in %q", got, want, out)
+	}
+}
+
+func TestTreeSitterParserJavaModuleImportMaskPreservesFollowingEntity(t *testing.T) {
+	t.Parallel()
+	find := func(entities []Entity, name string) (Entity, bool) {
+		for _, e := range entities {
+			if e.Name == name {
+				return e, true
+			}
+		}
+		return Entity{}, false
+	}
+	oneSpace := "import module java.base;\nclass C {\n  int bar() { return 42; }\n}\n"
+	multiSpace := "import module   java.base;\nclass C {\n  int bar() { return 42; }\n}\n"
+
+	oneEntities, _, oneStatus := TreeSitterParser{}.ParseWithStatus("C.java", oneSpace)
+	if oneStatus.ParseError {
+		t.Fatalf("one-space parse error: %#v", oneStatus)
+	}
+	multiEntities, _, multiStatus := TreeSitterParser{}.ParseWithStatus("C.java", multiSpace)
+	if multiStatus.ParseError {
+		t.Fatalf("multi-space parse error: %#v", multiStatus)
+	}
+
+	oneBar, ok := find(oneEntities, "C.bar")
+	if !ok {
+		t.Fatalf("one-space: missing C.bar entity: %#v", oneEntities)
+	}
+	multiBar, ok := find(multiEntities, "C.bar")
+	if !ok {
+		t.Fatalf("multi-space: missing C.bar entity (mask corrupted following entity): %#v", multiEntities)
+	}
+	if multiBar.Name != oneBar.Name {
+		t.Fatalf("name mismatch: one-space %q vs multi-space %q", oneBar.Name, multiBar.Name)
+	}
+	if multiBar.Signature != oneBar.Signature {
+		t.Fatalf("signature mismatch: one-space %q vs multi-space %q", oneBar.Signature, multiBar.Signature)
+	}
+	if multiBar.BodyHash != oneBar.BodyHash {
+		t.Fatalf("body-hash mismatch: one-space %q vs multi-space %q", oneBar.BodyHash, multiBar.BodyHash)
+	}
 }
 
 func TestTreeSitterParserGroovyMasksQuotedMethodNames(t *testing.T) {
