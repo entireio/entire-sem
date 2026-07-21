@@ -13,11 +13,11 @@ func TestIDMatches(t *testing.T) {
 		sel  string
 		want bool
 	}{
-		{id, true},                      // exact full ID
-		{"getConfPath", true},           // trailing name segment
-		{"function:getConfPath", true},  // kind:name tail
-		{"getConf", false},              // partial word must not match
-		{"peon.sh:function:getConfPath", false}, // not a ':'-aligned suffix (path uses '/')
+		{id, true},                                     // exact full ID
+		{"getConfPath", true},                          // trailing name segment
+		{"function:getConfPath", true},                 // kind:name tail
+		{"getConf", false},                             // partial word must not match
+		{"peon.sh:function:getConfPath", false},        // not a ':'-aligned suffix (path uses '/')
 		{"docker/peon.sh:function:getConfPath", false}, // path fragment, still not ':'-aligned
 		{"otherName", false},
 	}
