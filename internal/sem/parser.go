@@ -294,6 +294,12 @@ func (TreeSitterParser) ParseWithStatus(path, content string) ([]Entity, string,
 	if spec.language == "C++" {
 		entities = appendMissingEntities(entities, cPlusPlusTypeAliasEntities(content)...)
 	}
+	if spec.language == "C" || spec.language == "C++" {
+		// The C mask blanks `#define` lines before tree-sitter, so macro names (opcodes,
+		// X-macros like MP_BC_*) never become symbols and a graph lookup for them returns
+		// nothing. Recover them from the UNMASKED content so `symbols`/`def <MACRO>` resolve.
+		entities = appendMissingEntities(entities, cMacroEntities(content)...)
+	}
 	if spec.language == "Kotlin" {
 		entities = append(entities, kotlinPrimaryConstructorFieldEntities(content)...)
 	}
@@ -6651,6 +6657,38 @@ func cPlusPlusTypeAliasEntities(content string) []Entity {
 				braceDepth = 0
 			}
 		}
+	}
+	return entities
+}
+
+// cDefineLineRe matches a C/C++ `#define NAME` (object- or function-like) at line start,
+// tolerating leading whitespace and spaces after `#`.
+var cDefineLineRe = regexp.MustCompile(`^\s*#\s*define\s+([A-Za-z_]\w*)`)
+
+// cMacroEntities scans the ORIGINAL (unmasked) C/C++ source for `#define` directives and emits
+// one macro Entity per name at its real line. This restores macros as queryable symbols that the
+// C preprocessor-mask would otherwise blank out. Additive + line-preserving: start==end line is
+// the real definition line, so identity stays (file,line)-consistent. First definition of a name
+// wins (appendMissingEntities dedups by (Kind,Name)).
+func cMacroEntities(content string) []Entity {
+	lines := strings.SplitAfter(content, "\n")
+	var entities []Entity
+	for i, line := range lines {
+		match := cDefineLineRe.FindStringSubmatch(line)
+		if match == nil {
+			continue
+		}
+		name := match[1]
+		signature := strings.TrimSpace(strings.TrimSuffix(line, "\n"))
+		entities = append(entities, Entity{
+			Kind:        "macro",
+			Name:        name,
+			Signature:   signature,
+			StartLine:   i + 1,
+			EndLine:     i + 1,
+			BodyHash:    hash(normalize(signature)),
+			Fingerprint: hash(normalize(entityFingerprintSource(Entity{Name: name, Signature: signature}, signature))),
+		})
 	}
 	return entities
 }
