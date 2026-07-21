@@ -223,6 +223,11 @@ func identifiersIn(content string) map[string]struct{} {
 }
 
 func referenceName(change EntityChange) string {
+	// Module-scope entities are keyed by file path, not by a callable name, so
+	// they have no dependents to resolve.
+	if change.Kind == moduleKind {
+		return ""
+	}
 	switch change.Type {
 	case "renamed":
 		if change.NewName != "" {

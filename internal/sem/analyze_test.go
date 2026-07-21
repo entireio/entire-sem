@@ -44,6 +44,58 @@ def format_date(value):
 	}
 }
 
+func TestAnalyzeGitRangeSurfacesModuleScopeChange(t *testing.T) {
+	repo := t.TempDir()
+	git(t, repo, "init")
+	git(t, repo, "config", "user.name", "Entire Graph Test")
+	git(t, repo, "config", "user.email", "graph@example.com")
+
+	write(t, repo, "auth.py", `def validate_token(token):
+    return bool(token)
+`)
+	git(t, repo, "add", ".")
+	git(t, repo, "commit", "-m", "initial")
+	base := rev(t, repo, "HEAD")
+
+	// Only module-scope code changes: a trailing top-level comment is added
+	// while validate_token stays byte-for-byte identical. Without module-scope
+	// attribution this diff would collapse to an empty (null) files list.
+	write(t, repo, "auth.py", `def validate_token(token):
+    return bool(token)
+
+
+# module-level configuration note
+`)
+	git(t, repo, "add", ".")
+	git(t, repo, "commit", "-m", "module-scope edit")
+	head := rev(t, repo, "HEAD")
+
+	result, err := AnalyzeGitRange(context.Background(), repo, base, head, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Files) != 1 {
+		t.Fatalf("files = %#v", result.Files)
+	}
+	file := result.Files[0]
+	if file.Path != "auth.py" {
+		t.Fatalf("path = %q", file.Path)
+	}
+	if len(file.Changes) != 1 {
+		t.Fatalf("changes = %#v", file.Changes)
+	}
+	change := file.Changes[0]
+	if change.Kind != moduleKind {
+		t.Fatalf("kind = %q, want %q", change.Kind, moduleKind)
+	}
+	if change.Type != "body_changed" {
+		t.Fatalf("type = %q, want body_changed", change.Type)
+	}
+	if change.Name != "auth.py" {
+		t.Fatalf("name = %q, want auth.py", change.Name)
+	}
+}
+
 func TestAnalyzeGitRangeReconcilesCrossFileMove(t *testing.T) {
 	repo := t.TempDir()
 	git(t, repo, "init")

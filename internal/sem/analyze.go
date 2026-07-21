@@ -83,7 +83,14 @@ func AnalyzeGitRange(ctx context.Context, repo, base, head string, paths []strin
 
 		changes, removed, added := compareEntities(beforeEntities, afterEntities)
 		if len(changes) == 0 && len(removed) == 0 && len(added) == 0 {
-			continue
+			// The file changed but no named symbol did: the edit lives at
+			// module scope (top-level statements, imports, comments). Surface
+			// it as a synthetic module-level change instead of dropping it.
+			mod, ok := moduleScopeChange(path, before, after, beforeOK, afterOK)
+			if !ok {
+				continue
+			}
+			changes = append(changes, mod)
 		}
 		deltas = append(deltas, &fileDelta{
 			path:     path,
@@ -387,6 +394,24 @@ const (
 	// rather than guessing.
 	ambiguityMargin = 0.05
 )
+
+// moduleScopeChange builds a synthetic change for a file whose contents changed
+// but where no named symbol changed. Attributing the edit to a module-level
+// entity (keyed by the file path) keeps module-scope changes visible in the diff
+// rather than emitting a null/empty entry. It returns false when there is no
+// observable content change to report (e.g. a pure rename).
+func moduleScopeChange(path, before, after string, beforeOK, afterOK bool) (EntityChange, bool) {
+	switch {
+	case afterOK && !beforeOK:
+		return EntityChange{Type: "added", Kind: moduleKind, Name: path, AfterStartLine: 1}, true
+	case beforeOK && !afterOK:
+		return EntityChange{Type: "removed", Kind: moduleKind, Name: path, BeforeStartLine: 1}, true
+	case beforeOK && afterOK && before != after:
+		return EntityChange{Type: "body_changed", Kind: moduleKind, Name: path, BeforeStartLine: 1, AfterStartLine: 1}, true
+	default:
+		return EntityChange{}, false
+	}
+}
 
 func removedChange(oldEntity Entity) EntityChange {
 	return EntityChange{

@@ -2,6 +2,12 @@ package sem
 
 import "io"
 
+// moduleKind labels a synthetic entity that represents file/module scope: code
+// that lives outside any named symbol (top-level statements, imports, comments).
+// Changes attributed to it keep module-scope edits visible in the diff instead
+// of being dropped as null.
+const moduleKind = "module"
+
 type Entity struct {
 	Kind        string `json:"kind"`
 	Name        string `json:"name"`
