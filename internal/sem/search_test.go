@@ -1497,7 +1497,7 @@ func TestExpandGraphCandidatesSkipsOutOfRangeSymbolLines(t *testing.T) {
 	// Pre-fix, clampRegion returns (0,0) for the out-of-range target and the
 	// unguarded lines[snippetStart-1:snippetEnd] slice panics with
 	// "slice bounds out of range [-1:]".
-	out := expandGraphCandidates(seeds, relations, symbolsByID, read, nil, options)
+	out := expandGraphCandidates(seeds, searchQuery{}, relations, symbolsByID, read, nil, options)
 
 	for _, candidate := range out {
 		if candidate.result.SymbolID == "target" {
@@ -1529,7 +1529,7 @@ func TestExpandGraphCandidatesIncludesInRangeSymbol(t *testing.T) {
 	}
 	options := SearchOptions{MaxRegionLines: 40, MaxSnippetLines: 40}
 
-	out := expandGraphCandidates(seeds, relations, symbolsByID, read, nil, options)
+	out := expandGraphCandidates(seeds, searchQuery{}, relations, symbolsByID, read, nil, options)
 
 	found := false
 	for _, candidate := range out {
@@ -1572,7 +1572,7 @@ func TestExpandGraphCandidatesClampsNonPositiveRegionLines(t *testing.T) {
 		// (end = start+MaxRegionLines-1) and the snippet slice panics with
 		// "slice bounds out of range" (low > high).
 		options := SearchOptions{MaxRegionLines: maxRegionLines, MaxSnippetLines: -1}
-		out := expandGraphCandidates(seeds, relations, symbolsByID, read, nil, options)
+		out := expandGraphCandidates(seeds, searchQuery{}, relations, symbolsByID, read, nil, options)
 
 		found := false
 		for _, candidate := range out {
