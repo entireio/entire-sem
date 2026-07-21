@@ -4,9 +4,7 @@
   "strategy": "manual-commit",
   "branch": "feat/retrieval-followups",
   "checkpoints_count": 6,
-  "files_touched": [
-    "internal/sem/search_cache.go"
-  ],
+  "files_touched": null,
   "sessions": [
     {
       "metadata": "/40/ffd10dfc99/0/metadata.json",
@@ -24,11 +22,11 @@
     }
   ],
   "token_usage": {
-    "input_tokens": 1413888,
-    "cache_creation_tokens": 343910,
-    "cache_read_tokens": 118713820,
-    "output_tokens": 344611,
-    "api_call_count": 981
+    "input_tokens": 1413477,
+    "cache_creation_tokens": 6854,
+    "cache_read_tokens": 85397932,
+    "output_tokens": 185558,
+    "api_call_count": 774
   },
   "combined_attribution": {
     "calculated_at": "2026-07-21T21:43:43.672863Z",
