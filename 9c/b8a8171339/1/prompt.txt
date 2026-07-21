@@ -521,3 +521,119 @@ New `resolveJSNamespaceCallChain(name, from, sameFile, namespaces, symbolsByShor
 - `go test -count=1 ./internal/cli/` — ok.</result>
 <usage><subagent_tokens>129723</subagent_tokens><tool_uses>59</tool_uses><duration_ms>916103</duration_ms></usage>
 </task-notification>
+
+---
+
+<task-notification>
+<task-id>aa084a24fcc6f6f26</task-id>
+<tool-use-id>toolu_01WeQzwp6b5MhU8Tk5NkN1or</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-thomi-Projects-entire-graph/fffff083-8032-496a-81ae-244c3c25ea0f/tasks/aa084a24fcc6f6f26.output</output-file>
+<status>completed</status>
+<summary>Agent "Verify merged-declaration fallback fix" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>All probes complete; the repo working tree was never modified (probe tests ran via `go test -overlay` mapping a virtual file from the scratchpad). Verdicts per angle, all empirical:
+
+## Verdict per attack angle
+
+**(1) Ambiguity across two reopening files — HOLDS.** Probe: `src/a.ts` (merged `class A` + `namespace A`, `caller()` calls `A.g()`), plus `src/b.ts` and `src/c.ts` each reopening `namespace A { export function g() {} }`. Result: zero CALLS edges to either `g` (ambiguous → no edge). Control with only `b.ts` reopening: edge present at confidence 0.8, resolution `name_only`. Extra probes: a `B.A.g` candidate (`namespace B { namespace A { g } }`) and a bare top-level `g` are both filtered while the true `A.g` in another file still wins uniquely; a candidate file that *has* `namespace A` but declares `g` outside it is also rejected — `jsNamespaceBySymbolID` only maps symbols lexically inside a namespace scope.
+
+**(2) Memoization keying — HOLDS.** Unit probe on `jsCrossFileNamespaceLookup` with a counting `contentReader`: each file read exactly once across repeated lookups; a symbol carrying file-b's ID but file-c's `FilePath` returns "" (cache is keyed `FilePath` → per-file `ID` map, no cross-file leak); failed reads are negatively memoized (1 read total); non-JS/TS symbols return "" without any read.
+
+**(3) Parse failure / budget — HOLDS (conservative: loses, never fabricates).** Unreadable candidate file → chain returns nil (baseline with readable file returns the unique 0.8 edge, proving the probe discriminates). Genuine scope-parse timeout (1ns budget on a 2000-line candidate, timeout verified to actually trip via `newJSScanState` returning error) → nil, no fabrication. `nil` foreignNamespaceOf → nil. Snapshot-level: candidate file over `MaxParseBytes` (400) emits `E_FILE_TOO_LARGE` / "symbol parsing skipped", produces no symbols, hence can never be a candidate — no edge, failure surfaced. One raw fact: a *cross-file lookup* scope-parse timeout is silent (no PartialFailure is recorded from inside `jsCrossFileNamespaceLookup`, provider.go:1903-1920) — a lost edge with no observability, but never a wrong edge.
+
+**(4) Dotted vs nested spelling — HOLDS.** Caller merged on receiver `A.B` (`class B` inside `namespace A`, plus `namespace A.B` reopening); candidate declared as `namespace A.B { g }` and as `namespace A { namespace B { g } }` both resolve to the edge, and an unrelated bare `g` never steals it. Both spellings canonicalize to `"A.B"` (`jsNamespaceDeclarationName` joins/trims `nested_identifier`; `jsQualifiedNamespaceName` prefixes nesting).
+
+**(5) skipTerminal / non-merged behavior — HOLDS, one raw fact.** Per-symbol path: `A.g()` inside `function g` with the member reopened cross-file emits no edge (self-name terminal suppressed — matches the documented intent and the bare-name path convention; a small recall loss by design). Top-level path (`skipTerminal == nil`): `A.g();` at file level emits `from=local/001:file:src/a.ts conf=0.8 res=name_only`. Raw fact: for a **non-merged** receiver (`namespace A` with only `marker`, no merged class), `A.g()` still falls through to the generic resolver and resolves workspace-wide to an unrelated bare `g` at `conf=0.68 res=name_only` ("matched globally unique symbol name") — that is the pre-existing reopened-namespace fallback the fix deliberately left in place (confinement applies only when a merged declaration proves the receiver is not a plain identifier); it is not a regression from this fix, but it is a fabrication vector the merged-receiver path closes and the non-merged path does not.
+
+**(6) Performance bound — HOLDS.** Probe with 41 candidate files sharing short name `g`: first chain call reads/parses each candidate file exactly once (41 reads); a second identical call performs zero additional reads (memoized for the lifetime of one `forEachRelation` pass — the closure at provider.go:2278 is built once per relation phase). A chain that short-circuits at the merged-member step performs zero reads (fully lazy). Worst case is one extra scope parse per distinct JS/TS file containing a same-short-name candidate, per snapshot build — O(files) total, not O(files) per call. Concurrency check: no goroutines anywhere in the relation phase (`forEachRelation` body has zero `go func`/`sync.WaitGroup`/`errgroup` uses), and each `forEachRelation` invocation gets its own cache closure, so the unsynchronized map is safe.
+
+## Overall: CONFIRMED-SOUND
+
+No defect found in the round-4 code. All existing repo tests in the area (`TestTypeScriptMerged*`, `TestTypeScriptDottedNamespace*`, timeout test) also pass on HEAD (`feat/retrieval-followups`, 8eb5b9a). Two non-defect observations worth relaying: (a) silent (unrecorded) partial failure when a cross-file candidate's scope parse times out inside `jsCrossFileNamespaceLookup`; (b) the non-merged-receiver terminal fallback still permits a 0.68 workspace-wide `name_only` edge to an unrelated same-named function — pre-existing behavior, outside this fix's scope.
+
+Key files: `/Users/thomi/Projects/entire-graph/internal/sem/provider.go` (lines 1787-1926, 2278, 2997, 3375), `/Users/thomi/Projects/entire-graph/internal/sem/js_scopes.go`. Probe file (throwaway): `/private/tmp/claude-501/-Users-thomi-Projects-entire-graph/fffff083-8032-496a-81ae-244c3c25ea0f/scratchpad/zz_adversarial_probe_test.go` run with `overlay.json` in the same directory.</result>
+<usage><subagent_tokens>98830</subagent_tokens><tool_uses>40</tool_uses><duration_ms>469446</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>adeddeeb84a408505</task-id>
+<tool-use-id>toolu_012LQPRQeu7v73cwAjLtZPFb</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-thomi-Projects-entire-graph/fffff083-8032-496a-81ae-244c3c25ea0f/tasks/adeddeeb84a408505.output</output-file>
+<status>completed</status>
+<summary>Agent "Verify anchor-prefix shadow fix" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>All probes pass and the entire existing sem test suite (40s, full package) passes with the outermost anchor — confirming both the diagnosis and that the existing round-4 tests never covered the distinguishing case.
+
+## Verdict
+
+**Overall: DEFECT-FOUND** — in `bindingShadowsNamespaceReceiver`, `/Users/thomi/Projects/entire-graph/internal/sem/js_scopes.go` lines 231-255. The innermost-span anchor choice is wrong; the correct anchor is the **outermost** containing scope matching the prefix.
+
+### Per-angle results
+
+**(1) Prefix collision — HOLDS.** The `scope.Name != prefix &amp;&amp; !strings.HasPrefix(scope.Name, prefix+".")` guard correctly rejects `AB.C` for prefix `A` and `A.BC.D` for prefix `A.B` (verified by direct unit calls on synthetic states plus a realistic collision file; shadow decisions unaffected). Canonical nested naming (`jsQualifiedNamespaceName` makes nested decls parent-relative) also makes textual collisions within one containment chain unconstructible from real source.
+
+**(2) Multiple disjoint scopes — HOLDS for disjoint, BROKEN for nested.** Disjoint scopes are handled: the `position &lt;= scope.startByte || position &gt;= scope.endByte` filter (line 239) means a far reopened `namespace A.B` can never anchor a call it doesn't contain (probe with A.B reopened before and after the call site passed). But among **nested** matching scopes, innermost-span picks the wrong anchor — see defect below.
+
+**(3) Binding inside anchor still shadows — HOLDS for the asked case, BROKEN one level out.** Parameter `B` inside `namespace A.X` calling `B.f()` with sibling `namespace A.B` correctly shadows (tsc ground truth: parameter wins; code returns ""). But a binding in the region **between the outer and inner matching scopes' starts** fails to shadow — the defect.
+
+**(4) Empty prefix — HOLDS.** `anchorStart = -1`, all enclosing bindings shadow; `N.f()` qualifies at top level, parameter `N` shadows. Unchanged.
+
+**(5) Non-ancestor scope match — HOLDS.** Call inside `namespace A.B` resolving `Sub.target()` to `A.Sub` (not an ancestor of A.B) with a file-level `const Sub` outside: code does not shadow, produces the edge — and tsc agrees (ran it: prints `NAMESPACE A.Sub.target`; the merged namespace member is lexically closer than the file-level const).
+
+### The defect (repro)
+
+```ts
+namespace A.Sub { export function target() {} }
+namespace A.B {
+  const Sub = { target() {} };
+  export namespace C {
+    export function caller() { Sub.target(); }   // tsc executes the LOCAL const
+  }
+}
+```
+Ground truth (tsc 6.0.3 compiled + executed under node): prints `LOCAL const Sub`. The Go code fabricates `A.Sub.target`: matching containing scopes are `A.B` [64,181) and `A.B.C` [118,179); innermost-span picks anchorStart=118; the `const Sub` binding scope starts at 64 (A.B's body) → `64 &gt;= 118` fails → not shadowed. End-to-end via `BuildProviderSnapshot`: phantom relation `CALLS caller→target, Confidence:0.92, Resolution:"exact"`.
+
+Worse, it's a **regression of the exact-name path**, not just a gap in the new dotted support: with outer scope named exactly `A` (`namespace A { const Sub = ...; export namespace B { caller } }`), the nested `A.B` scope steals the anchor from the exact-name `A` scope via smaller span. tsc: local const wins; code fabricates `A.Sub.target`. Pre-round-4 exact-name-only matching would have anchored at `A` and gotten this right.
+
+### Fix validation
+
+Replacing smallest-span with earliest-start (outermost matching containing scope) in a scratch copy makes both failing probes pass, keeps all 6 other probes passing, and the **full `internal/sem` test suite passes** (`go test ./internal/sem`, ok in 40s). Rationale: prefix-namespace members are visible from the outermost enclosing scope whose path extends the prefix, so every binding declared at-or-inside that scope is lexically nearer and must shadow; innermost anchoring wrongly exempts bindings declared between the outer and inner scope starts. Among containing scopes only nested chains exist (disjoint scopes are filtered by containment), so "innermost" buys nothing and only loses these cases.
+
+No repo files were modified; all probes ran in a copy under the scratchpad.</result>
+<usage><subagent_tokens>70108</subagent_tokens><tool_uses>24</tool_uses><duration_ms>485651</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>aef6d7c9c69f39ab5</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-thomi-Projects-entire-graph/fffff083-8032-496a-81ae-244c3c25ea0f/tasks/aef6d7c9c69f39ab5.output</output-file>
+<status>completed</status>
+<summary>Agent "Verify failure-dedup and chain refactor" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>All verification complete. Final report:
+
+## Verdict per angle
+
+**Angle 1 — failure order/stats invariant: HOLDS.**
+Probe (`TestProbeDerivedSelectiveMatchesFreshWithCrossPhaseFailures`, run in a scratchpad copy of HEAD): repo with `a.ts` (entity OK, relation-phase jsScan timeout), `b.ts` (entity `E_PARSE_ERROR` + relation `E_PARSE_TIMEOUT` — two codes, one file), `big.go` (`E_FILE_TOO_LARGE`), clean `c.go`, and a failing `excluded.ts` outside the selection. With `jsScanParseTimeout=1ns`, preindex-derived selective vs fresh selective (`LoadOrBuildProviderSnapshot` cached vs `disableCache`) produced byte-identical results — `reflect.DeepEqual` on the whole snapshot, on `PartialFailures` (same order: `[E_PARSE_ERROR:b.ts, E_FILE_TOO_LARGE:big.go, E_PARSE_TIMEOUT:a.ts, E_PARSE_TIMEOUT:b.ts]` — entity phase first, relation phase appended), and on `Stats` (`PartialFailures:4, CompletenessLevel:unsafe`). No duplicates, no `excluded.ts` leak, `assertSelectiveSnapshotAccounting` holds for both.
+
+**Angle 2 — double-fire: HOLDS (structurally impossible).**
+There is exactly one `recordFailure` firing point (`internal/sem/provider.go:2779-2784`), guarding the single `newJSScanState` per file (line 2778); the per-symbol pass and the top-level pass share that one `jsScanState` (top-level uses `jsScan.topLevelNamespaceCalls` at line 3328, same loop iteration). `buildJSScanState` returns a non-nil state on error, so the shared reuse is nil-safe. Probe (`TestProbeRelationFailureFiresOncePerFile`): a large TS file with both a symbol-body namespace call and a statement-position namespace call, driven through `forEachRelation` with a counting callback at 1ns budget → exactly one invocation (`[E_PARSE_TIMEOUT src/both.ts]`). Defense in depth: `mergePartialFailures` (provider.go:727) marks `seen` as it appends, so duplicates *within* `extra` also collapse.
+
+**Angle 3 — chain-refactor equivalence: HOLDS, with one evidentiary caveat.**
+The requested "diff against the previous commit" is impossible: the extraction landed atomically inside 093d733 — no commit reachable from any ref contains the pre-refactor inline copies (verified by a full `git rev-list --all` scan for trees having `resolveJSMergedDeclarationMemberTargets` without `resolveJSNamespaceCallChain`: zero hits; the `entire/checkpoints/v1` branch stores only transcripts, and the implementing subagent's Edit calls are not captured in them). What is verifiable: (a) the round-4 implementation report preserved in the checkpoint transcript states the top-level site's `nil` is "its previous unguarded behavior"; (b) the per-symbol closure at provider.go:2997-2999 (`terminal == from.Name || childNamesByContainer[from.ID][terminal]`) exactly mirrors the bare-name loop guards at 2978/2985; (c) probes: direct call of `resolveJSNamespaceCallChain` with the site-1 closure yields 0 targets while `nil` yields the 1 cross-file target (guard not accidentally unified); end-to-end, a function `bar` calling `B.bar()` produces no self-terminal edge, and the top-level pseudo-symbol path takes the same `resolveCallTargets(terminal, fileSource, ...)` shape as the adjacent non-namespace top-level branch (line 3377), so its edge-declination in the e2e probe is shared resolver behavior, not an extraction artifact.
+
+**Angle 4 — shim commit 093d733: HOLDS.**
+`go build ./...` on a `git archive` extraction of 093d733 exits 0 (only a vendored tree-sitter C warning). At 093d733 the no-op `func(PartialFailure) {}` exists solely at the derived-selective site in `search_cache.go`; the only other non-real sink is `buildRelations` passing `nil`, which has zero production callers (test-only). `StreamSnapshot` at 093d733 already does the real accumulate+merge, so every shipped build path (cold build, preindex, `BuildProviderSnapshotWithOptions`) reports failures; the derived path falls back to the filtered full-header failures, which deterministically contain the same records — the only theoretical loss at 093d733 is a timeout that fires in the selective re-scan but not the full build (nondeterministic), and that is precisely the site 8eb5b9a replaces (`-func(PartialFailure) {}` → accumulate + `mergePartialFailures(failures, relationFailures)`, confirmed in the 093d733..8eb5b9a diff).
+
+## Overall: CONFIRMED-SOUND
+
+Two cosmetic (non-behavioral) doc nits found: the comment above `filterSearchPartialFailures` (`internal/sem/search_cache.go:522`) names `mergePartialFailures`, and in `internal/sem/provider.go` the `mergePartialFailures` doc (line 714) is inserted directly between `StreamSnapshot`'s doc block (702-713) and its own func, leaving `StreamSnapshot` (line 733) with a misattached godoc.
+
+Regression cross-check: all five existing failure-related tests (`TestStreamSnapshotDedupesSameCodeFailuresAcrossPhases`, `TestStreamSnapshotFreshBuildReportsNoDuplicateFailures`, `TestMergePartialFailuresDeduplicatesByCodeAndFile`, `TestFullPreindexSelectiveSnapshotFiltersFailureStats`, `TestWarmSelectiveDerivationFailureFallsBackToFreshBuild`) pass. The repo working tree was not touched; all probes ran in `/private/tmp/...scratchpad/head` and `/...scratchpad/c093`.</result>
+<usage><subagent_tokens>107891</subagent_tokens><tool_uses>56</tool_uses><duration_ms>734235</duration_ms></usage>
+</task-notification>
