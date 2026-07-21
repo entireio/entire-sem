@@ -258,3 +258,131 @@ All five verified to FAIL against the pre-fix HEAD (via a throwaway worktree, si
 - Full `go test -count=1 ./internal/sem/` → ok (30.8s), all pre-existing precision tests (shadowed-name suppression, minified-bundle false-positive guards) still pass</result>
 <usage><subagent_tokens>140671</subagent_tokens><tool_uses>50</tool_uses><duration_ms>837654</duration_ms></usage>
 </task-notification>
+
+---
+
+<task-notification>
+<task-id>bop7dq50u</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-thomi-Projects-entire-graph/fffff083-8032-496a-81ae-244c3c25ea0f/tasks/bop7dq50u.output</output-file>
+<status>completed</status>
+<summary>Background command "Re-run fast-tier bench on fixed tree" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>w7s80y184</task-id>
+<tool-use-id>toolu_01LNERWkhHJEEyJGuZUgHqgQ</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-thomi-Projects-entire-graph/fffff083-8032-496a-81ae-244c3c25ea0f/tasks/w7s80y184.output</output-file>
+<status>completed</status>
+<summary>Dynamic workflow "Workflow-backed code review — one finder per correctness angle plus one finder covering all cleanup angles, an independent verifier for every distinct (file, line) location across the pooled candidates, then a ranked, capped findings report." completed</summary>
+<result>{"level":"high","target":"— re-review PR #45's diff after fixes: the four re-cut commits on feat/retrieval-followups vs main (proto2 extraction, neighbors symbol-ID support, binding-scope-aware JS/TS call resolution, search cache confinement). This is round 2: a prior adversarial review found 10 issues (namespace-merge fallback loss, over-broad receiver guard, regex-literal brace corruption, nested destructuring, loop-head scoping, warm-path cache bypass, warm-path hard-fail, neighbors --file vs ID conflict, --max-context-bytes inconsistency, quadratic brace scan) which have all been fixed. Adversarially verify the fixes are correct and complete, hunt for NEW defects the fixes may have introduced (especially the new maskJSRegexLiterals division-vs-regex heuristics, the recursive jsDestructuredNames, the jsBraceScopes index, typeScriptReceiverTypeResolvesElsewhere, and loadOrDeriveSelectiveSearchSnapshot), and re-attack the original angles for anything the first round missed.","summary":"High-effort review of the JS/TS call-scanner and search-cache changes surfaced 7 distinct confirmed correctness defects, dominated by the regex-literal masking heuristic: JSX closing tags and post-expression slashes are misclassified as regex starts (or vice versa), and stripping order runs literal removal before regex masking, so real code — including whole namespace declarations and JSX call sites — is silently blanked and CALLS edges disappear or are fabricated; further binding-scope gaps (for-of/for-in destructuring, phantom angle-bracket depth, generic-clause parameter parsing) and a lost namespace-body relative-receiver resolution path complete the correctness set, several being regressions versus main. Three cleanup themes made the cap: a reintroduced quadratic var-binding scan over symbols, a copy-pasted selective-search-cache pipeline that triples git subprocess work on the warm query path, and 4x redundant per-file re-stripping/re-parsing of derived JS scan state. Five lower-severity cleanups (dead helper, per-lookup regex compilation, double symbol scan, smallest-span duplication, resolution-fallback duplication) were omitted under the 10-decision cap.","findings":[{"file":"internal/sem/call_scanners.go","line":134,"summary":"jsRegexLiteralStartsAt treats '&lt;' and '}' as regex-start contexts, so JSX closing tags (`&lt;/td&gt;`) start phantom regex literals whose mask swallows all JSX content up to the next '/' on the line, deleting namespace-qualified calls and corrupting brace/binding scopes in .tsx/.jsx files.","failure_scenario":"Probe-confirmed: in a TSX file with `namespace Fmt { export function money(v){...} }` and a component returning `&lt;tr&gt;&lt;td&gt;{props.name}&lt;/td&gt;&lt;td&gt;{Fmt.money(props.total)}&lt;/td&gt;&lt;/tr&gt;`, stripJSScannedSource masks `{Fmt.money(props.total)}` as a phantom regex body (the '/' in the first `&lt;/td&gt;` is preceded by '&lt;'), so jsNamespaceCallIdentifiers returns empty and the CALLS edge component-&gt;Fmt.money that main emitted disappears — `entire graph neighbors --symbol money` shows no caller. When the masked span contains unbalanced braces, jsBraceScopes mis-pairs scopes, flipping shadow decisions and producing wrong CALLS edges elsewhere in the file. This is a new regression introduced by the round-1 regex-brace-corruption fix.","category":"correctness","verdict":"CONFIRMED"},{"file":"internal/sem/call_scanners.go","line":100,"summary":"stripJSScannedSource strips strings/comments before masking regex literals, so a quote character inside a regex literal is lexed as a string opener and masks real code up to the next same-character quote on the line.","failure_scenario":"A TS/JS file containing `const m = s.match(/'/g); namespace A { export function f() {} } const t = 'x'; A.f();` has the entire `namespace A {...}` declaration blanked by stripCodeLiteralsAndComments (the ' inside the regex opens a phantom string ending at 'x'). Confirmed by probe: jsNamespaceScopes returns no scopes and the A.f() namespace call yields no CALLS edge — the caller/callee relation silently disappears from search/neighbors output. A backtick inside a regex masks across many lines, wiping whole functions. This is the round-1 regex-literal fix being incomplete: the mask runs after, not during, literal stripping.","category":"correctness","verdict":"CONFIRMED"},{"file":"internal/sem/call_scanners.go","line":125,"summary":"jsRegexLiteralStartsAt treats a regex literal that follows `)` or an identifier as division, so brace characters inside such regexes stay unmasked and corrupt the jsBraceScopes index (a stray `{` steals the enclosing function's closing brace, extending its scope to EOF).","failure_scenario":"File `function m() {\\n  const A = 1;\\n  if (x) /\\\\{/.test(s); }\\nnamespace A { export function go() {} }\\nfunction c() { A.go(); }`: the unmasked `{` inside /\\{/ consumes m's closing brace, so binding `const A` is scoped from m's open brace to end-of-file and shadows the unrelated top-level call `A.go()` in function c. Confirmed by probe: jsNamespaceCallIdentifiers returns empty (control with the regex after `=` correctly returns A.go), so the CALLS edge to the namespace member is silently dropped — the exact phantom-scope cascade the round-1 'regex-literal brace corruption' fix was meant to eliminate.","category":"correctness","verdict":"CONFIRMED"},{"file":"internal/sem/provider.go","line":3121,"summary":"Top-level/namespace-body statements calling a nested namespace through a relative receiver lose their CALLS edge: the top-level scan passes callerNamespace \"\" to jsNamespaceCallIdentifiers, and the new full-path canonicalization (jsCanonicalNamespace) rejects receivers that the deleted first-segment namespace match (`namespaces[parts[0]]` in the old jsNamespaceCallIdentifiers) used to accept, with no fallback for statement-position code inside a namespace body.","failure_scenario":"For a file containing `namespace A { export namespace B { export function f() {} } B.f(); }`, main emits a CALLS relation (file source -&gt; f, \"top-level call expression resolved to symbol\"), but this branch emits no CALLS relations at all (empirically verified by running BuildProviderSnapshot on both main and feat/retrieval-followups with this exact input). User-visible consequence: `entire graph neighbors --symbol f` reports no incoming callers and `entire graph edges`/search relation expansion silently drops the dependency, so an agent renaming or deleting f sees no usage at the namespace-body call site.","category":"correctness","verdict":"CONFIRMED"},{"file":"internal/sem/call_scanners.go","line":347,"summary":"Destructuring bindings in for-of/for-in heads are never registered because jsFileBindingScopes requires `=` after the pattern (jsAssignmentFollows), so `for (const {X} of items)` produces no binding scope for X. [same root cause also at: internal/sem/call_scanners.go:347]","failure_scenario":"File with `namespace Utils { export function helper() {} }` and `for (const {Utils} of items) { Utils.helper(); }`: the destructured loop variable Utils is not recorded as a binding, so the shadow check passes and Utils.helper() is classified as a same-file namespace call. Confirmed by probe: jsNamespaceCallIdentifiers returns Utils.helper, fabricating a CALLS edge to the unrelated namespace member — exactly the wrong-edge class the binding-scope work exists to prevent, and a gap left by the round-1 nested-destructuring and loop-head fixes (which only covered `= `-assigned patterns and simple loop bindings).","category":"correctness","verdict":"CONFIRMED"},{"file":"internal/sem/call_scanners.go","line":611,"summary":"jsTopLevelByteIndex and jsSplitParameterList count a bare `&lt;` comparison operator as an opening angle bracket with no closing `&gt;`, so every top-level comma after it is missed and subsequent destructured bindings are dropped.","failure_scenario":"`const { a = x &lt; 2, Utils } = opts;` — confirmed by prob
+... (truncated 5271 chars, full result in /private/tmp/claude-501/-Users-thomi-Projects-entire-graph/fffff083-8032-496a-81ae-244c3c25ea0f/tasks/w7s80y184.output)</result>
+<diagnostics>Per-agent results: /Users/thomi/.claude/projects/-Users-thomi-Projects-entire-graph/fffff083-8032-496a-81ae-244c3c25ea0f/subagents/workflows/wf_0baf275f-277/journal.jsonl — one {"type":"result",...} line per completed agent with its full return value.
+If the result above is empty or unexpected, Read this file BEFORE diagnosing — do not assume agents returned non-empty results.
+To re-run with edited post-processing: Workflow({scriptPath: '/Users/thomi/.claude/projects/-Users-thomi-Projects-entire-graph/fffff083-8032-496a-81ae-244c3c25ea0f/workflows/scripts/code-review-wf_0baf275f-277.js', resumeFromRunId: 'wf_0baf275f-277', args: "high — re-review PR #45's diff after fixes: the four re-cut commits on feat/retrieval-followups vs main (proto2 extraction, neighbors symbol-ID support, binding-scope-aware JS/TS call resolution, search cache confinement). This is round 2: a prior adversarial review found 10 issues (namespace-merge fallback loss, over-broad receiver guard, regex-literal brace corruption, nested destructuring, loop-head scoping, warm-path cache bypass, warm-path hard-fail, neighbors --file vs ID conflict, --max-context-bytes inconsistency, quadratic brace scan) which have all been fixed. Adversarially verify the fixes are correct and complete, hunt for NEW defects the fixes may have introduced (especially the new maskJSRegexLiterals division-vs-regex heuristics, the recursive jsDestructuredNames, the jsBraceScopes index, typeScriptReceiverTypeResolvesElsewhere, and loadOrDeriveSelectiveSearchSnapshot), and re-attack the original angles for anything the first round missed."}) — agents whose (prompt, opts) are unchanged replay from cache.</diagnostics>
+<usage><agent_count>26</agent_count><agents_done>26</agents_done><agents_error>0</agents_error><agents_skipped>0</agents_skipped><agents_empty_result>0</agents_empty_result><subagent_tokens>1065337</subagent_tokens><tool_uses>308</tool_uses><duration_ms>998633</duration_ms></usage>
+</task-notification>
+
+---
+
+Is your suggested change similar to the 2 LSP branches we parked earlier?
+
+---
+
+Ok, make it so
+
+---
+
+<task-notification>
+<task-id>a4ff9fd4fbdac7da7</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-thomi-Projects-entire-graph/fffff083-8032-496a-81ae-244c3c25ea0f/tasks/a4ff9fd4fbdac7da7.output</output-file>
+<status>completed</status>
+<summary>Agent "Dedup selective-cache pipeline" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>Done. Net -13 lines, one file touched.
+
+**Unified shape** (all in /Users/thomi/Projects/entire-graph/internal/sem/search_cache.go):
+
+- `loadOrBuildSearchSnapshot` is now the single cache pipeline, with a new final parameter `preloadedFull *ProviderSnapshot`. One pass does: profile default → cache-bypass build (disableCache/no cacheDir/worktree) → `filepath.Abs` → `resolveCommittedHEAD` (build fallback on error) → `repoKey` → per-query key/read/validate (hit wins) → for `OnlyFiles` queries, a shared `deriveFromFull` closure that derives the selective view and best-effort persists it, tried first against `preloadedFull` (if non-nil, warm path — no disk read, no subprocess re-resolve) and then against the on-disk complete entry (cold path, and the warm derivation-failure fallback) → fresh build with the existing provenance check and best-effort persist. HEAD/repoKey/key/path are computed exactly once per call.
+- `loadOrDeriveSelectiveSearchSnapshot` was reduced from a ~40-line duplicate pipeline to a one-line wrapper: `return loadOrBuildSearchSnapshot(ctx, repo, providerVersion, options, cacheDir, disableCache, &amp;full)`. It was kept (not deleted) so the call site in search.go:358 and the direct call in `TestWarmSelectiveDerivationFailureFallsBackToFreshBuild` (search_cache_test.go:558) remain byte-for-byte unchanged.
+- The three other internal callers (`loadOrBuildSearchGraphSnapshot`, `PreindexProviderSnapshot`, `LoadOrBuildProviderSnapshot`) pass `nil` for `preloadedFull`.
+
+**What was deleted:** the duplicated key-compute/read/validate/derive/persist choreography inside `loadOrDeriveSelectiveSearchSnapshot`, including its re-entrant fallback that re-resolved HEAD/repoKey, re-read the just-invalidated selective entry, and re-read the full snapshot from disk. The derivation-failure path now falls through within the same call (disk-full-entry attempt at the freshly resolved HEAD, then fresh build), preserving the old fallback's observable behavior — in the HEAD-move scenario the stale disk entry fails validation at the new commit and a fresh build at the advanced HEAD is returned as a miss, which the regression test confirms.
+
+**Not touched:** internal/sem/search.go, internal/sem/search_cache_test.go, and all files owned by the concurrent agent. Nothing staged or committed.
+
+**Verification:**
+- `gofmt -l` on search_cache.go, search_cache_test.go, search.go: clean.
+- `go vet ./internal/sem/`: pass (only a cgo warning from the third-party go-tree-sitter/lua dependency).
+- `go test -count=1 -run 'Search|Cache|Preindex|Selective' ./internal/sem/`: ok (12.1s) — includes TestWarmSelectiveSearchPersistsAndReusesPerQueryCache, TestWarmSelectiveDerivationFailureFallsBackToFreshBuild, TestPreindexProviderSnapshotServesSelectiveSearch, TestFullPreindexSearchMatchesColdSelectiveGraphExpansion.
+- Full `go test -count=1 ./internal/sem/`: ok (35.5s).</result>
+<usage><subagent_tokens>49281</subagent_tokens><tool_uses>13</tool_uses><duration_ms>208036</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>a9c001f035c093436</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-thomi-Projects-entire-graph/fffff083-8032-496a-81ae-244c3c25ea0f/tasks/a9c001f035c093436.output</output-file>
+<status>completed</status>
+<summary>Agent "Tree-sitter scanner restructure" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>Restructure complete. All suites green, working tree left uncommitted, search_cache files untouched.
+
+## Architecture of the new scan state
+
+**New file `/Users/thomi/Projects/entire-graph/internal/sem/js_scopes.go` (712 lines).** Core type:
+
+```go
+type jsScanState struct {
+    namespaces   []jsNamespaceScope  // body ranges + full dotted paths + declaring scope
+    namespaceSet map[string]bool
+    bindings     []jsBindingScope    // every shadow-capable binding with its byte-range scope
+    calls        []jsDottedCall      // {parts []string, startByte, line}, sorted by startByte
+    lineStarts   []int
+    contentLen   int
+    parsed       bool
+}
+```
+
+Built by `newJSScanState(path, content)` → `jsScanGrammar` (mirrors ParseWithStatus routing: `.ts`→typescript grammar + `maskTypeScriptUnsupportedSyntax` (length-preserving), `.tsx`/`.jsx`→tsx, Flow-sniffed `.js`→tsx + flow mask, else javascript) → `buildJSScanState` does one parse and one recursive walk (`jsScopeWalker`) carrying `{lexStart/End, funcStart/End, namespace}` context. `newJSScanStateForContent` (typescript grammar, tsx fallback) backs the content-only test wrapper `jsNamespaceScopes`, whose signature — and `jsNamespaceBySymbolID`'s — is preserved because the untouchable `search_cache_test.go` calls both.
+
+**Threading:** provider.go builds the state once per file (old lines 2583–2589), replacing `jsNamespaceScopes` + `jsNamespaceBySymbolID` + `jsFileBindingScopes` triple derivation. Consumers: `jsScan.namespaceCallsForSymbol(from)` (per-symbol, binary-searches sorted calls within the symbol's byte range, line-range fallback for byte-less symbols) and `jsScan.topLevelNamespaceCalls(currentFileSymbols)` (same line-coverage rule as `topLevelBlockFromLines`). Each call site is canonicalized at its own position: shadow check via `jsBindingShadowsAt(bindings, root, callByte)`, caller namespace via `jsNamespaceAtByte(namespaces, callByte)`. Parameter names now flow from the AST at parse time: `Entity.parameterNames` (model.go) populated in `walkEntitiesScoped` (parser.go) via `jsEntityParameterNames` (formal_parameters node), copied into `SymbolRecord.parameterNames` for the search-cache round-trip.
+
+## Per-bug elimination
+
+1. **`&lt;/td&gt;` phantom regex** — JSX is `jsx_element`/`jsx_expression` nodes; no regex-start heuristic exists anymore. Calls inside JSX are ordinary `call_expression` nodes.
+2. **Quote inside regex** — `regex` is a leaf node; no string/comment stripping happens before anything.
+3. **`{` in regex after `)`/identifier** — no brace-scope index exists; scopes are `statement_block`/function node ranges.
+4. **Namespace-body statement calls** — top-level calls no longer share one `callerNamespace ""`; each call canonicalizes through `jsNamespaceAtByte` at its position, so `B.f();` inside `namespace A` resolves to `A.B.f`.
+5. **for-of/in destructured heads** — `for_in_statement` left-pattern bindings registered whenever a `var/let/const` token is present; no `=` requirement.
+6. **`&lt;` comparison as angle depth** — destructured names come from `object_pattern`/`object_assignment_pattern` nodes; `x &lt; 2` is a `binary_expression` never entered.
+7. **Generic clause with function type** — parameters come from the `parameters` field (`formal_parameters`), disjoint from `type_parameters`.
+- **Efficiency:** var hoisting uses the walker's enclosing-function context (no O(vars×symbols) loop); one parse + one walk per file per snapshot build replaces 4× re-strip and 2× namespace rescans; per-symbol call lookup is O(log C).
+
+## Tests
+
+Added 7 (all in typescript_test.go): `TestTSXClosingTagsDoNotSwallowNamespaceCalls`, `TestTypeScriptQuoteAndBacktickInRegexKeepNamespaceCalls`, `TestTypeScriptRegexBraceInStatementPositionKeepsScopes`, `TestTypeScriptNamespaceBodyStatementCallResolvesRelativeReceiver`, `TestTypeScriptForOfDestructuredHeadShadowsNamespaceCall`, `TestTypeScriptDestructuringDefaultComparisonKeepsLaterBindings`, `TestTypeScriptGenericFunctionTypeClauseKeepsParameterShadow`. Replaced `TestJSParameterNamesStopsAtClosingListAndKeepsGenericCommas` (helper deleted) with `TestTypeScriptEntityParameterNamesComeFromFormalParameters` asserting the same guarantee from the AST path. Node-type assumptions were verified empirically against the vendored grammars (internal_module/module, nested_identifier, for_in_statement kind tokens, required/optional_parameter, switch_body, abstract_class_declaration) before writing the walker.
+
+## Dead code removed
+
+716 lines deleted from call_scanners.go: `stripJSScannedSource`, `maskJSRegexLiterals`, `jsRegexLiteralStartsAt/End`, `jsNamespaceCallIdentifiers(At)`, `jsFileBindingScopes`, `jsAssignmentFollows`, `jsForHeadBindingScope`, `jsNamespaceMergesBinding`, `jsSymbolParameterNames`, `jsLexicalBindingShadowsAt` (was already caller-less), `jsBraceScopes`+methods, `jsParameterNames`, `jsDestructuredNames`, `jsTopLevelByteIndex`, `jsSplitParameterList`, `jsDottedCallIdentifiers`, and 5 regexes. Kept-and-moved to js_scopes.go: `jsNamespaceScope`/`jsBindingScope` types, `jsBindingShadowsAt`, `jsCanonicalNamespace`, `jsNamespaceAtByte/Line`, `jsNamespaceBySymbolID` (its fallback now strips only strings/comments). Text-based `jsCallableArgumentIdentifiers` and `callLikeIdentifiers` remain, per scope guidance.
+
+## Results
+
+`gofmt -s -l internal/sem` clean; `go vet ./internal/sem/ ./internal/cli/` clean; `go test -count=1 ./...` fully green (sem 38s, cli 3.5s), including all five round-1 regression tests and the precision suite, unchanged.
+
+## Behavior deltas vs the heuristic version
+
+- Namespace calls inside template-string interpolations and JSX now resolve (old masking blanked them entirely).
+- Optional-chained receivers (`A.B?.f()`) now flatten and resolve; the old regex could not match across `?.`.
+- Block-less loop bodies (`for (const X of xs) X.f();`) are now correctly shadowed; loop-head scope is the whole loop statement node (old: brace block only, conservative fallback otherwise).
+- `const K = class Name {}` no longer registers a phantom `Name` binding; `const enum E` binds `E` (old regex bound the literal name "enum").
+- Files where tree-sitter fails outright (hard error/timeout) classify no namespace calls; partial parses with ERROR nodes still work since the walk tolerates error subtrees.
+- `symbol.parameterNames` is now in declaration order (was sorted); the search-cache round-trip is order-agnostic.</result>
+<usage><subagent_tokens>183470</subagent_tokens><tool_uses>60</tool_uses><duration_ms>1350681</duration_ms></usage>
+</task-notification>
