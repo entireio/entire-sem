@@ -4,7 +4,9 @@
   "strategy": "manual-commit",
   "branch": "feat/retrieval-followups",
   "checkpoints_count": 6,
-  "files_touched": null,
+  "files_touched": [
+    "internal/cli/neighbors.go"
+  ],
   "sessions": [
     {
       "metadata": "/7d/7b22abe5a1/0/metadata.json",
@@ -22,11 +24,11 @@
     }
   ],
   "token_usage": {
-    "input_tokens": 1413471,
-    "cache_creation_tokens": 0,
-    "cache_read_tokens": 84415744,
-    "output_tokens": 182870,
-    "api_call_count": 771
+    "input_tokens": 1413884,
+    "cache_creation_tokens": 342522,
+    "cache_read_tokens": 118067826,
+    "output_tokens": 343746,
+    "api_call_count": 979
   },
   "combined_attribution": {
     "calculated_at": "2026-07-21T21:00:08.075117Z",

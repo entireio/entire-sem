@@ -3,22 +3,23 @@
   "checkpoint_id": "7d7b22abe5a1",
   "session_id": "fffff083-8032-496a-81ae-244c3c25ea0f",
   "strategy": "manual-commit",
-  "created_at": "2026-07-21T21:01:43.822639Z",
+  "created_at": "2026-07-21T21:43:21.201364Z",
   "branch": "feat/retrieval-followups",
   "checkpoints_count": 3,
-  "files_touched": [],
+  "save_step_count": 1,
+  "files_touched": [
+    "internal/cli/neighbors.go"
+  ],
   "agent": "Claude Code",
   "model": "claude-fable-5",
-  "turn_id": "9be571a0b925",
-  "checkpoint_transcript_start": 1690,
-  "transcript_lines_at_start": 1690,
-  "compact_transcript_start": 240,
+  "turn_id": "d9823b4f6c4d",
+  "compact_transcript_start": 0,
   "token_usage": {
-    "input_tokens": 0,
-    "cache_creation_tokens": 0,
-    "cache_read_tokens": 0,
-    "output_tokens": 0,
-    "api_call_count": 0
+    "input_tokens": 413,
+    "cache_creation_tokens": 342522,
+    "cache_read_tokens": 33652082,
+    "output_tokens": 160876,
+    "api_call_count": 208
   },
   "skill_events_version": 1,
   "skill_events": [
@@ -55,7 +56,7 @@
         "signal": "skill_tool_use",
         "confidence": "explicit"
       },
-      "turn_id": "9be571a0b925",
+      "turn_id": "d9823b4f6c4d",
       "transcript_anchor": {
         "unit": "line",
         "start": 21,
@@ -86,7 +87,7 @@
         "signal": "skill_tool_use",
         "confidence": "explicit"
       },
-      "turn_id": "9be571a0b925",
+      "turn_id": "d9823b4f6c4d",
       "transcript_anchor": {
         "unit": "line",
         "start": 1221,
@@ -108,6 +109,18 @@
     }
   ],
   "session_metrics": {
-    "turn_count": 39
+    "turn_count": 42
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-07-21T21:43:21.088627Z",
+    "agent_lines": 54,
+    "agent_removed": 11,
+    "human_added": 127,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 181,
+    "total_lines_changed": 204,
+    "agent_percentage": 31.862745098039213,
+    "metric_version": 2
   }
 }
