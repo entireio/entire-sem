@@ -3,11 +3,8 @@
   "checkpoint_id": "7d7b22abe5a1",
   "strategy": "manual-commit",
   "branch": "feat/retrieval-followups",
-  "checkpoints_count": 10,
-  "files_touched": [
-    "internal/cli/neighbors.go",
-    "internal/cli/neighbors_efficiency_test.go"
-  ],
+  "checkpoints_count": 9,
+  "files_touched": null,
   "sessions": [
     {
       "metadata": "/7d/7b22abe5a1/0/metadata.json",
@@ -25,11 +22,11 @@
     }
   ],
   "token_usage": {
-    "input_tokens": 1413776,
-    "cache_creation_tokens": 252603,
-    "cache_read_tokens": 103200840,
-    "output_tokens": 294961,
-    "api_call_count": 925
+    "input_tokens": 1413810,
+    "cache_creation_tokens": 284639,
+    "cache_read_tokens": 107345354,
+    "output_tokens": 313941,
+    "api_call_count": 942
   },
   "combined_attribution": {
     "calculated_at": "2026-07-21T18:55:24.917085Z",
