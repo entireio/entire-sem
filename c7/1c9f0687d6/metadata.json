@@ -3,11 +3,8 @@
   "checkpoint_id": "c71c9f0687d6",
   "strategy": "manual-commit",
   "branch": "feat/retrieval-followups",
-  "checkpoints_count": 19,
-  "files_touched": [
-    "internal/sem/protobuf.go",
-    "internal/sem/protobuf_test.go"
-  ],
+  "checkpoints_count": 10,
+  "files_touched": null,
   "sessions": [
     {
       "metadata": "/c7/1c9f0687d6/0/metadata.json",
@@ -25,11 +22,11 @@
     }
   ],
   "token_usage": {
-    "input_tokens": 1413726,
-    "cache_creation_tokens": 210253,
-    "cache_read_tokens": 98053123,
-    "output_tokens": 272971,
-    "api_call_count": 900
+    "input_tokens": 1413519,
+    "cache_creation_tokens": 39780,
+    "cache_read_tokens": 89374288,
+    "output_tokens": 204160,
+    "api_call_count": 795
   },
   "combined_attribution": {
     "calculated_at": "2026-07-21T18:11:12.834079Z",

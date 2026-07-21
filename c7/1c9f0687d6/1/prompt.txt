@@ -117,3 +117,93 @@ Why do we need a split?
 ---
 
 Ok, split it
+
+---
+
+Run an adverserial review on the PR
+
+---
+
+Update?
+
+---
+
+<task-notification>
+<task-id>we205ki8s</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-thomi-Projects-entire-graph/fffff083-8032-496a-81ae-244c3c25ea0f/tasks/we205ki8s.output</output-file>
+<status>completed</status>
+<summary>Dynamic workflow "Workflow-backed code review — one finder per correctness angle plus one finder covering all cleanup angles, an independent verifier for every distinct (file, line) location across the pooled candidates, then a ranked, capped findings report." completed</summary>
+<result>{"level":"high","target":"— review PR #45's diff: the four commits on feat/retrieval-followups vs main (proto2 extraction, neighbors symbol-ID support, binding-scope-aware JS/TS call resolution, search cache confinement/tie-breaking). Adversarial emphasis requested by the user: actively try to break the changes, especially scope-resolution edge cases in call_scanners.go/provider.go and cache-key/confinement correctness in search_cache.go.","summary":"High-effort review of the JS/TS namespace-call disambiguation and search-cache changes surfaced 10 distinct issues after merging duplicates. The most serious are empirically confirmed regressions that silently drop real CALLS edges (cross-file namespace merging at provider.go:2787 and the broadened TypeScript receiver guard at provider.go:4270), phantom or missing edges from regex-based scope tracking gaps (nested destructuring, regex-literal brace corruption, loop-head bindings), and a warm-path rewrite in search.go that both bypasses the persisted selective cache (re-running full relation resolution on every preindexed query) and hard-fails on provenance drift where the cold path falls back gracefully. Two CLI-level correctness bugs in neighbors (file-filter suppressing valid ID lookups, inconsistent --max-context-bytes semantics) and a quadratic jsBraceScopeAt scan round out the report.","findings":[{"file":"internal/sem/provider.go","line":2787,"summary":"Namespace-classified JS/TS calls no longer fall back to generic name resolution when resolveJSNamespaceCallTargets finds no same-file match, so calls into a namespace merged across files (a core TS namespace feature) lose their CALLS edge entirely. [same root cause also at: internal/sem/provider.go:1722]","failure_scenario":"Empirically confirmed: with src/a.ts `namespace A { export function run() { A.helper(); } }` and src/b.ts `namespace A { export function helper() {} }`, main emits CALLS run -&gt; helper ('direct call expression matched globally unique symbol name'); the branch emits no CALLS relation for the call. resolveJSNamespaceCallTargets (line 1722) only scans currentFileSymbols and returns nil unless exactly one same-file namespace member matches, and the call site takes the namespace branch instead of resolveCallTargets with no fallback (removed behavior: main added the terminal name to callNames and resolved it workspace-wide). User-visible: search relation expansion and `graph neighbors` report zero callers/callees across merged-namespace boundaries that were previously linked.","category":"correctness","verdict":"CONFIRMED"},{"file":"internal/sem/provider.go","line":4270,"summary":"The TypeScript inherited-method fallback guard was broadened from 'receiver typed with an imported type' to 'receiver has any parameter type annotation', dropping real CALLS edges when the annotation is a generic type parameter or otherwise unresolvable non-imported type.","failure_scenario":"Empirically confirmed by building snapshots on both revisions: for `class Base { helper(): void {} } class Worker extends Base { run&lt;T extends Base&gt;(item: T): void { item.helper(); } }`, main emits CALLS Worker.run -&gt; Base.helper (reason 'TypeScript receiver call matched unique same-file method on caller inheritance chain'); the branch emits no CALLS edge at all because varTypes[\"item\"]=\"T\" now unconditionally skips the fallback (old guard on main line 4172 was `typeName != \"\" &amp;&amp; len(importsByName[typeName]) &gt; 0`). User-visible: `graph neighbors --symbol helper --relation CALLS --direction in` no longer lists Worker.run, so an agent tracing callers of an inherited method misses a real call site.","category":"correctness","verdict":"CONFIRMED"},{"file":"internal/sem/call_scanners.go","line":318,"summary":"jsBraceScopeAt counts braces over stripCodeLiteralsAndComments output, which does not mask JS regex literals, so a `{` inside a regex (e.g. `s.replace(/\\{/g, '')`) permanently corrupts the brace stack and misassigns every subsequent binding scope.","failure_scenario":"A TS/JS file contains `const cleaned = s.replace(/\\{/g, '');` before `function A() {}` merged with `namespace A { export function parse() {} }`. The phantom `{` from the regex shifts jsBraceScopeAt results: jsNamespaceMergesBinding's equality check (binding scope == namespace parent scope) fails, so the merged `function A` binding is registered as a file-wide shadow of name `A`, and every `A.parse()` call in the file is suppressed by jsBindingShadowsAt — the CALLS edge disappears from snapshots, search, and neighbors output. The same miscount can also truncate jsNamespaceScopes' endByte (findMatchingStaticDelimiter closes on the regex brace's pairing), silently dropping namespace membership for symbols declared after the regex.","category":"correctness","verdict":"CONFIRMED"},{"file":"internal/sem/call_scanners.go","line":15,"summary":"jsDestructuredBindingRe ([^{}]*) and jsArrayBindingRe ([^\\[\\]]*) cannot match nested destructuring patterns, so locals bound via nested destructuring are never registered as binding scopes and fail to shadow same-file namespace names. [same root cause also at: internal/sem/call_scanners.go:15, internal/sem/call_scanners.go:15]","failure_scenario":"A TS file declares `namespace Utils { export function helper() {} }` and a function contains `const { config: { Utils } } = pkg; Utils.helper();`. The nested pattern never matches the binding regexes, so `Utils` is not recorded as a lexical binding, jsBindingShadowsAt returns false, and the call is classified as a namespace call and resolved to the same-file namespace's helper — emitting exactly the kind of phantom CALLS edge (wrong caller-&gt;callee in neighbors/search output) this PR claims to eliminate. Flat destructuring is handled; only nested patterns silently fall through.","category":"correctness","verdict":"CONFIRMED"},{"file":"internal/sem/call_scanners.go","line":227,"summary":"Loop-head const/let bindings (for (const X of ...), for (let X in ...)) are assigned the enclosing brace scope by jsBraceScopeAt because the for-parentheses are not braces, so the shadow covers the whole enclosing function (or the whole file at top level) instead of just the loop.","failure_scenario":"A file declares `namespace Ns { export function fn() {} }` and a function contains `for (const Ns of items) { ... }` in one branch plus a genuine `Ns.fn()` call elsewhere in the same function (outside the loop). jsBraceScopeAt at the loop-variable position returns the function's (or file's) brace pair, so the binding shadows the entire function/file and jsNamespaceCallIdentifiersAt drops the real namespace call — a silently missing CALLS edge, so `entire graph neighbors --symbol Ns.fn` omits a true caller. Common in minified bundles where short loop variables collide with namespace names.","category":"correctness","verdict":"CONFIRMED"},{"file":"internal/sem/search.go","line":354,"summary":"The warm path (preindex cache hit + selective query) unconditionally re-derives the selective snapshot via selectiveSearchSnapshotFromFull on every query, never consulting or persisting the per-query selective cache entry that loadOrBuildSearchSnapshot both reads and writes on the cold path. [same root cause also at: internal/sem/search.go:354, internal/sem/search.go:352, internal/sem/search.go:352]","failure_scenario":"With a complete `graph index --profile full` preindex present, every repeated identical `graph search` re-runs full relation resolution (forEachRelation over all selected files, plus FILE_CHANGES_WITH git scans) at query time; before this PR a preindex hit served with no query-time re-resolution, and the cold path persists the derived selective view precisely so repeated queries are instant. Users see warm full-profile searches become consistently slower than the same query without a preindex-then-repeat pattern, contradicting the cache's purpose on large repos.","category":"correctness","verdict":"CONFIRMED"},{"fi
+... (truncated 3726 chars, full result in /private/tmp/claude-501/-Users-thomi-Projects-entire-graph/fffff083-8032-496a-81ae-244c3c25ea0f/tasks/we205ki8s.output)</result>
+<diagnostics>Per-agent results: /Users/thomi/.claude/projects/-Users-thomi-Projects-entire-graph/fffff083-8032-496a-81ae-244c3c25ea0f/subagents/workflows/wf_a09e614c-708/journal.jsonl — one {"type":"result",...} line per completed agent with its full return value.
+If the result above is empty or unexpected, Read this file BEFORE diagnosing — do not assume agents returned non-empty results.
+To re-run with edited post-processing: Workflow({scriptPath: '/Users/thomi/.claude/projects/-Users-thomi-Projects-entire-graph/fffff083-8032-496a-81ae-244c3c25ea0f/workflows/scripts/code-review-wf_a09e614c-708.js', resumeFromRunId: 'wf_a09e614c-708', args: "high — review PR #45's diff: the four commits on feat/retrieval-followups vs main (proto2 extraction, neighbors symbol-ID support, binding-scope-aware JS/TS call resolution, search cache confinement/tie-breaking). Adversarial emphasis requested by the user: actively try to break the changes, especially scope-resolution edge cases in call_scanners.go/provider.go and cache-key/confinement correctness in search_cache.go."}) — agents whose (prompt, opts) are unchanged replay from cache.</diagnostics>
+<usage><agent_count>26</agent_count><agents_done>26</agents_done><agents_error>0</agents_error><agents_skipped>0</agents_skipped><agents_empty_result>0</agents_empty_result><subagent_tokens>1211568</subagent_tokens><tool_uses>346</tool_uses><duration_ms>1043630</duration_ms></usage>
+</task-notification>
+
+---
+
+Yes, fix them all
+
+---
+
+<task-notification>
+<task-id>a69ce696a1535259e</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-thomi-Projects-entire-graph/fffff083-8032-496a-81ae-244c3c25ea0f/tasks/a69ce696a1535259e.output</output-file>
+<status>completed</status>
+<summary>Agent "Fix neighbors CLI findings 8-9" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>Done. Only the two intended files were touched; nothing committed.
+
+**Finding 8 (ID lookup vs --file, `internal/cli/neighbors.go`)**
+- In `buildNeighborResponse`, an exact symbol-ID match no longer applies the `--file` filter at all. Rationale documented in a comment: the stable ID already encodes its defining file, so a stale or differently spelled `--file` must never turn an ID the tool itself printed into a silent empty result. `exactIDFound` still suppresses the name fallback, but the ID match is now always returned.
+- Added `normalizeNeighborFileFilter(raw, repoRoot)` and applied it to the name/qualified-name fallback path: converts backslashes to slashes, trims whitespace, `path.Clean`s away `./` prefixes and redundant separators, strips the repo root (case-insensitively) from absolute paths inside the repo, and treats `""`/`.`/root itself as "no filter". Comparison remains `EqualFold`, matching the prior case-insensitive behavior. No change to `search.go` was needed (`searchNonNegativeIntFlag` already exists there).
+
+**Finding 9 (`--max-context-bytes 0`)**
+- `parseNeighborFlags` now uses `searchNonNegativeIntFlag` (same helper as `graph search`) with a comment that 0 disables the cap. Downstream `writeAgentNeighborsBounded` already treats `budget &lt;= 0` as unbounded (writes the full agent output), so 0 behaves identically to search's unbounded semantics; negative values are still rejected.
+
+**Tests (`internal/cli/neighbors_efficiency_test.go`)**
+- `TestNeighborsExactSymbolIDDisambiguatesSameFileOverloads` — the mismatched-file block previously asserted the buggy empty result; now asserts the ID-matched definition is returned for stale `other.go`, `./service.go`, `sub\service.go`, and an absolute `/somewhere/else/service.go`.
+- `TestNeighborsFileFilterNormalizesPathSpellings` (new) — name lookup with `--file` spelled as `src/one.py`, `./src/one.py`, `src//one.py`, `src\one.py`, and repo-absolute `/repo/root/src/one.py` all select the same single definition.
+- `TestNeighborMaxContextBytesZeroMeansUnbounded` (replaces `TestNeighborMaxContextBytesMustBePositive`) — `0` is accepted and parsed as 0, `-1` is rejected with the "non-negative" error, the default remains 16384, and a zero budget produces byte-identical output to the unbounded writer (no `!output-truncated` marker) for a 50-caller response.
+
+**Verification**: `gofmt -l internal/cli/` clean, `go vet ./internal/cli/` clean, `go test -count=1 ./internal/cli/` → ok (2.674s), all three targeted tests PASS. (Build warnings from the third-party `go-tree-sitter/lua` C sources are pre-existing and unrelated.)</result>
+<usage><subagent_tokens>65921</subagent_tokens><tool_uses>20</tool_uses><duration_ms>205165</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>aa3d70b216564610b</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-thomi-Projects-entire-graph/fffff083-8032-496a-81ae-244c3c25ea0f/tasks/aa3d70b216564610b.output</output-file>
+<status>completed</status>
+<summary>Agent "Fix search warm-path findings 6-7" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>Done. My changes are confined to the sem files (the `internal/cli` modifications in git status are from a concurrent agent; `search_test.go` needed no changes).
+
+## Finding 6 — warm path bypassed the per-query selective cache
+
+- `/Users/thomi/Projects/entire-graph/internal/sem/search_cache.go`: added `loadOrDeriveSelectiveSearchSnapshot(ctx, repo, providerVersion, options, cacheDir, disableCache, full)`. It applies the exact cold-path discipline: check the per-query selective cache entry first (`readSearchSnapshot` + `validCachedSearchSnapshot`), on miss derive via `selectiveSearchSnapshotFromFull` from the in-memory preindexed snapshot and persist best-effort via `writeSearchSnapshot`/`newCachedSearchSnapshot` (same key computation as `loadOrBuildSearchSnapshot`). No logic duplicated beyond the shared helper calls; guard cases (disabled cache, worktree, empty cache dir, no OnlyFiles, HEAD-resolve failure) delegate to `loadOrBuildSearchSnapshot`.
+- `/Users/thomi/Projects/entire-graph/internal/sem/search.go` (warm branch, ~line 352): replaced the unconditional `selectiveSearchSnapshotFromFull` call with `loadOrDeriveSelectiveSearchSnapshot`, updating `cacheHit` from its return so `IndexCacheHit` stays accurate. Repeated identical warm queries now load the persisted selective entry instead of re-running relation resolution + FILE_CHANGES_WITH git scans.
+
+## Finding 7 — warm derivation error aborted the search
+
+- In `loadOrDeriveSelectiveSearchSnapshot`, a `selectiveSearchSnapshotFromFull` error is soft (mirrors the cold-path `deriveErr` fall-through at search_cache.go:136-146): it falls back to `loadOrBuildSearchSnapshot`, which builds fresh at the current HEAD. A stale preindex/provenance mismatch no longer surfaces "cached full snapshot provenance mismatch" from `SearchRepository`.
+
+## Tests (search_cache_test.go)
+
+- `TestWarmSelectiveSearchPersistsAndReusesPerQueryCache` (new): first warm query persists the selective entry at the computed key path; second identical query is a cache hit with identical results and unchanged file ModTime (no re-derive/rewrite); after deleting the full preindex entry (re-derivation impossible), the third query still reports `IndexCacheHit` with identical results, proving reuse of the persisted entry.
+- `TestWarmSelectiveDerivationFailureFallsBackToFreshBuild` (new): loads the preindexed full snapshot, advances HEAD with an empty commit (simulated provenance mismatch — confirmed `selectiveSearchSnapshotFromFull` errors on it), then asserts the warm loader returns nil error, no cache hit, a snapshot at the advanced HEAD, and `reflect.DeepEqual` with an uncached OnlyFiles build.
+- `TestPreindexProviderSnapshotServesSelectiveSearch` (updated): the assertion that warm search must NOT materialize a query-specific cache entry (which enforced the Finding 6 regression) now asserts the entry IS persisted. Its existing warm-vs-uncached result-equality check still passes, preserving the confinement invariant, as does `TestFullPreindexSearchMatchesColdSelectiveGraphExpansion` unchanged.
+
+## Verification
+
+- `gofmt -l` on touched files: clean.
+- `go vet ./internal/sem/`: pass (only a pre-existing C warning from the go-tree-sitter/lua dependency).
+- `go test -count=1 -run 'Search|Cache|Preindex|Selective' ./internal/sem/`: ok (10.6s).
+- Full `go test -count=1 ./internal/sem/`: ok (72.5s).</result>
+<usage><subagent_tokens>90517</subagent_tokens><tool_uses>21</tool_uses><duration_ms>551407</duration_ms></usage>
+</task-notification>
