@@ -1,0 +1,119 @@
+Review again
+
+---
+
+Fix the nits
+
+---
+
+Ok, let's get it merged then
+
+---
+
+What's still open on entire=graph then?
+
+---
+
+Word
+
+---
+
+You didn't push why?
+
+---
+
+Ok, so ready to merge?
+
+---
+
+<task-notification>
+<task-id>bkmpv5b2w</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-thomi-Projects-entire-graph/fffff083-8032-496a-81ae-244c3c25ea0f/tasks/bkmpv5b2w.output</output-file>
+<status>completed</status>
+<summary>Background command "Wait for checks to register, then watch until done" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+Ok, merge it
+
+---
+
+I am ready
+
+---
+
+"likely obsolete" is not good enough
+
+---
+
+Yes
+
+---
+
+<task-notification>
+<task-id>wgd0b1ugy</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-thomi-Projects-entire-graph/fffff083-8032-496a-81ae-244c3c25ea0f/tasks/wgd0b1ugy.output</output-file>
+<status>completed</status>
+<summary>Dynamic workflow "Proof-grade keep/delete verdict for each divergent local branch vs main" completed</summary>
+<result>[{"branch":"backup-ts-fix","verdict":"SAFE_DELETE","evidence":"Branch tip f72f7629; merge-base with main is 003b9856. Delta is exactly two non-merge commits: 25ecc7e \"Resolve TS abstract-class methods and inherited this/self calls\" and f72f762 \"Resolve static ClassName.method() calls and arrow-function class fields\". No PR exists for this head (gh pr list --head backup-ts-fix --state all returned []), and git cherry marks both commits \"+\" — but that is because the same work landed on main as reapplied commits with identical subjects: 2e58ec5 and e9394ee, both verified ancestors of main via git merge-base --is-ancestor. Proof of content containment: git diff f72f762 e9394ee (branch tip vs main's corresponding commit) removes zero branch content — it contains only main-side additions (an unrelated language_tiers snapshot-header feature, its test, golden-file updates, and a gofmt struct realignment). Every distinctive element of the branch exists in main's current tree, confirmed by git grep on main: superContainerByID, lookupMethodUpChain, firstTypeLikeNamedPreferFile, the abstract_class_declaration case in parser.go (line 4189, with its original comment), functionLikeValue, the signature multi-line collapse (parser.go line 6300), and the reason strings \"inherited from a base type\" and \"static method call resolved to the named type\". The features were subsequently extended in main to C#, Kotlin, Rust, Swift, and Dart (csharp.go, kotlin.go, rust.go, swift.go, dart.go all reference them), i.e. main has evolved past the branch, not diverged from it. The test fixture internal/sem/testdata/fixtures/typescript-oo/shapes.ts is byte-identical between branch tip and main; the golden-file differences vs main are solely from later main-side features (e.g. language_tiers header field).","unique_content":"none"},{"branch":"codex/docs-honor-ignore-lists","verdict":"SAFE_DELETE","evidence":"Branch tip 160fb81df6ac81a8c74461ed7bdf82517a1b22a5, merge-base with main 78d4950. The branch has exactly 2 non-merge commits: 0fd2317 \"Honor ignore files in worktree snapshots\" and 160fb81 \"Add include files for worktree snapshots\" (728 insertions across README.md, docs/semantic_provider_requirements.md, internal/cli/root.go(+test), internal/sem/ignore.go, provider.go, provider_test.go). No PR exists for this head (gh pr list returned []). However, `git cherry main codex/docs-honor-ignore-lists` marks BOTH commits with \"-\" (patch-equivalent in main), and git patch-id --stable proves exact matches: 0fd2317 (patch-id 6c7f6be2...) == main commit a55acac \"Honor ignore files in worktree snapshots\"; 160fb81 (patch-id 11b66210...) == main commit 1849a27 \"Add include files for worktree snapshots\". Both a55acac and 1849a27 are confirmed ancestors of main (git merge-base --is-ancestor). internal/sem/ignore.go exists in main and the feature has since evolved further there (e.g. commits 7c6b3c1, fb999ef touching ignore behavior). The branch was evidently rebased/cherry-picked onto main; its content landed byte-for-byte as patches.","unique_content":"none — both commits are patch-identical (same git patch-id) to main commits a55acac and 1849a27; no file content exists only on this branch"},{"branch":"codex/memory-large-repos","verdict":"SAFE_DELETE","evidence":"Branch tip 08fb1c6b8252f45c57372e30a6143fd13ad79147; merge-base with main is 6f567b81712f77d44438f909f1d64dafd058224c. The branch's 3 commits (0c0f398, 992599d, 08fb1c6; 8 files, +267/-22) were squash-landed into main as commit 4aa8d35189e50f46977466446e4229e0149b1b38 (\"compact syntax-only snapshot memory\"): its parent is exactly the merge-base 6f567b8, and `diff &lt;(git diff 6f567b8 codex/memory-large-repos) &lt;(git show 4aa8d35 --format=)` is byte-for-byte empty (IDENTICAL_PATCH). `git merge-base --is-ancestor 4aa8d35 main` confirms it is in main's history. No PR exists (`gh pr list --head codex/memory-large-repos --state all` returned []), and `git cherry` shows `+` for all three commits only because the squash defeats per-commit patch-id matching — the cumulative content match is exact.","unique_content":"none"},{"branch":"codex/speed-large-repos","verdict":"SAFE_DELETE","evidence":"Merge-base with main is e965a6f; the branch's entire delta is a single non-merge commit 0a8e7161aa10dc68dae953a67494122e8aa0e231 \"speed up large repo snapshots\" (7 files, +333/-31: internal/gitutil/git.go, internal/gitutil/git_test.go, internal/sem/provider.go, internal/sem/parser.go, internal/sem/provider_test.go, docs/benchmarks.md, docs/semantic_provider_requirements.md). No PR exists for this head (gh pr list --head returned []). However, git cherry main codex/speed-large-repos reports \"- 0a8e716\" (patch-equivalent in main), and a patch-id scan proves it: the branch commit's stable patch-id 96e462c4ccfaf3892189f9d53e3263c73248c7f5 exactly matches main commit 6f567b81712f77d44438f909f1d64dafd058224c \"speed up large repo snapshots\", confirmed an ancestor of main via git merge-base --is-ancestor. The identical change therefore landed in main verbatim. Remaining file differences between the branch and main are entirely main being ahead (e.g., internal/sem/provider.go is ~15k lines larger in main from later work like commits 0e071d1, 3b48412, d6e7f65), not branch-only content.","unique_content":"none"},{"branch":"feat/go-pkgvar-imported-type","verdict":"SAFE_DELETE","evidence":"Branch tip 2e2b768 is 1 commit ahead of merge-base 1a019d4 (\"Resolve method calls on package vars of package-qualified types\"; delta: internal/sem/pkgvar_test.go +49, internal/sem/provider.go +114/-17). GitHub shows two PRs for this head ref: PR #14 (head == 2e2b768) CLOSED unmerged, and PR #15 (same title, from fork suhaanthayyil/feat/go-pkgvar-imported-type, head 27d781f) MERGED 2026-06-28 via merge commit d83db6b; git branch --contains confirms 27d781f is in main. git cherry flags 2e2b768 as \"+\" only because 27d781f is a rebase — a textual diff of the two patches shows differences confined to hunk offsets and a pre-existing superContainerByID parameter in the newer base, no substantive divergence. Content verification against current main: (1) git diff 2e2b768 main -- internal/sem/pkgvar_test.go is empty (test file byte-identical); (2) collectPackageVarTypes and resolveQualifiedType function bodies are byte-identical between branch and main; (3) pkgQualVarRe regex present verbatim in main (provider.go:3488), pkgVarTypesByDir wiring at main provider.go:2333-2352 and passed into receiverCallRelations at :2960, the pkgVarTypes[call.Receiver] fallback at :4034, and the reason string \"method call on package var resolved via qualified imported type\" at :4044.","unique_content":"none — the branch's entire delta (pkgvar_test.go and the package-var-of-imported-type resolution in provider.go) landed in main via merged PR #15 (commit 27d781f, a rebased copy of branch commit 2e2b768) and survives verbatim or in evolved-but-superset form in main's current internal/sem/provider.go"},{"branch":"feat/hybrid-lsp-plan","verdict":"KEEP","evidence":"merge-base d3834666, tip 8491875c, main 3b48412e. Delta = 3 non-merge commits (84af3d7, bf844c9, 8491875), all adding/refining docs/hybrid-lsp-resolution-plan.md (+214 lines, only file changed). `gh pr list --head feat/hybrid-lsp-plan --state all` -&gt; [] (no PR ever opened, merged or otherwise). `git cherry main feat/hybrid-lsp-plan` marks all 3 commits '+' (no patch-equivalent in main). `git cat-file -e main:docs/hybrid-lsp-resolution-plan.md` -&gt; path does not exist in main. No superseding equivalent in main: `git grep -i lsp main -- docs/` matches only one incidental line in docs/v2-plan.md (\"Type/LSP-like resolution can become unbounded...\"), no doc covering the hybrid-LSP design, and main's tree contains no internal/sem/lsp package or any lsp-named file, so the plan was neither landed elsewhere nor implemented. `git branch -a --contains 8491875` shows only this branch holds the commits.","unique_content"
+... (truncated 7809 chars, full result in /private/tmp/claude-501/-Users-thomi-Projects-entire-graph/fffff083-8032-496a-81ae-244c3c25ea0f/tasks/wgd0b1ugy.output)</result>
+<diagnostics>Per-agent results: /Users/thomi/.claude/projects/-Users-thomi-Projects-entire-graph/fffff083-8032-496a-81ae-244c3c25ea0f/subagents/workflows/wf_9950af72-360/journal.jsonl — one {"type":"result",...} line per completed agent with its full return value.
+If the result above is empty or unexpected, Read this file BEFORE diagnosing — do not assume agents returned non-empty results.
+To re-run with edited post-processing: Workflow({scriptPath: '/Users/thomi/.claude/projects/-Users-thomi-Projects-entire-graph/fffff083-8032-496a-81ae-244c3c25ea0f/workflows/scripts/branch-obsolescence-audit-wf_9950af72-360.js', resumeFromRunId: 'wf_9950af72-360'}) — agents whose (prompt, opts) are unchanged replay from cache.</diagnostics>
+<usage><agent_count>11</agent_count><agents_done>11</agents_done><agents_error>0</agents_error><agents_skipped>0</agents_skipped><agents_empty_result>0</agents_empty_result><subagent_tokens>274383</subagent_tokens><tool_uses>104</tool_uses><duration_ms>189499</duration_ms></usage>
+</task-notification>
+
+---
+
+Do the 2 real worktrees have any changes in them?
+
+---
+
+Yes
+
+---
+
+What's next then?
+
+---
+
+Push the LSP pair on a remote, no PR needed. Then on #1, how do we validate that this doesn't break anything?
+
+---
+
+Yes
+
+---
+
+<task-notification>
+<task-id>b0joql747</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-thomi-Projects-entire-graph/fffff083-8032-496a-81ae-244c3c25ea0f/tasks/b0joql747.output</output-file>
+<status>completed</status>
+<summary>Background command "Run fast-tier bench for TS/JS/Go on WIP tree" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bp3wz34bw</task-id>
+<tool-use-id>toolu_01ACgthBZsvQ7tqwYvaoF7ip</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-thomi-Projects-entire-graph/fffff083-8032-496a-81ae-244c3c25ea0f/tasks/bp3wz34bw.output</output-file>
+<status>completed</status>
+<summary>Background command "Run same bench from main worktree with shared cache" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+Yes
+
+---
+
+Why do we need a split?
+
+---
+
+Ok, split it

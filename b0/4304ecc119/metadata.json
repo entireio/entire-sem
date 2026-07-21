@@ -3,7 +3,7 @@
   "checkpoint_id": "b04304ecc119",
   "strategy": "manual-commit",
   "branch": "feat/retrieval-followups",
-  "checkpoints_count": 3,
+  "checkpoints_count": 19,
   "files_touched": [
     "README.md",
     "internal/cli/neighbors.go",
@@ -17,13 +17,20 @@
       "compact_transcript": "/b0/4304ecc119/0/transcript.jsonl",
       "content_hash": "/b0/4304ecc119/0/content_hash.txt",
       "prompt": "/b0/4304ecc119/0/prompt.txt"
+    },
+    {
+      "metadata": "/b0/4304ecc119/1/metadata.json",
+      "transcript": "/b0/4304ecc119/1/full.jsonl",
+      "compact_transcript": "/b0/4304ecc119/1/transcript.jsonl",
+      "content_hash": "/b0/4304ecc119/1/content_hash.txt",
+      "prompt": "/b0/4304ecc119/1/prompt.txt"
     }
   ],
   "token_usage": {
-    "input_tokens": 1413471,
-    "cache_creation_tokens": 0,
-    "cache_read_tokens": 84415744,
-    "output_tokens": 182870,
-    "api_call_count": 771
+    "input_tokens": 1413726,
+    "cache_creation_tokens": 210253,
+    "cache_read_tokens": 98053123,
+    "output_tokens": 272971,
+    "api_call_count": 900
   }
 }

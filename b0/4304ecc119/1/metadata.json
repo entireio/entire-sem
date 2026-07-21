@@ -1,0 +1,98 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "b04304ecc119",
+  "session_id": "fffff083-8032-496a-81ae-244c3c25ea0f",
+  "strategy": "manual-commit",
+  "created_at": "2026-07-21T18:11:19.975637Z",
+  "branch": "feat/retrieval-followups",
+  "checkpoints_count": 16,
+  "save_step_count": 1,
+  "files_touched": [
+    "README.md",
+    "internal/cli/neighbors.go",
+    "internal/cli/neighbors_efficiency_test.go",
+    "internal/cli/root.go"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-fable-5",
+  "turn_id": "972f222b1486",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 255,
+    "cache_creation_tokens": 210253,
+    "cache_read_tokens": 13637379,
+    "output_tokens": 90101,
+    "api_call_count": 129
+  },
+  "skill_events_version": 1,
+  "skill_events": [
+    {
+      "id": "prompt-skill-claude-code-login-2026-07-20T21:30:21.052888Z",
+      "event_type": "prompt_invocation",
+      "skill": {
+        "name": "login"
+      },
+      "source": {
+        "agent": "claude-code",
+        "signal": "prompt_slash_command",
+        "confidence": "explicit"
+      },
+      "turn_id": "b38502e932da",
+      "timestamp": "2026-07-20T21:30:21.052888Z",
+      "native": {
+        "command": "/login"
+      },
+      "collapse": {
+        "target": "user_message",
+        "label": "/login",
+        "default_collapsed": true
+      }
+    },
+    {
+      "id": "claude-skill-toolu_012BrsHqyXbD3P5GkqXqGxGp",
+      "event_type": "tool_invocation",
+      "skill": {
+        "name": "review"
+      },
+      "source": {
+        "agent": "claude-code",
+        "signal": "skill_tool_use",
+        "confidence": "explicit"
+      },
+      "turn_id": "972f222b1486",
+      "transcript_anchor": {
+        "unit": "line",
+        "start": 21,
+        "end": 22,
+        "entry_ids": [
+          "18682c9a-08c1-4bce-bcc5-023dd8c233c8"
+        ],
+        "tool_use_id": "toolu_012BrsHqyXbD3P5GkqXqGxGp"
+      },
+      "native": {
+        "tool_name": "Skill",
+        "tool_use_id": "toolu_012BrsHqyXbD3P5GkqXqGxGp"
+      },
+      "collapse": {
+        "target": "tool_pair",
+        "label": "Skill: review",
+        "default_collapsed": true
+      }
+    }
+  ],
+  "session_metrics": {
+    "turn_count": 23
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-07-21T18:11:19.92506Z",
+    "agent_lines": 83,
+    "agent_removed": 13,
+    "human_added": 0,
+    "human_modified": 1,
+    "human_removed": 0,
+    "total_committed": 84,
+    "total_lines_changed": 97,
+    "agent_percentage": 98.96907216494846,
+    "metric_version": 2
+  }
+}
