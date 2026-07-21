@@ -1027,7 +1027,7 @@ func StreamSnapshot(ctx context.Context, repo, providerVersion string, options P
 			Symbols:           symbolCount,
 			Relations:         relationCount,
 			PartialFailures:   len(failures),
-			CompletenessLevel: completenessLevel(len(failures), len(files)),
+			CompletenessLevel: completenessLevel(len(failures), len(files), parsedFileCount, symbolCount),
 		},
 		Completeness: CompletenessReport{Languages: completenessLangs, Relations: relationsByType},
 	})
@@ -15902,11 +15902,24 @@ func symbolBlockFromLines(lines []string, symbol SymbolRecord) string {
 	return strings.Join(lines[start:end], "\n")
 }
 
-func completenessLevel(failures, files int) string {
+func completenessLevel(failures, files, parsedFiles, symbols int) string {
 	switch {
+	case files == 0:
+		// Genuinely empty repo/scope — nothing to parse, so "ok" (not "unsafe":
+		// there is no missing coverage to warn about).
+		return "ok"
+	case parsedFiles*2 < files:
+		// A majority of the discovered files were never parsed — likely an
+		// unsupported-language or mis-scoped run; the graph is missing most of
+		// the repo. Loud "unsafe" so the caller does not trust a partial graph.
+		return "unsafe"
+	case parsedFiles > 0 && symbols == 0:
+		// Files were parsed but zero symbols came out — the graph is empty and
+		// unusable even though no hard parse failure occurred.
+		return "degraded"
 	case failures == 0:
 		return "ok"
-	case files == 0 || failures*4 > files:
+	case failures*4 > files:
 		return "unsafe"
 	default:
 		return "degraded"

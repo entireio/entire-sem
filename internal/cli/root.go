@@ -231,12 +231,91 @@ func runProviderRecords(ctx context.Context, opts Options, args []string, mode s
 	// relation count on large repositories.
 	encoder := json.NewEncoder(opts.Stdout)
 	encoder.SetEscapeHTML(false) // match json.Marshal used elsewhere (no < escaping)
-	return sem.StreamSnapshot(ctx, repo, opts.Version, options, func(record any) error {
+
+	// Targeted edge query: when --to/--from/--relation is set, emit only matching
+	// relations (plus header/summary), never files/symbols. Turns "callers of X"
+	// into a tiny reply instead of dumping the whole graph for the caller to grep.
+	// Streaming-safe: idMatches keys off the stable ID's trailing name segment, so
+	// no in-memory symbol table is needed. Only meaningful in edges/snapshot modes.
+	// Capture the summary as it streams past so we can loudly warn on a partial
+	// parse. Without this the CLI discards the summary and a run that silently
+	// parsed only a fraction of the repo (e.g. a mis-scoped subdir) looks clean.
+	var summary *sem.SnapshotSummary
+	capture := func(record any) {
+		if s, ok := record.(sem.SnapshotSummary); ok {
+			s := s
+			summary = &s
+		}
+	}
+
+	filterActive := flags.To != "" || flags.From != "" || len(flags.Relation) > 0
+	if filterActive && mode == "symbols" {
+		return fmt.Errorf("--to/--from/--relation filter relations; use `edges` (not `symbols`)")
+	}
+	if filterActive {
+		var matched int
+		if err := sem.StreamSnapshot(ctx, repo, opts.Version, options, func(record any) error {
+			capture(record)
+			switch r := record.(type) {
+			case sem.RelationRecord:
+				if !relationMatches(r, flags) {
+					return nil
+				}
+				matched++
+				return encoder.Encode(r)
+			case sem.FileRecord, sem.ExternalRecord, sem.SymbolRecord:
+				return nil // suppressed for a targeted edge query
+			default: // header, summary
+				return encoder.Encode(record)
+			}
+		}); err != nil {
+			return err
+		}
+		warnIfPartial(opts.Stderr, flags.Worktree, summary)
+		fmt.Fprintf(opts.Stderr, "graph: %d edge(s) matched (--to=%q --from=%q --relation=%s)\n",
+			matched, flags.To, flags.From, strings.Join(flags.Relation, ","))
+		return nil
+	}
+
+	if err := sem.StreamSnapshot(ctx, repo, opts.Version, options, func(record any) error {
+		capture(record)
 		if !includeRecord(mode, record) {
 			return nil
 		}
 		return encoder.Encode(record)
-	})
+	}); err != nil {
+		return err
+	}
+	warnIfPartial(opts.Stderr, flags.Worktree, summary)
+	return nil
+}
+
+// warnIfPartial prints a loud stderr banner when the snapshot did not fully cover
+// the repository, so a silent partial parse (the #1 sharp edge: running in a
+// mis-scoped subdir without --worktree, which indexes only a stray config file
+// and reports "ok") becomes impossible to miss. Silent on a clean "ok" run.
+func warnIfPartial(w io.Writer, worktree bool, s *sem.SnapshotSummary) {
+	if s == nil {
+		return
+	}
+	level := s.Stats.CompletenessLevel
+	if level == "" || level == "ok" {
+		return
+	}
+	fmt.Fprintf(w, "\n⚠️  graph is %s: parsed %d/%d files, %d symbols, %d relations (languages: %s).\n",
+		strings.ToUpper(level), s.Stats.ParsedFiles, s.Stats.Files, s.Stats.Symbols,
+		s.Stats.Relations, strings.Join(s.Languages, ", "))
+	switch {
+	case s.Stats.Files <= 2 && !worktree:
+		fmt.Fprintf(w, "   Only %d file(s) were discovered — you may be indexing a subdirectory or an\n"+
+			"   unexpected commit. Run from the repo root, or pass --worktree to index the\n"+
+			"   working tree instead of HEAD.\n", s.Stats.Files)
+	case s.Stats.ParsedFiles*2 < s.Stats.Files:
+		fmt.Fprintf(w, "   Over half the discovered files were not parsed (unsupported language or\n"+
+			"   parse errors). Graph queries will miss code in those files.\n")
+	default:
+		fmt.Fprintf(w, "   The graph is incomplete; treat query results as partial.\n")
+	}
 }
 
 // includeRecord filters streamed records for the symbols and edges modes, which
@@ -268,6 +347,47 @@ type providerFlags struct {
 	Progress     bool
 	IgnoreFiles  []string
 	IncludeFiles []string
+	// Targeted edge filters (edges mode). When any is set the command emits only
+	// the matching relation records (plus header/summary) instead of the whole
+	// graph, so "callers of X" is a tiny reply rather than a 50MB dump that the
+	// caller then greps client-side. --to/--from match a symbol by full stable ID
+	// or by trailing name segment (IDs are `...:kind:name`); --relation is one or
+	// more edge types (comma-separated, case-insensitive), e.g. CALLS,REFERENCES.
+	To       string
+	From     string
+	Relation []string
+}
+
+// idMatches reports whether a stable symbol ID matches a user-supplied selector:
+// either the exact ID, or a trailing name segment (IDs end `...:kind:name`, so
+// `getConfPath` or `function:getConfPath` both select it). Streaming-safe — no
+// symbol table needed.
+func idMatches(id, sel string) bool {
+	return id == sel || strings.HasSuffix(id, ":"+sel)
+}
+
+// relationMatches applies the --to/--from/--relation predicate to one edge.
+func relationMatches(r sem.RelationRecord, f providerFlags) bool {
+	if f.To != "" && !idMatches(r.ToID, f.To) {
+		return false
+	}
+	if f.From != "" && !idMatches(r.FromID, f.From) {
+		return false
+	}
+	if len(f.Relation) > 0 {
+		t := strings.ToUpper(r.Type)
+		hit := false
+		for _, want := range f.Relation {
+			if t == want {
+				hit = true
+				break
+			}
+		}
+		if !hit {
+			return false
+		}
+	}
+	return true
 }
 
 // parseProfile validates the --profile value. Empty defaults to full.
@@ -325,6 +445,28 @@ func parseProviderFlags(args []string) (providerFlags, []string, error) {
 				return flags, nil, errors.New("--include-file requires a value")
 			}
 			flags.IncludeFiles = append(flags.IncludeFiles, args[i])
+		case "--to":
+			i++
+			if i >= len(args) {
+				return flags, nil, errors.New("--to requires a value")
+			}
+			flags.To = args[i]
+		case "--from":
+			i++
+			if i >= len(args) {
+				return flags, nil, errors.New("--from requires a value")
+			}
+			flags.From = args[i]
+		case "--relation":
+			i++
+			if i >= len(args) {
+				return flags, nil, errors.New("--relation requires a value")
+			}
+			for _, part := range strings.Split(args[i], ",") {
+				if part = strings.ToUpper(strings.TrimSpace(part)); part != "" {
+					flags.Relation = append(flags.Relation, part)
+				}
+			}
 		default:
 			rest = append(rest, args[i])
 		}
