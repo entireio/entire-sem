@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -277,6 +278,41 @@ func runProviderRecords(ctx context.Context, opts Options, args []string, mode s
 		return nil
 	}
 
+	// Whole-graph dump (no targeted filter): serve from the tree-hash record
+	// cache when possible. The cache is keyed on the HEAD tree, the mode, and the
+	// output-affecting options, so a repeat call on an unchanged HEAD skips the
+	// expensive re-index. It is deliberately bypassed for --worktree (the working
+	// tree may differ from HEAD) and, by returning above, for targeted queries.
+	cacheDir := flags.CacheDir
+	if cacheDir == "" {
+		cacheDir = opts.Env.PluginDataDir
+	}
+	useCache := !flags.DisableCache && !flags.Worktree && cacheDir != ""
+	var tree string
+	if useCache {
+		if t, err := gitutil.RevParse(ctx, repo, "HEAD^{tree}"); err == nil && t != "" {
+			tree = t
+		} else {
+			useCache = false
+		}
+	}
+	if useCache {
+		if records, cachedSummary, hit, err := sem.LoadProviderRecords(repo, opts.Version, tree, mode, cacheDir, options); err == nil && hit {
+			if _, err := opts.Stdout.Write(records); err != nil {
+				return err
+			}
+			warnIfPartial(opts.Stderr, flags.Worktree, cachedSummary)
+			return nil
+		}
+	}
+
+	// On a miss, tee the streamed NDJSON into a buffer so we can persist it after
+	// a successful run without a second pass over the graph.
+	var recordBuf bytes.Buffer
+	if useCache {
+		encoder = json.NewEncoder(io.MultiWriter(opts.Stdout, &recordBuf))
+		encoder.SetEscapeHTML(false)
+	}
 	if err := sem.StreamSnapshot(ctx, repo, opts.Version, options, func(record any) error {
 		capture(record)
 		if !includeRecord(mode, record) {
@@ -287,6 +323,10 @@ func runProviderRecords(ctx context.Context, opts Options, args []string, mode s
 		return err
 	}
 	warnIfPartial(opts.Stderr, flags.Worktree, summary)
+	if useCache {
+		// Best effort: a failed cache write never fails the command.
+		_ = sem.StoreProviderRecords(repo, opts.Version, tree, mode, cacheDir, options, recordBuf.Bytes(), summary)
+	}
 	return nil
 }
 
@@ -356,6 +396,10 @@ type providerFlags struct {
 	To       string
 	From     string
 	Relation []string
+	// CacheDir/DisableCache control the tree-hash record cache. Empty CacheDir
+	// falls back to ENTIRE_PLUGIN_DATA_DIR; --no-cache disables it entirely.
+	CacheDir     string
+	DisableCache bool
 }
 
 // idMatches reports whether a stable symbol ID matches a user-supplied selector:
@@ -445,6 +489,14 @@ func parseProviderFlags(args []string) (providerFlags, []string, error) {
 				return flags, nil, errors.New("--include-file requires a value")
 			}
 			flags.IncludeFiles = append(flags.IncludeFiles, args[i])
+		case "--cache-dir":
+			i++
+			if i >= len(args) {
+				return flags, nil, errors.New("--cache-dir requires a value")
+			}
+			flags.CacheDir = args[i]
+		case "--no-cache":
+			flags.DisableCache = true
 		case "--to":
 			i++
 			if i >= len(args) {
