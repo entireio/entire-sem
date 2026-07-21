@@ -321,3 +321,68 @@ Ok, make it so
 - Full `go test -count=1 ./internal/sem/`: ok (35.5s).</result>
 <usage><subagent_tokens>49281</subagent_tokens><tool_uses>13</tool_uses><duration_ms>208036</duration_ms></usage>
 </task-notification>
+
+---
+
+<task-notification>
+<task-id>a9c001f035c093436</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-thomi-Projects-entire-graph/fffff083-8032-496a-81ae-244c3c25ea0f/tasks/a9c001f035c093436.output</output-file>
+<status>completed</status>
+<summary>Agent "Tree-sitter scanner restructure" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>Restructure complete. All suites green, working tree left uncommitted, search_cache files untouched.
+
+## Architecture of the new scan state
+
+**New file `/Users/thomi/Projects/entire-graph/internal/sem/js_scopes.go` (712 lines).** Core type:
+
+```go
+type jsScanState struct {
+    namespaces   []jsNamespaceScope  // body ranges + full dotted paths + declaring scope
+    namespaceSet map[string]bool
+    bindings     []jsBindingScope    // every shadow-capable binding with its byte-range scope
+    calls        []jsDottedCall      // {parts []string, startByte, line}, sorted by startByte
+    lineStarts   []int
+    contentLen   int
+    parsed       bool
+}
+```
+
+Built by `newJSScanState(path, content)` → `jsScanGrammar` (mirrors ParseWithStatus routing: `.ts`→typescript grammar + `maskTypeScriptUnsupportedSyntax` (length-preserving), `.tsx`/`.jsx`→tsx, Flow-sniffed `.js`→tsx + flow mask, else javascript) → `buildJSScanState` does one parse and one recursive walk (`jsScopeWalker`) carrying `{lexStart/End, funcStart/End, namespace}` context. `newJSScanStateForContent` (typescript grammar, tsx fallback) backs the content-only test wrapper `jsNamespaceScopes`, whose signature — and `jsNamespaceBySymbolID`'s — is preserved because the untouchable `search_cache_test.go` calls both.
+
+**Threading:** provider.go builds the state once per file (old lines 2583–2589), replacing `jsNamespaceScopes` + `jsNamespaceBySymbolID` + `jsFileBindingScopes` triple derivation. Consumers: `jsScan.namespaceCallsForSymbol(from)` (per-symbol, binary-searches sorted calls within the symbol's byte range, line-range fallback for byte-less symbols) and `jsScan.topLevelNamespaceCalls(currentFileSymbols)` (same line-coverage rule as `topLevelBlockFromLines`). Each call site is canonicalized at its own position: shadow check via `jsBindingShadowsAt(bindings, root, callByte)`, caller namespace via `jsNamespaceAtByte(namespaces, callByte)`. Parameter names now flow from the AST at parse time: `Entity.parameterNames` (model.go) populated in `walkEntitiesScoped` (parser.go) via `jsEntityParameterNames` (formal_parameters node), copied into `SymbolRecord.parameterNames` for the search-cache round-trip.
+
+## Per-bug elimination
+
+1. **`&lt;/td&gt;` phantom regex** — JSX is `jsx_element`/`jsx_expression` nodes; no regex-start heuristic exists anymore. Calls inside JSX are ordinary `call_expression` nodes.
+2. **Quote inside regex** — `regex` is a leaf node; no string/comment stripping happens before anything.
+3. **`{` in regex after `)`/identifier** — no brace-scope index exists; scopes are `statement_block`/function node ranges.
+4. **Namespace-body statement calls** — top-level calls no longer share one `callerNamespace ""`; each call canonicalizes through `jsNamespaceAtByte` at its position, so `B.f();` inside `namespace A` resolves to `A.B.f`.
+5. **for-of/in destructured heads** — `for_in_statement` left-pattern bindings registered whenever a `var/let/const` token is present; no `=` requirement.
+6. **`&lt;` comparison as angle depth** — destructured names come from `object_pattern`/`object_assignment_pattern` nodes; `x &lt; 2` is a `binary_expression` never entered.
+7. **Generic clause with function type** — parameters come from the `parameters` field (`formal_parameters`), disjoint from `type_parameters`.
+- **Efficiency:** var hoisting uses the walker's enclosing-function context (no O(vars×symbols) loop); one parse + one walk per file per snapshot build replaces 4× re-strip and 2× namespace rescans; per-symbol call lookup is O(log C).
+
+## Tests
+
+Added 7 (all in typescript_test.go): `TestTSXClosingTagsDoNotSwallowNamespaceCalls`, `TestTypeScriptQuoteAndBacktickInRegexKeepNamespaceCalls`, `TestTypeScriptRegexBraceInStatementPositionKeepsScopes`, `TestTypeScriptNamespaceBodyStatementCallResolvesRelativeReceiver`, `TestTypeScriptForOfDestructuredHeadShadowsNamespaceCall`, `TestTypeScriptDestructuringDefaultComparisonKeepsLaterBindings`, `TestTypeScriptGenericFunctionTypeClauseKeepsParameterShadow`. Replaced `TestJSParameterNamesStopsAtClosingListAndKeepsGenericCommas` (helper deleted) with `TestTypeScriptEntityParameterNamesComeFromFormalParameters` asserting the same guarantee from the AST path. Node-type assumptions were verified empirically against the vendored grammars (internal_module/module, nested_identifier, for_in_statement kind tokens, required/optional_parameter, switch_body, abstract_class_declaration) before writing the walker.
+
+## Dead code removed
+
+716 lines deleted from call_scanners.go: `stripJSScannedSource`, `maskJSRegexLiterals`, `jsRegexLiteralStartsAt/End`, `jsNamespaceCallIdentifiers(At)`, `jsFileBindingScopes`, `jsAssignmentFollows`, `jsForHeadBindingScope`, `jsNamespaceMergesBinding`, `jsSymbolParameterNames`, `jsLexicalBindingShadowsAt` (was already caller-less), `jsBraceScopes`+methods, `jsParameterNames`, `jsDestructuredNames`, `jsTopLevelByteIndex`, `jsSplitParameterList`, `jsDottedCallIdentifiers`, and 5 regexes. Kept-and-moved to js_scopes.go: `jsNamespaceScope`/`jsBindingScope` types, `jsBindingShadowsAt`, `jsCanonicalNamespace`, `jsNamespaceAtByte/Line`, `jsNamespaceBySymbolID` (its fallback now strips only strings/comments). Text-based `jsCallableArgumentIdentifiers` and `callLikeIdentifiers` remain, per scope guidance.
+
+## Results
+
+`gofmt -s -l internal/sem` clean; `go vet ./internal/sem/ ./internal/cli/` clean; `go test -count=1 ./...` fully green (sem 38s, cli 3.5s), including all five round-1 regression tests and the precision suite, unchanged.
+
+## Behavior deltas vs the heuristic version
+
+- Namespace calls inside template-string interpolations and JSX now resolve (old masking blanked them entirely).
+- Optional-chained receivers (`A.B?.f()`) now flatten and resolve; the old regex could not match across `?.`.
+- Block-less loop bodies (`for (const X of xs) X.f();`) are now correctly shadowed; loop-head scope is the whole loop statement node (old: brace block only, conservative fallback otherwise).
+- `const K = class Name {}` no longer registers a phantom `Name` binding; `const enum E` binds `E` (old regex bound the literal name "enum").
+- Files where tree-sitter fails outright (hard error/timeout) classify no namespace calls; partial parses with ERROR nodes still work since the walk tolerates error subtrees.
+- `symbol.parameterNames` is now in declaration order (was sorted); the search-cache round-trip is order-agnostic.</result>
+<usage><subagent_tokens>183470</subagent_tokens><tool_uses>60</tool_uses><duration_ms>1350681</duration_ms></usage>
+</task-notification>
