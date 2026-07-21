@@ -19,3 +19,7 @@ Word
 ---
 
 You didn't push why?
+
+---
+
+Ok, so ready to merge?
