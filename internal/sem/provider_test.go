@@ -3592,6 +3592,171 @@ func TestNothingHere(t *testing.T) {}
 	// TestNothingHere has no matching subject -> no edge.
 }
 
+// Regression for the jdx/mise report: a test whose conventional subject name
+// matches symbols in several packages must bind to the same-directory one, and
+// with no local or import evidence must not bind at all — the old
+// first-global-match fallback produced TESTS edges into unrelated crates.
+func TestTestsRelationDisambiguatesSameNameSubjects(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "alpha/parser.go", `package alpha
+
+func ParseArray() int { return 1 }
+`)
+	writeFile(t, repo, "alpha/parser_test.go", `package alpha
+
+import "testing"
+
+func TestParseArray(t *testing.T) {
+	_ = ParseArray()
+}
+`)
+	writeFile(t, repo, "beta/parser.go", `package beta
+
+func ParseArray() int { return 2 }
+`)
+	writeFile(t, repo, "gamma/doc_test.go", `package gamma
+
+import "testing"
+
+func TestParseArray(t *testing.T) {}
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var tests []RelationRecord
+	for _, r := range snapshot.Relations {
+		if r.Type == "TESTS" {
+			tests = append(tests, r)
+		}
+	}
+	if len(tests) != 1 {
+		t.Fatalf("want exactly one TESTS edge (alpha only), got %#v", tests)
+	}
+	if !strings.Contains(tests[0].FromID, "alpha/parser_test.go") || !strings.Contains(tests[0].ToID, "alpha/parser.go") {
+		t.Fatalf("TESTS edge should stay within alpha: %#v", tests[0])
+	}
+}
+
+// Regression for the jdx/mise report: a bare type name in a signature must
+// resolve through the file's import bindings before any global fallback, and
+// an ambiguous name with no import evidence must resolve to nothing. mise's
+// `which_shim` (imports crate::config::Config) bound its USES_TYPE/PARAM_TYPE
+// edges to crates/vfox's same-name Config because that path sorts first; the
+// resolved-path suffix match then favored src/cli/config/mod.rs over the
+// imported src/config/mod.rs.
+func TestTypeReferenceResolvesThroughRustImports(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "Cargo.toml", "[package]\nname = \"mise\"\n")
+	writeFile(t, repo, "src/lib.rs", "pub mod config;\npub mod shims;\n")
+	writeFile(t, repo, "src/config/mod.rs", `pub struct Config {
+    pub root: String,
+}
+`)
+	// Same-name struct in a nested module whose path suffix-matches the
+	// imported module's resolved file (cli/config/mod.rs vs config/mod.rs).
+	writeFile(t, repo, "src/cli/config/mod.rs", `pub struct Config {
+    pub json: bool,
+}
+`)
+	writeFile(t, repo, "src/shims.rs", `use crate::config::Config;
+
+pub fn which_shim(bin_name: &str, config: &Config) -> String {
+    let _ = bin_name;
+    config.root.clone()
+}
+`)
+	// No import, no same-file or same-directory declaration: the name is
+	// ambiguous across the workspace and must produce no type edge.
+	writeFile(t, repo, "src/cli/run.rs", `pub fn run_it(config: &Config) -> bool {
+    config.json
+}
+`)
+	writeFile(t, repo, "crates/vfox/Cargo.toml", "[package]\nname = \"vfox\"\n")
+	writeFile(t, repo, "crates/vfox/src/lib.rs", "pub mod config;\n")
+	writeFile(t, repo, "crates/vfox/src/config.rs", `pub struct Config {
+    pub dir: String,
+}
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var whichShim []RelationRecord
+	for _, r := range snapshot.Relations {
+		if r.Type != "USES_TYPE" && r.Type != "PARAM_TYPE" && r.Type != "RETURNS_TYPE" {
+			continue
+		}
+		if strings.Contains(r.ToID, "vfox") {
+			t.Fatalf("no type edge may cross into vfox from %s: %#v", r.FromID, r)
+		}
+		if strings.Contains(r.FromID, "run_it") {
+			t.Fatalf("ambiguous unimported type name must not resolve: %#v", r)
+		}
+		if strings.Contains(r.FromID, "which_shim") && strings.HasSuffix(r.ToID, ":Config") {
+			whichShim = append(whichShim, r)
+		}
+	}
+	if len(whichShim) == 0 {
+		t.Fatalf("which_shim should keep type edges to the imported Config")
+	}
+	for _, r := range whichShim {
+		if !strings.Contains(r.ToID, "src/config/mod.rs") {
+			t.Fatalf("which_shim must bind Config through its import: %#v", r)
+		}
+		if r.Resolution != "import_resolved" {
+			t.Fatalf("expected import_resolved binding: %#v", r)
+		}
+	}
+}
+
+func TestTypeReferencePreservesQualifiedGoImport(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "go.mod", "module example.com/review\n\ngo 1.24\n")
+	writeFile(t, repo, "app/config.go", `package app
+
+type Config struct{}
+`)
+	writeFile(t, repo, "beta/config.go", `package beta
+
+type Config struct{}
+`)
+	writeFile(t, repo, "app/use.go", `package app
+
+import cfg "example.com/review/beta"
+
+func Use(value *cfg.Config) {}
+`)
+
+	snapshot, err := BuildProviderSnapshot(t.Context(), repo, "test-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var typeEdges []RelationRecord
+	for _, r := range snapshot.Relations {
+		if r.Type != "USES_TYPE" && r.Type != "PARAM_TYPE" && r.Type != "RETURNS_TYPE" {
+			continue
+		}
+		if !strings.Contains(r.FromID, "function:Use") || !strings.HasSuffix(r.ToID, ":Config") {
+			continue
+		}
+		typeEdges = append(typeEdges, r)
+	}
+	if len(typeEdges) == 0 {
+		t.Fatal("qualified imported Config produced no type edges")
+	}
+	for _, r := range typeEdges {
+		if !strings.Contains(r.ToID, "beta/config.go") || r.Resolution != "import_resolved" {
+			t.Fatalf("qualified imported type resolved incorrectly: %#v", r)
+		}
+	}
+}
+
 func TestProfilesControlRelationOutputAndHeader(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "auth.go", `package auth

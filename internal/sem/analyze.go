@@ -23,9 +23,6 @@ func AnalyzeGitRange(ctx context.Context, repo, base, head string, paths []strin
 		if oldPath == "" {
 			oldPath = path
 		}
-		if !Supported(path) && !Supported(oldPath) {
-			continue
-		}
 
 		var before, after string
 		var beforeOK, afterOK bool
@@ -40,6 +37,38 @@ func AnalyzeGitRange(ctx context.Context, repo, base, head string, paths []strin
 			if err != nil {
 				return Result{}, err
 			}
+		}
+
+		// Support is content-aware: extensionless executables can still route to a
+		// parser through their shebang. Classify each existing side independently
+		// so a rename across the parser boundary cannot become a one-sided phantom
+		// remove/add. Any unsupported side suppresses the delta and leaves a
+		// machine-readable completeness marker instead.
+		_, beforeSupported := languageForContent(oldPath, before)
+		_, afterSupported := languageForContent(path, after)
+		beforeUnsupported := beforeOK && !beforeSupported
+		afterUnsupported := afterOK && !afterSupported
+		if beforeUnsupported || afterUnsupported {
+			warningPath := path
+			detail := "head version has no supported parser"
+			if beforeUnsupported && !afterUnsupported {
+				warningPath = oldPath
+				detail = "base version has no supported parser"
+			} else if beforeUnsupported && afterUnsupported {
+				detail = "base and head versions have no supported parser"
+			}
+			effect := "file skipped; no parser for this file type, so its changes are not analyzed"
+			if beforeOK && afterOK && beforeUnsupported != afterUnsupported {
+				effect = "file diff suppressed; one side has no parser, so changes cannot be compared safely"
+			}
+			result.Warnings = append(result.Warnings, ProviderWarning{
+				Code:                 "W_UNSUPPORTED_FILE",
+				Severity:             "info",
+				FilePath:             warningPath,
+				EffectOnCompleteness: effect,
+				Detail:               detail,
+			})
+			continue
 		}
 
 		beforeEntities, language, beforeStatus := parser.ParseWithStatus(oldPath, before)

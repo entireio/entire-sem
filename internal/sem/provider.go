@@ -1986,6 +1986,7 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 	needsAsyncCalls := spec.emits("ASYNC_CALLS")
 	needsDataFlow := spec.emits("DATA_FLOWS")
 	needsServiceRelations := spec.emits("HANDLES_GRPC") || spec.emits("HANDLES_GRAPHQL") || spec.emits("HANDLES_TRPC")
+	needsSignatureTypeImports := spec.emits("USES_TYPE") || spec.emits("PARAM_TYPE") || spec.emits("RETURNS_TYPE") || spec.emits("TESTS")
 	needsGlobalSymbolsByShortName := spec.callResolution == "full" || needsReceiverCalls || needsFields || needsTypes || needsOverrides || needsAsyncCalls || needsDataFlow || spec.emits("USES_TYPE") || spec.emits("PARAM_TYPE") || spec.emits("RETURNS_TYPE") || spec.emits("TESTS")
 	needsGlobalSymbolsByFile := needsGlobalSymbolsByShortName
 	symbolsByShortName := map[string][]SymbolRecord{}
@@ -2330,6 +2331,12 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 	// package spans every file in a directory and a var is commonly declared in
 	// one file but called in another, so this must be built before the per-file
 	// loop. Used to resolve method calls on such vars to the right imported type.
+	// Per-file import bindings (local name -> imported modules plus resolved
+	// repo paths), kept for the signature-type and TESTS passes that run after
+	// this loop so a bare type name resolves through the file's imports before
+	// any global short-name fallback (a common name like Config otherwise binds
+	// to whichever same-name type sorts first across the workspace).
+	resolvedImportsByFile := map[string]map[string][]string{}
 	pkgVarTypesByDir := map[string]map[string]pkgQualType{}
 	if needsReceiverCalls {
 		for _, file := range files {
@@ -2439,6 +2446,9 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 		}
 		importsByName := importedNamesFor(file.Path, content)
 		importsByName = resolvedImportedNameModules(file.Path, importsByName, manifestImports, knownFiles, readContent)
+		if needsSignatureTypeImports && len(importsByName) > 0 {
+			resolvedImportsByFile[file.Path] = importsByName
+		}
 		// The Python dotted-call composer resolves `alias.<tail>.fn()` from the
 		// syntactic form each import binding was recorded with (plain, alias
 		// rename, or from-import), keyed by [local name][module]. resolvedImported-
@@ -3133,7 +3143,7 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 		}
 	}
 	if spec.emits("USES_TYPE") {
-		for _, r := range usesTypeRelations(recordsByFile, symbolsByFile, symbolsByShortName) {
+		for _, r := range usesTypeRelations(recordsByFile, symbolsByFile, symbolsByShortName, resolvedImportsByFile) {
 			if shouldStop != nil && shouldStop() {
 				return
 			}
@@ -3141,7 +3151,7 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 		}
 	}
 	if spec.emits("PARAM_TYPE") || spec.emits("RETURNS_TYPE") {
-		for _, r := range signatureTypeRelations(recordsByFile, symbolsByFile, symbolsByShortName, spec) {
+		for _, r := range signatureTypeRelations(recordsByFile, symbolsByFile, symbolsByShortName, resolvedImportsByFile, spec) {
 			if shouldStop != nil && shouldStop() {
 				return
 			}
@@ -3149,7 +3159,7 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 		}
 	}
 	if spec.emits("TESTS") {
-		for _, r := range testRelations(recordsByFile, symbolsByShortName) {
+		for _, r := range testRelations(recordsByFile, symbolsByShortName, resolvedImportsByFile) {
 			if shouldStop != nil && shouldStop() {
 				return
 			}
@@ -5565,6 +5575,11 @@ func importedExternalCallRelation(from SymbolRecord, target, detail string) Rela
 }
 
 func importedExternalSymbolName(module, member string) string {
+	// A resolved-path entry names a local repository file; it can never be
+	// the module of an external symbol.
+	if strings.HasPrefix(module, resolvedImportPathPrefix) {
+		return ""
+	}
 	module = strings.Trim(strings.TrimSpace(module), `"'`)
 	member = strings.TrimSpace(member)
 	if module == "" || member == "" || strings.HasPrefix(module, ".") {
@@ -7683,7 +7698,7 @@ func lookupHCLReference(index map[string]SymbolRecord, ref string) (SymbolRecord
 // naming convention (TestFoo -> Foo, test_foo -> foo, FooTest -> Foo). The
 // subject must resolve to a non-test function/method/type symbol. This is a
 // high-precision convention match, not call-graph analysis.
-func testRelations(recordsByFile map[string][]SymbolRecord, symbolsByShortName map[string][]SymbolRecord) []RelationRecord {
+func testRelations(recordsByFile map[string][]SymbolRecord, symbolsByShortName map[string][]SymbolRecord, resolvedImportsByFile map[string]map[string][]string) []RelationRecord {
 	paths := make([]string, 0, len(recordsByFile))
 	for path := range recordsByFile {
 		paths = append(paths, path)
@@ -7700,7 +7715,7 @@ func testRelations(recordsByFile map[string][]SymbolRecord, symbolsByShortName m
 			if subject == "" {
 				continue
 			}
-			target, ok := firstTestSubject(symbolsByShortName[subject], symbol.ID)
+			target, resolution, ok := resolveTestSubject(subject, symbol, symbolsByShortName[subject], resolvedImportsByFile[path])
 			if !ok {
 				continue
 			}
@@ -7712,7 +7727,7 @@ func testRelations(recordsByFile map[string][]SymbolRecord, symbolsByShortName m
 				Confidence:    0.8,
 				Reason:        "test name maps to the unit under test by convention",
 				RelationScope: "module",
-				Resolution:    "name_only",
+				Resolution:    resolution,
 				TargetKind:    "symbol",
 				Evidence: []Evidence{{
 					Kind:      "test_name",
@@ -7728,18 +7743,52 @@ func testRelations(recordsByFile map[string][]SymbolRecord, symbolsByShortName m
 	return relations
 }
 
-// firstTestSubject returns the first non-test function/method/type symbol with
-// the given name (other than the test itself), the unit a test covers.
-func firstTestSubject(candidates []SymbolRecord, testID string) (SymbolRecord, bool) {
+// resolveTestSubject binds a test's conventional subject name to the unit
+// under test among the non-test function/method/type symbols with that name:
+// same-file first, then the test file's import bindings, then a unique
+// same-directory or workspace-unique match. An ambiguous subject with no
+// import evidence resolves to nothing rather than to whichever same-name
+// symbol sorts first, which produced cross-crate TESTS edges to unrelated
+// units in Cargo workspaces.
+func resolveTestSubject(subject string, test SymbolRecord, candidates []SymbolRecord, importsByName map[string][]string) (SymbolRecord, string, bool) {
+	var eligible []SymbolRecord
 	for _, symbol := range candidates {
-		if symbol.ID == testID || isTestName(symbol.Name) {
+		if symbol.ID == test.ID || isTestName(symbol.Name) {
 			continue
 		}
 		if symbol.Kind == "function" || symbol.Kind == "method" || typeLikeKind(symbol.Kind) {
-			return symbol, true
+			eligible = append(eligible, symbol)
 		}
 	}
-	return SymbolRecord{}, false
+	if len(eligible) == 0 {
+		return SymbolRecord{}, "", false
+	}
+	for _, symbol := range eligible {
+		if symbol.FilePath == test.FilePath {
+			return symbol, "exact", true
+		}
+	}
+	if modules := importsByName[subject]; len(modules) > 0 {
+		for _, symbol := range eligible {
+			if importedNameMatchesFile(modules, test.FilePath, symbol.FilePath) {
+				return symbol, "import_resolved", true
+			}
+		}
+	}
+	if len(eligible) == 1 {
+		return eligible[0], "name_only", true
+	}
+	testDir := filepath.ToSlash(filepath.Dir(test.FilePath))
+	var sameDir []SymbolRecord
+	for _, symbol := range eligible {
+		if filepath.ToSlash(filepath.Dir(symbol.FilePath)) == testDir {
+			sameDir = append(sameDir, symbol)
+		}
+	}
+	if len(sameDir) == 1 {
+		return sameDir[0], "package", true
+	}
+	return SymbolRecord{}, "", false
 }
 
 // usesTypeRelations emits USES_TYPE from a function/method to each local type
@@ -7747,7 +7796,7 @@ func firstTestSubject(candidates []SymbolRecord, testID string) (SymbolRecord, b
 // symbols means primitives and library types (which have no local symbol) are
 // naturally excluded, keeping the edges high-precision without per-language
 // signature grammar.
-func usesTypeRelations(recordsByFile map[string][]SymbolRecord, symbolsByFile, symbolsByShortName map[string][]SymbolRecord) []RelationRecord {
+func usesTypeRelations(recordsByFile map[string][]SymbolRecord, symbolsByFile, symbolsByShortName map[string][]SymbolRecord, resolvedImportsByFile map[string]map[string][]string) []RelationRecord {
 	paths := make([]string, 0, len(recordsByFile))
 	for path := range recordsByFile {
 		paths = append(paths, path)
@@ -7760,6 +7809,8 @@ func usesTypeRelations(recordsByFile map[string][]SymbolRecord, symbolsByFile, s
 			if symbol.Kind != "function" && symbol.Kind != "method" || symbol.Signature == "" {
 				continue
 			}
+			importsByName := resolvedImportsByFile[path]
+			qualifiedImportsByName := qualifiedTypeImports(symbol.Signature, importsByName)
 			names := make([]string, 0)
 			seen := map[string]bool{}
 			for name := range identifiersIn(symbol.Signature) {
@@ -7772,7 +7823,7 @@ func usesTypeRelations(recordsByFile map[string][]SymbolRecord, symbolsByFile, s
 			sort.Strings(names)
 			emitted := map[string]bool{}
 			for _, name := range names {
-				target, resolution, scope, confidence, ok := resolveTypeReference(name, symbol, symbolsByFile[path], symbolsByShortName)
+				target, resolution, scope, confidence, ok := resolveTypeReference(name, symbol, symbolsByFile[path], symbolsByShortName, importsByName, qualifiedImportsByName)
 				if !ok || emitted[target.ID] {
 					continue
 				}
@@ -7802,7 +7853,7 @@ func usesTypeRelations(recordsByFile map[string][]SymbolRecord, symbolsByFile, s
 	return relations
 }
 
-func signatureTypeRelations(recordsByFile map[string][]SymbolRecord, symbolsByFile, symbolsByShortName map[string][]SymbolRecord, spec profileSpec) []RelationRecord {
+func signatureTypeRelations(recordsByFile map[string][]SymbolRecord, symbolsByFile, symbolsByShortName map[string][]SymbolRecord, resolvedImportsByFile map[string]map[string][]string, spec profileSpec) []RelationRecord {
 	paths := make([]string, 0, len(recordsByFile))
 	for path := range recordsByFile {
 		paths = append(paths, path)
@@ -7815,6 +7866,8 @@ func signatureTypeRelations(recordsByFile map[string][]SymbolRecord, symbolsByFi
 			if symbol.Kind != "function" && symbol.Kind != "method" || symbol.Signature == "" {
 				continue
 			}
+			importsByName := resolvedImportsByFile[path]
+			qualifiedImportsByName := qualifiedTypeImports(symbol.Signature, importsByName)
 			refs := signatureTypeReferences(symbol.Language, symbol.Signature)
 			for _, relationType := range []string{"PARAM_TYPE", "RETURNS_TYPE"} {
 				if !spec.emits(relationType) {
@@ -7824,7 +7877,7 @@ func signatureTypeRelations(recordsByFile map[string][]SymbolRecord, symbolsByFi
 				sort.Strings(names)
 				emitted := map[string]bool{}
 				for _, name := range names {
-					target, resolution, scope, confidence, ok := resolveTypeReference(name, symbol, symbolsByFile[path], symbolsByShortName)
+					target, resolution, scope, confidence, ok := resolveTypeReference(name, symbol, symbolsByFile[path], symbolsByShortName, importsByName, qualifiedImportsByName)
 					if !ok || emitted[target.ID] {
 						continue
 					}
@@ -7862,12 +7915,90 @@ func signatureTypeReason(relationType string) string {
 	return "parameter type referenced in signature"
 }
 
-func resolveTypeReference(name string, from SymbolRecord, sameFile []SymbolRecord, symbolsByShortName map[string][]SymbolRecord) (SymbolRecord, string, string, float64, bool) {
+var qualifiedTypeReferencePattern = regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]*)((?:\s*(?:\.|::)\s*[A-Za-z_][A-Za-z0-9_]*)+)`)
+var qualifiedTypeSegmentPattern = regexp.MustCompile(`[A-Za-z_][A-Za-z0-9_]*`)
+
+// qualifiedTypeImports maps the terminal name of a qualified signature type
+// (`cfg.Config`, `models::Config`) to the modules bound to its leading import
+// qualifier. Import maps themselves are keyed by the local qualifier (`cfg`),
+// while the symbol index is keyed by the declaration name (`Config`); keeping
+// this bridge prevents a qualified type from falling through to an unrelated
+// same-file or same-directory declaration with the same terminal name.
+func qualifiedTypeImports(signature string, importsByName map[string][]string) map[string][]string {
+	if signature == "" || len(importsByName) == 0 {
+		return nil
+	}
+	qualified := map[string][]string{}
+	for _, match := range qualifiedTypeReferencePattern.FindAllStringSubmatch(signature, -1) {
+		if len(match) != 3 {
+			continue
+		}
+		modules := importsByName[match[1]]
+		if len(modules) == 0 {
+			continue
+		}
+		segments := qualifiedTypeSegmentPattern.FindAllString(match[2], -1)
+		if len(segments) == 0 {
+			continue
+		}
+		name := segments[len(segments)-1]
+		qualified[name] = append(qualified[name], modules...)
+	}
+	for name, modules := range qualified {
+		qualified[name] = uniqueStrings(modules)
+	}
+	return qualified
+}
+
+// resolveTypeReference binds a type name from a signature to a type
+// declaration. A qualified reference is import-authoritative; a bare name uses
+// same-file, import-resolved, workspace-unique, then same-directory-unique
+// resolution. An ambiguous name with no import evidence resolves to nothing —
+// picking the lexically-first same-name type poisons the graph with
+// cross-crate/cross-package edges.
+func resolveTypeReference(name string, from SymbolRecord, sameFile []SymbolRecord, symbolsByShortName map[string][]SymbolRecord, importsByName, qualifiedImportsByName map[string][]string) (SymbolRecord, string, string, float64, bool) {
+	var candidates []SymbolRecord
+	for _, sym := range symbolsByShortName[name] {
+		if sym.ID != from.ID && sym.Name == name && typeLikeKind(sym.Kind) {
+			candidates = append(candidates, sym)
+		}
+	}
+	if modules := qualifiedImportsByName[name]; len(modules) > 0 {
+		for _, sym := range candidates {
+			if importedNameMatchesFile(modules, from.FilePath, sym.FilePath) {
+				return sym, "import_resolved", "module", 0.85, true
+			}
+		}
+		// An explicit qualifier is authoritative. If its imported target is not
+		// represented locally, dropping the edge is safer than binding its
+		// terminal name to an unrelated local declaration.
+		return SymbolRecord{}, "", "", 0, false
+	}
 	if sym, ok := firstTypeLikeNamed(sameFile, name); ok && sym.ID != from.ID {
 		return sym, "exact", "file", 0.85, true
 	}
-	if sym, ok := firstTypeLikeNamed(symbolsByShortName[name], name); ok && sym.ID != from.ID {
-		return sym, "name_only", "module", 0.75, true
+	if len(candidates) == 0 {
+		return SymbolRecord{}, "", "", 0, false
+	}
+	if modules := importsByName[name]; len(modules) > 0 {
+		for _, sym := range candidates {
+			if importedNameMatchesFile(modules, from.FilePath, sym.FilePath) {
+				return sym, "import_resolved", "module", 0.85, true
+			}
+		}
+	}
+	if len(candidates) == 1 {
+		return candidates[0], "name_only", "module", 0.75, true
+	}
+	fromDir := filepath.ToSlash(filepath.Dir(from.FilePath))
+	var sameDir []SymbolRecord
+	for _, sym := range candidates {
+		if filepath.ToSlash(filepath.Dir(sym.FilePath)) == fromDir {
+			sameDir = append(sameDir, sym)
+		}
+	}
+	if len(sameDir) == 1 {
+		return sameDir[0], "package", "module", 0.75, true
 	}
 	return SymbolRecord{}, "", "", 0, false
 }
@@ -11544,6 +11675,15 @@ func importedKotlinNames(content string) map[string][]string {
 	return imports
 }
 
+// resolvedImportPathPrefix tags entries of an imported-name module list that
+// carry a resolved repository-relative file path, appended by
+// resolvedImportedNameModules next to the authored import spec. The tag holds
+// for every language, letting importModuleMatchesFile match resolved paths
+// exactly while authored specs keep their per-language matching heuristics —
+// without it a resolved path fell into the loose suffix fallback, where e.g.
+// resolved `src/config/mod.rs` also matched `src/cli/config/mod.rs`.
+const resolvedImportPathPrefix = "\x00resolved\x00"
+
 func resolvedImportedNameModules(importingPath string, imports map[string][]string, manifestImports manifestImportResolver, knownFiles map[string]bool, readContent contentReader) map[string][]string {
 	if len(imports) == 0 {
 		return imports
@@ -11558,8 +11698,10 @@ func resolvedImportedNameModules(importingPath string, imports map[string][]stri
 			if targetPath == "" {
 				continue
 			}
-			resolved[name] = append(resolved[name], targetPath)
-			resolved[name] = append(resolved[name], resolvedJavaScriptReexportTargets(targetPath, name, manifestImports, knownFiles, readCached, map[string]bool{}, reexportCache, 0)...)
+			resolved[name] = append(resolved[name], resolvedImportPathPrefix+targetPath)
+			for _, reexport := range resolvedJavaScriptReexportTargets(targetPath, name, manifestImports, knownFiles, readCached, map[string]bool{}, reexportCache, 0) {
+				resolved[name] = append(resolved[name], resolvedImportPathPrefix+reexport)
+			}
 		}
 		resolved[name] = uniqueStrings(resolved[name])
 	}
@@ -11920,10 +12062,27 @@ func importModuleMatchesFile(module, importingPath, targetPath string) bool {
 		return false
 	}
 	targetPath = filepath.ToSlash(targetPath)
-	// resolvedImportedNameModules adds exact repository-relative JS/TS target
-	// files alongside the authored import spec. Once an entry carries a source
-	// extension, match it exactly; suffix matching would also select generated
-	// mirrors such as `deno/lib/helpers/x.ts` for resolved `src/helpers/x.ts`.
+	// A resolved entry (tagged by resolvedImportedNameModules) is an exact
+	// repository-relative file path, so it matches exactly — for every
+	// language. Suffix matching would also select generated mirrors such as
+	// `deno/lib/helpers/x.ts` for resolved `src/helpers/x.ts`, or
+	// `src/cli/config/mod.rs` for resolved `src/config/mod.rs`. Go is the one
+	// semantic exception: a Go import names a package — every non-test .go
+	// file in a directory — and resolveGoImport records one representative
+	// file per package, so a resolved .go entry matches any importable
+	// sibling in its directory.
+	if resolved, ok := strings.CutPrefix(module, resolvedImportPathPrefix); ok {
+		resolved = filepath.ToSlash(resolved)
+		if strings.HasSuffix(resolved, ".go") && strings.HasSuffix(targetPath, ".go") {
+			return !strings.HasSuffix(targetPath, "_test.go") &&
+				filepath.ToSlash(filepath.Dir(resolved)) == filepath.ToSlash(filepath.Dir(targetPath))
+		}
+		return resolved == targetPath
+	}
+	// Authored JS/TS specifiers may themselves name an exact file (a path
+	// alias or deep import ending in a source extension); match those exactly
+	// for the same mirror-avoidance reason. Relative specs (leading ".") are
+	// handled below.
 	if !strings.HasPrefix(module, ".") {
 		switch strings.ToLower(filepath.Ext(module)) {
 		case ".js", ".jsx", ".ts", ".tsx":
