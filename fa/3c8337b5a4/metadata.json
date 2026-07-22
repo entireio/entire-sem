@@ -1,0 +1,27 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "fa3c8337b5a4",
+  "strategy": "manual-commit",
+  "branch": "fix/import-aware-type-and-test-edges",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "internal/sem/parser.go",
+    "internal/sem/parser_typescript_regression_test.go"
+  ],
+  "sessions": [
+    {
+      "metadata": "/fa/3c8337b5a4/0/metadata.json",
+      "transcript": "/fa/3c8337b5a4/0/full.jsonl",
+      "compact_transcript": "/fa/3c8337b5a4/0/transcript.jsonl",
+      "content_hash": "/fa/3c8337b5a4/0/content_hash.txt",
+      "prompt": "/fa/3c8337b5a4/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 130,
+    "cache_creation_tokens": 180568,
+    "cache_read_tokens": 6131945,
+    "output_tokens": 73915,
+    "api_call_count": 65
+  }
+}

@@ -1,0 +1,1 @@
+More feedback on current functionality – entirehq/entire-api and entirehq/entire.io repos: entire graph edges printed out a lot of tree-sitter parse errors towards the end. You can close these repos into ~/Projects if you there are not already there.
