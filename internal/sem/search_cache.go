@@ -450,7 +450,7 @@ func selectiveSearchSnapshotFromFull(
 		Symbols:           len(selective.Symbols),
 		Relations:         len(selective.Relations),
 		PartialFailures:   len(failures),
-		CompletenessLevel: completenessLevel(len(failures), len(selective.Files)),
+		CompletenessLevel: completenessLevel(len(failures), len(selective.Files), parsedFiles, len(selective.Symbols)),
 	}
 	selective.Header.Completeness = CompletenessReport{
 		Languages: completenessLanguages,
