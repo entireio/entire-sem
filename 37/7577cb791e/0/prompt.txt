@@ -1,0 +1,59 @@
+<task-notification>
+<task-id>b5p58vohj</task-id>
+<tool-use-id>toolu_01THS2yzBpiMRRDkboURzJqB</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-alex-workspace-entire-graph/fc71f2f6-8d80-49fa-a756-bb1cb91bcb84/tasks/b5p58vohj.output</output-file>
+<status>completed</status>
+<summary>Background command "Poll Bugbot conclusion and CI status via bash script" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>a2d15a850069b24ba</task-id>
+<tool-use-id>toolu_019iC9fmtrzVwkk7nJSzyYkj</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-alex-workspace-entire-graph/fc71f2f6-8d80-49fa-a756-bb1cb91bcb84/tasks/a2d15a850069b24ba.output</output-file>
+<status>completed</status>
+<summary>Agent "Surface dependents parse failures" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>## Summary
+
+**ParseStatus semantics found** (`internal/sem/parser.go:142-146`):
+```go
+type ParseStatus struct {
+    ParseError bool
+    Code       string
+    Detail     string
+}
+```
+`ParseWithStatus` returns `(entities, language, status)`. `ParseError` is set true on either a hard failure (tree-sitter returns no root node — `Code: "E_PARSE_ERROR"` or `"E_PARSE_TIMEOUT"` if the parse's `ctx` timed out) or a soft one (`root.HasError()` true but the tree still recovers — always `Code: "E_PARSE_ERROR"`, `Detail` from `parseErrorDetail(WithLineOffset)`). Crucially, entities are still walked and returned in the soft-recovery case, so a `ParseError` file can still yield real entities — exactly the case the brief said must keep counting unchanged.
+
+The provider (`provider.go:870-886`) mirrors this: on `parseStatus.ParseError` it appends a `PartialFailure` using `parseStatus.Code` (falling back to `"E_PARSE_ERROR"` if empty), with effect text `"file parsed with syntax errors; semantic facts may be incomplete"` (or the timeout-specific wording), and `Detail: parseStatus.Detail`.
+
+**Warning code chosen**: reuse `status.Code` verbatim (falls back to `"E_PARSE_ERROR"` if empty), same as the provider — so `E_PARSE_TIMEOUT` still surfaces distinctly when that's what happened. Wording is dependents-specific since the semantics differ from the provider's per-file scan: `"dependent references in this file may be undercounted because it failed to parse cleanly"`, with `Detail: status.Detail` passed straight through, matching the existing `dependentsFileTooLargeWarning` pattern in the same file.
+
+**Files changed** (both in scope):
+- `/Users/alex/workspace/entire-graph/internal/sem/dependents.go` — switched `parser.Parse` to `parser.ParseWithStatus`; added `dependentsParseFailureWarning` and the call site that appends it when `status.ParseError`.
+- `/Users/alex/workspace/entire-graph/internal/sem/dependents_test.go` — added `pfBrokenCallsFooTS` fixture (the `pfBrokenTS` trick plus a `Foo()` call) and `TestBuildReferenceIndexWarnsOnParseFailure` (red before the fix, green after). Also had to update the pre-existing `TestBuildReferenceIndexIncludesGitBinaryFlaggedFiles`: its NUL-byte Python fixture genuinely trips a tree-sitter-python `ERROR` node (confirmed empirically, not assumed), so its `expected no warnings` assertion was actually wrong once the new warning path exists — updated it to expect exactly one `E_PARSE_ERROR` warning for `binary_caller.py` while keeping the pin that the dependent is still found (soft recovery, unchanged).
+
+**Red evidence** (before implementing):
+```
+--- FAIL: TestBuildReferenceIndexWarnsOnParseFailure (0.49s)
+    dependents_test.go:276: expected a parse-failure warning for broken.ts, got []sem.ProviderWarning(nil)
+```
+
+**Green evidence** (after implementing, before touching the binary-flagged test):
+```
+--- FAIL: TestBuildReferenceIndexIncludesGitBinaryFlaggedFiles (0.45s)
+    dependents_test.go:328: expected no warnings; ... got []sem.ProviderWarning{...Code:"E_PARSE_ERROR"...FilePath:"binary_caller.py"...}
+```
+This was the fix correctly surfacing a real, previously-silent parse error in that fixture — updated the test's expectation rather than the implementation.
+
+**Final verification**:
+- `gofmt -l internal/sem/dependents.go internal/sem/dependents_test.go` — empty.
+- `go test ./internal/sem/...` — `ok github.com/entireio/entire-graph/internal/sem 49.023s` (full package, no `-run` filter).
+- `mise run check` (fmt + vet + `go test -race ./...` + build) — all green, including `ok github.com/entireio/entire-graph/internal/sem 96.555s` under race detection.
+- `git status --short` — only `internal/sem/dependents.go` and `internal/sem/dependents_test.go` modified, no commits made.
+
+No surprises outside the one pre-existing test whose "no warnings" assumption the fix correctly falsified; that was addressed by tightening the test rather than the code.</result>
+<usage><subagent_tokens>79822</subagent_tokens><tool_uses>26</tool_uses><duration_ms>375052</duration_ms></usage>
+</task-notification>

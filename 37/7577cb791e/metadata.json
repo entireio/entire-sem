@@ -1,0 +1,27 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "377577cb791e",
+  "strategy": "manual-commit",
+  "branch": "perf/graph-cache-reuse",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "internal/sem/dependents.go",
+    "internal/sem/dependents_test.go"
+  ],
+  "sessions": [
+    {
+      "metadata": "/37/7577cb791e/0/metadata.json",
+      "transcript": "/37/7577cb791e/0/full.jsonl",
+      "compact_transcript": "/37/7577cb791e/0/transcript.jsonl",
+      "content_hash": "/37/7577cb791e/0/content_hash.txt",
+      "prompt": "/37/7577cb791e/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 16,
+    "cache_creation_tokens": 238281,
+    "cache_read_tokens": 1751723,
+    "output_tokens": 4380,
+    "api_call_count": 8
+  }
+}
