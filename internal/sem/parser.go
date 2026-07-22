@@ -416,8 +416,12 @@ func sourceLineAt(src []byte, line int) string {
 }
 
 var (
-	tsKeywordTypePropertyPattern  = regexp.MustCompile(`^(\s*)in((?:_[A-Za-z0-9_]*)?\??\s*:)`)
-	tsTypeImportPattern           = regexp.MustCompile(`typeof\s+import\(([^)]*)\)`)
+	tsKeywordTypePropertyPattern = regexp.MustCompile(`^(\s*)in((?:_[A-Za-z0-9_]*)?\??\s*:)`)
+	// Type queries use a quoted module specifier. Restricting the match to that
+	// shape keeps valid runtime expressions such as
+	// `typeof import(resolveSpecifier())` untouched; the old `[^)]*` matcher
+	// stopped at the nested call's first `)` and left a stray closing paren.
+	tsTypeImportPattern           = regexp.MustCompile(`typeof[ \t\r\n]+import\([ \t\r\n]*(?:"(?:\\[^\r\n]|[^"\\\r\n])*"|'(?:\\[^\r\n]|[^'\\\r\n])*')[ \t\r\n]*\)`)
 	tsStaticAccessorMethodPattern = regexp.MustCompile(`(\bstatic\s+accesso)r(\s*\()`)
 	// Import-type references without `typeof` — `import("./types").Foo["k"]` in a
 	// type position — are rejected by the grammar. Only the parenthesized head is
@@ -455,7 +459,13 @@ func maskTypeScriptCommonSyntax(content string) string {
 	if changed {
 		result = string(masked)
 	}
-	result = tsTypeImportPattern.ReplaceAllStringFunc(result, sameLengthIdentifierMask)
+	if matches := tsTypeImportPattern.FindAllStringIndex(result, -1); len(matches) > 0 {
+		rewritten := []byte(result)
+		for _, loc := range matches {
+			replaceRangePreservingNewlines(rewritten, loc[0], loc[1], "any")
+		}
+		result = string(rewritten)
+	}
 	return tsExportTypeStarPattern.ReplaceAllString(result, "${1}    ${3}")
 }
 
@@ -5013,8 +5023,6 @@ func isWordByte(b byte) bool {
 }
 
 var postgresGeneratedColumnPattern = regexp.MustCompile(`(?is)\bgenerated\s+always\s+as\s*\([^;]*?\)\s+stored`)
-var postgresLineCommentPattern = regexp.MustCompile(`(?m)--[^\n\r]*`)
-var postgresBlockCommentPattern = regexp.MustCompile(`(?is)/\*.*?\*/`)
 var postgresVectorTypePattern = regexp.MustCompile(`(?i)\bvector\s*\([^)]*\)`)
 var postgresTimestamptzTypePattern = regexp.MustCompile(`(?i)\btimestamptz\b`)
 var postgresBigserialTypePattern = regexp.MustCompile(`(?i)\bbigserial\b`)
@@ -5076,8 +5084,10 @@ var postgresDropTriggerPattern = regexp.MustCompile(`(?is)\bdrop\s+trigger\b[^;]
 var postgresDropPolicyPattern = regexp.MustCompile(`(?is)\bdrop\s+policy\b[^;]*;`)
 
 // Multi-name DROP statements (`DROP TABLE IF EXISTS a, b, c;`) are rejected at
-// the comma; single-name drops parse fine, so only comma lists are masked.
-var postgresDropListPattern = regexp.MustCompile(`(?is)\bdrop\s+(?:view|table|domain|schema|sequence|index|extension)\b[^;,]*,[^;]*;`)
+// the comma; single-name drops parse fine, so only comma lists are masked. This
+// covers every PostgreSQL object kind whose DROP syntax is a simple comma-list
+// of names; routine-like forms are handled by their dedicated statement masks.
+var postgresDropListPattern = regexp.MustCompile(`(?is)\bdrop\s+(?:collation|domain|extension|foreign\s+table|index|materialized\s+view|schema|sequence|statistics|table|type|view)\b[^;,]*,[^;]*;`)
 var postgresRowLevelSecurityPattern = regexp.MustCompile(`(?is)\balter\s+table\b[^;]*\brow\s+level\s+security\s*;`)
 var postgresFunctionSetPattern = regexp.MustCompile(`(?im)^\s*set\s+search_path\s*(?:=|\bto\b)\s*[^;\n]+;?`)
 var postgresAlterDefaultPrivilegesPattern = regexp.MustCompile(`(?is)\balter\s+default\s+privileges\b[^;]*;`)
@@ -5104,18 +5114,15 @@ var postgresAlterTextSearchPattern = regexp.MustCompile(`(?is)\balter\s+text\s+s
 var postgresCommentOnObjectPattern = regexp.MustCompile(`(?is)\bcomment\s+on\s+(?:access\s+method|operator(?:\s+(?:family|class))?|aggregate|type|domain|collation|text\s+search\s+\w+|transform|extension|cast|function|procedure|language|server|publication|subscription)\b[^;]*;`)
 
 func maskPostgresUnsupportedSyntax(content string) string {
-	masked := []byte(content)
+	// Use the SQL-aware comment stripper instead of raw comment regexes so `--`
+	// and `/* ... */` inside string or dollar-quoted literals remain ordinary
+	// literal content in the parse source.
+	masked := []byte(stripSQLComments(content))
 	// Blank comments first and run every later pattern against the comment-free
 	// view: DDL-looking prose inside comments ("unique within a repo", "no
 	// partition of relation ...") otherwise matches the statement patterns and
 	// their replacements stomp bytes of real statements (apostrophes in comment
 	// prose also corrupt the constraint scanner's quote tracking).
-	for _, loc := range postgresLineCommentPattern.FindAllStringIndex(content, -1) {
-		maskBytesPreservingNewlines(masked, loc[0], loc[1])
-	}
-	for _, loc := range postgresBlockCommentPattern.FindAllStringIndex(content, -1) {
-		maskBytesPreservingNewlines(masked, loc[0], loc[1])
-	}
 	search := string(masked)
 	for _, loc := range postgresVectorTypePattern.FindAllStringIndex(search, -1) {
 		replaceBytesPreservingWidth(masked, loc[0], loc[1], "text")
@@ -5160,11 +5167,12 @@ func maskPostgresUnsupportedSyntax(content string) string {
 	for _, loc := range postgresDoBlockPattern.FindAllStringIndex(search, -1) {
 		maskBytesPreservingNewlines(masked, loc[0], loc[1])
 	}
-	// Re-snapshot after the function/DO-body masks: dollar-quoted bodies often
-	// contain DDL-looking text in strings (`EXECUTE format('... PARTITION OF
-	// ...')`), and later patterns must not see it or their replacements write
-	// garbage into the already-blanked body region.
-	search = string(masked)
+	// Re-snapshot after the function/DO-body masks and hide the contents of all
+	// remaining SQL literals. Dollar-quoted bodies often contain DDL-looking text
+	// (`EXECUTE format('... PARTITION OF ...')`), while ordinary strings can hold
+	// SQL templates (`'DROP TABLE a, b'`). Later statement patterns must not start
+	// inside either kind of literal and overwrite the surrounding real statement.
+	search = maskSQLLiteralContentsForSearch(string(masked))
 	for _, loc := range postgresExtensionDDLPattern.FindAllStringIndex(search, -1) {
 		maskBytesPreservingNewlines(masked, loc[0], loc[1])
 	}
@@ -5278,6 +5286,76 @@ func maskPostgresUnsupportedSyntax(content string) string {
 		offset = end
 	}
 	return string(masked)
+}
+
+// maskSQLLiteralContentsForSearch blanks the contents (but not delimiters) of
+// single-quoted and dollar-quoted PostgreSQL literals. Length and newlines are
+// preserved so regex match offsets remain valid against the parse source. The
+// delimiters stay visible because a few statement masks intentionally recognize
+// quoted arguments, such as LOAD 'library'.
+func maskSQLLiteralContentsForSearch(content string) string {
+	masked := []byte(content)
+	for i := 0; i < len(content); {
+		switch content[i] {
+		case '\'':
+			backslashEscapes := postgresEscapeStringPrefix(content, i)
+			i++ // preserve the opening quote
+			for i < len(content) {
+				if backslashEscapes && content[i] == '\\' && i+1 < len(content) {
+					masked[i] = ' '
+					if content[i+1] != '\n' && content[i+1] != '\r' {
+						masked[i+1] = ' '
+					}
+					i += 2
+					continue
+				}
+				if content[i] == '\'' {
+					if i+1 < len(content) && content[i+1] == '\'' {
+						masked[i] = ' '
+						masked[i+1] = ' '
+						i += 2
+						continue
+					}
+					i++ // preserve the closing quote
+					break
+				}
+				if content[i] != '\n' && content[i] != '\r' {
+					masked[i] = ' '
+				}
+				i++
+			}
+		case '$':
+			tag, ok := dollarQuoteTag(content, i)
+			if !ok {
+				i++
+				continue
+			}
+			bodyStart := i + len(tag)
+			closeRel := strings.Index(content[bodyStart:], tag)
+			if closeRel < 0 {
+				i = bodyStart
+				continue
+			}
+			bodyEnd := bodyStart + closeRel
+			maskBytesPreservingNewlines(masked, bodyStart, bodyEnd)
+			i = bodyEnd + len(tag)
+		default:
+			i++
+		}
+	}
+	return string(masked)
+}
+
+func postgresEscapeStringPrefix(content string, quote int) bool {
+	if quote < 1 || (content[quote-1] != 'E' && content[quote-1] != 'e') {
+		return false
+	}
+	prefix := quote - 1
+	if prefix == 0 {
+		return true
+	}
+	previous := content[prefix-1]
+	return !isWordByte(previous) && previous != '$'
 }
 
 func replaceBytesPreservingWidth(src []byte, start, end int, replacement string) {

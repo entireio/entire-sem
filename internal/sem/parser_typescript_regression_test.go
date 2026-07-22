@@ -90,6 +90,28 @@ func TestTSXTypeofImportGenericCallParses(t *testing.T) {
 	requireNoTSParseError(t, "AppRouter.test.tsx", src)
 }
 
+// A runtime dynamic import may take an arbitrary expression. The type-import
+// mask must not stop at a nested call's first `)` and leave the outer `)` as a
+// syntax error (`typeof import(resolveSpecifier())` used to become `any )`).
+func TestTSXRuntimeTypeofDynamicImportWithNestedCallUnmasked(t *testing.T) {
+	src := "export function moduleKind() {\n" +
+		"  return typeof import(resolveSpecifier())\n" +
+		"}\n"
+	if got := maskTypeScriptCommonSyntax(src); got != src {
+		t.Fatalf("runtime dynamic import should be untouched:\n%s", got)
+	}
+	entities := requireNoTSParseError(t, "runtime.tsx", src)
+	found := false
+	for _, e := range entities {
+		if e.Name == "moduleKind" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("moduleKind missing: %+v", entities)
+	}
+}
+
 // Newline-separated type members whose names start with `in` (`in_x:`) close
 // the enclosing body early; the keyword-property mask now covers `in_*` names
 // and applies to .tsx (entire.io SystemStatus.tsx).
@@ -124,9 +146,12 @@ func TestTypeScriptMasksPreserveLength(t *testing.T) {
 		"const x: import(\"./t\").Foo[\"k\"] = load()\n",
 		"const n = 1 < unique.length\n",
 		"const a = await importOriginal<typeof import(\"@x/y\")>()\n",
+		"type T = typeof import(\n  \"@x/y\"\n)\n",
 	} {
 		if got := maskTypeScriptCommonSyntax(src); len(got) != len(src) {
 			t.Errorf("length drift %d -> %d for %q", len(src), len(got), src)
+		} else if strings.Count(got, "\n") != strings.Count(src, "\n") {
+			t.Errorf("line-count drift for %q:\n%s", src, got)
 		}
 		if got := maskTSXUnsupportedSyntax(src); len(got) != len(src) {
 			t.Errorf("tsx length drift %d -> %d for %q", len(src), len(got), src)

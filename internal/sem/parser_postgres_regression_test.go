@@ -389,6 +389,11 @@ func TestPostgresMultiNameDropMasked(t *testing.T) {
 	src := "DROP VIEW IF EXISTS commits_readable, repos_readable;\n" +
 		"DROP TABLE IF EXISTS sync_state, sessions, repos;\n" +
 		"DROP DOMAIN IF EXISTS git_sha, ulid;\n" +
+		"DROP TYPE IF EXISTS mood, status;\n" +
+		"DROP MATERIALIZED VIEW IF EXISTS daily_rollup, weekly_rollup;\n" +
+		"DROP FOREIGN TABLE IF EXISTS remote_a, remote_b;\n" +
+		"DROP COLLATION IF EXISTS natural_sort, numeric_sort;\n" +
+		"DROP STATISTICS IF EXISTS users_stats, repos_stats;\n" +
 		"CREATE TABLE survivor (id int);\n"
 	entities, _, status := TreeSitterParser{}.ParseWithStatus("down.sql", src)
 	if status.ParseError {
@@ -396,6 +401,31 @@ func TestPostgresMultiNameDropMasked(t *testing.T) {
 	}
 	if countEntity(entities, "table", "survivor") != 1 {
 		t.Errorf("survivor missing after multi-name drops: %+v", entities)
+	}
+}
+
+// SQL templates stored in ordinary string literals must not trigger statement
+// masks. The DROP-list regex used to begin inside the string and consume through
+// the enclosing CREATE TABLE's semicolon, removing its closing quote/paren and
+// causing the following table to disappear behind an E_PARSE_ERROR.
+func TestPostgresDDLTextInsideStringDoesNotTriggerMasks(t *testing.T) {
+	src := "CREATE TABLE templates (\n" +
+		"    body text DEFAULT 'DROP TABLE a, b',\n" +
+		"    escaped text DEFAULT E'it\\'s DROP TYPE mood, status'\n" +
+		");\n" +
+		"CREATE TABLE survivor (id int);\n"
+	masked := maskPostgresUnsupportedSyntax(src)
+	if !strings.Contains(masked, "'DROP TABLE a, b'") || !strings.Contains(masked, "E'it\\'s DROP TYPE mood, status'") {
+		t.Fatalf("DDL text inside string was masked:\n%s", masked)
+	}
+	entities, _, status := TreeSitterParser{}.ParseWithStatus("templates.sql", src)
+	if status.ParseError {
+		t.Fatalf("unexpected parse error: %s", status.Detail)
+	}
+	for _, name := range []string{"templates", "survivor"} {
+		if countEntity(entities, "table", name) != 1 {
+			t.Errorf("table %s missing after DDL string: %+v", name, entities)
+		}
 	}
 }
 
