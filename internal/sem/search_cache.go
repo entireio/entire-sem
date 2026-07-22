@@ -77,15 +77,19 @@ func loadCachedCompleteSearchSnapshot(
 	if fullOptions.Profile == "" {
 		fullOptions.Profile = ProfileFull
 	}
-	fullKey, keyErr := searchSnapshotKey(absRepo, providerVersion, commit, tree, fullOptions)
+	fullKey, keyErr := searchSnapshotKey(absRepo, providerVersion, tree, fullOptions)
 	if keyErr != nil {
 		return ProviderSnapshot{}, false, keyErr
 	}
 	fullPath := filepath.Join(cacheDir, "search", searchSnapshotCacheVersion, fullKey+".json.gz")
 	cached, readErr := readSearchSnapshot(fullPath)
-	if readErr != nil || !validCachedSearchSnapshot(cached, providerVersion, commit, tree, fullOptions) {
+	if readErr != nil || !validCachedSearchSnapshot(cached, providerVersion, tree, fullOptions) {
 		return ProviderSnapshot{}, false, nil
 	}
+	// The cache key is tree-only: a hit may have been built for a different
+	// commit that shares this tree. The parsed graph is exactly correct, but
+	// commit provenance must reflect the HEAD we are serving right now.
+	cached = restampCachedSearchSnapshotCommit(cached, commit)
 	return cached.Snapshot, true, nil
 }
 
@@ -112,12 +116,16 @@ func loadOrBuildSearchSnapshot(
 		snapshot, buildErr := BuildProviderSnapshotWithOptions(ctx, repo, providerVersion, options)
 		return snapshot, false, buildErr
 	}
-	key, err := searchSnapshotKey(absRepo, providerVersion, commit, tree, options)
+	key, err := searchSnapshotKey(absRepo, providerVersion, tree, options)
 	if err != nil {
 		return ProviderSnapshot{}, false, err
 	}
 	path := filepath.Join(cacheDir, "search", searchSnapshotCacheVersion, key+".json.gz")
-	if cached, err := readSearchSnapshot(path); err == nil && validCachedSearchSnapshot(cached, providerVersion, commit, tree, options) {
+	if cached, err := readSearchSnapshot(path); err == nil && validCachedSearchSnapshot(cached, providerVersion, tree, options) {
+		// See loadCachedCompleteSearchSnapshot: tree-only keying means this hit
+		// may belong to a different commit that shares the tree. Re-stamp before
+		// handing it back so no caller ever reports a stale commit.
+		cached = restampCachedSearchSnapshotCommit(cached, commit)
 		return cached.Snapshot, true, nil
 	}
 	// A complete committed-tree snapshot is query independent and can serve a
@@ -126,12 +134,13 @@ func loadOrBuildSearchSnapshot(
 	if len(options.OnlyFiles) > 0 {
 		fullOptions := options
 		fullOptions.OnlyFiles = nil
-		fullKey, keyErr := searchSnapshotKey(absRepo, providerVersion, commit, tree, fullOptions)
+		fullKey, keyErr := searchSnapshotKey(absRepo, providerVersion, tree, fullOptions)
 		if keyErr != nil {
 			return ProviderSnapshot{}, false, keyErr
 		}
 		fullPath := filepath.Join(cacheDir, "search", searchSnapshotCacheVersion, fullKey+".json.gz")
-		if cached, readErr := readSearchSnapshot(fullPath); readErr == nil && validCachedSearchSnapshot(cached, providerVersion, commit, tree, fullOptions) {
+		if cached, readErr := readSearchSnapshot(fullPath); readErr == nil && validCachedSearchSnapshot(cached, providerVersion, tree, fullOptions) {
+			cached = restampCachedSearchSnapshotCommit(cached, commit)
 			selective, deriveErr := selectiveSearchSnapshotFromFull(ctx, absRepo, providerVersion, options, cached.Snapshot)
 			if deriveErr == nil {
 				// Persisting the exact selective view makes repeated identical queries
@@ -148,12 +157,17 @@ func loadOrBuildSearchSnapshot(
 	if err != nil {
 		return ProviderSnapshot{}, false, err
 	}
-	if snapshot.Header.Commit != commit || snapshot.Header.Tree != tree {
+	if snapshot.Header.Tree != tree {
 		return ProviderSnapshot{}, false, fmt.Errorf(
 			"repository HEAD changed while building search snapshot: got commit %q tree %q, started at commit %q tree %q",
 			snapshot.Header.Commit, snapshot.Header.Tree, commit, tree,
 		)
 	}
+	// The tree we started at is still what got built even if a same-tree
+	// commit (e.g. an empty commit) landed concurrently. Re-stamp so the
+	// returned snapshot reports the commit this call is serving, not whatever
+	// HEAD happened to be mid-build.
+	snapshot.Header.Commit = commit
 	cache := newCachedSearchSnapshot(providerVersion, commit, tree, options, snapshot)
 	// Cache persistence is best effort. Retrieval correctness never depends on
 	// a writable cache directory.
@@ -195,7 +209,7 @@ func PreindexProviderSnapshot(
 	if err != nil {
 		return ProviderSnapshot{}, false, err
 	}
-	if snapshot.Header.Commit != commit || snapshot.Header.Tree != tree {
+	if snapshot.Header.Tree != tree {
 		return ProviderSnapshot{}, false, fmt.Errorf(
 			"preindex snapshot provenance mismatch: got commit %q tree %q, want commit %q tree %q",
 			snapshot.Header.Commit, snapshot.Header.Tree, commit, tree,
@@ -204,13 +218,13 @@ func PreindexProviderSnapshot(
 	// Query-time caching is deliberately best effort, but an explicit preindex
 	// command promises a durable artifact. Verify that the entry exists and, if
 	// the best-effort write failed, retry while surfacing the persistence error.
-	key, err := searchSnapshotKey(absRepo, providerVersion, commit, tree, options)
+	key, err := searchSnapshotKey(absRepo, providerVersion, tree, options)
 	if err != nil {
 		return ProviderSnapshot{}, false, err
 	}
 	path := filepath.Join(cacheDir, "search", searchSnapshotCacheVersion, key+".json.gz")
 	persisted, readErr := readSearchSnapshot(path)
-	if readErr != nil || !validCachedSearchSnapshot(persisted, providerVersion, commit, tree, options) {
+	if readErr != nil || !validCachedSearchSnapshot(persisted, providerVersion, tree, options) {
 		cache := newCachedSearchSnapshot(providerVersion, commit, tree, options, snapshot)
 		if err := writeSearchSnapshot(path, cache); err != nil {
 			return ProviderSnapshot{}, false, fmt.Errorf("persist preindex snapshot: %w", err)
@@ -277,7 +291,9 @@ func selectiveSearchSnapshotFromFull(
 	if sc.close != nil {
 		defer sc.close()
 	}
-	if sc.commit != full.Header.Commit || sc.tree != full.Header.Tree || sc.key != full.Header.RepoKey {
+	// Tree (not commit) determines whether the cached full snapshot is a valid
+	// derivation source: two different commits sharing a tree parse identically.
+	if sc.tree != full.Header.Tree || sc.key != full.Header.RepoKey {
 		return ProviderSnapshot{}, fmt.Errorf(
 			"cached full snapshot provenance mismatch: got repo %q commit %q tree %q, want repo %q commit %q tree %q",
 			full.Header.RepoKey, full.Header.Commit, full.Header.Tree, sc.key, sc.commit, sc.tree,
@@ -466,7 +482,12 @@ func LoadOrBuildProviderSnapshot(
 	return loadOrBuildSearchSnapshot(ctx, repo, providerVersion, options, cacheDir, disableCache)
 }
 
-func searchSnapshotKey(absRepo, providerVersion, commit, tree string, options ProviderSnapshotOptions) (string, error) {
+// searchSnapshotKey is deliberately tree-only, not commit-keyed: parsing is a
+// pure function of tree content, so any commit whose tree matches an existing
+// entry can reuse it (e.g. --allow-empty commits, amends, rebases that don't
+// touch content). Commit is provenance metadata carried on the cached value
+// and re-stamped to the serving HEAD on load; it never influences the key.
+func searchSnapshotKey(absRepo, providerVersion, tree string, options ProviderSnapshotOptions) (string, error) {
 	hash := sha256.New()
 	writePart := func(value string) {
 		_, _ = io.WriteString(hash, value)
@@ -475,7 +496,6 @@ func searchSnapshotKey(absRepo, providerVersion, commit, tree string, options Pr
 	writePart(searchSnapshotCacheVersion)
 	writePart(absRepo)
 	writePart(providerVersion)
-	writePart(commit)
 	writePart(tree)
 	writePart(string(options.Profile))
 	writePart(fmt.Sprintf("%d", options.MaxParseBytes))
@@ -510,17 +530,31 @@ func searchSnapshotKey(absRepo, providerVersion, commit, tree string, options Pr
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
-func validCachedSearchSnapshot(cache cachedSearchSnapshot, providerVersion, commit, tree string, options ProviderSnapshotOptions) bool {
+// validCachedSearchSnapshot deliberately does not compare commit: the cache is
+// tree-keyed, so an entry built at a different commit sharing this tree is a
+// valid hit. Callers re-stamp the commit to the serving HEAD via
+// restampCachedSearchSnapshotCommit before returning the snapshot.
+func validCachedSearchSnapshot(cache cachedSearchSnapshot, providerVersion, tree string, options ProviderSnapshotOptions) bool {
 	return cache.CacheVersion == searchSnapshotCacheVersion &&
 		cache.ProviderVersion == providerVersion &&
-		cache.Commit == commit &&
 		cache.Tree == tree &&
 		cache.Profile == options.Profile &&
 		cache.MaxParseBytes == options.MaxParseBytes &&
-		cache.Snapshot.Header.Commit == commit &&
 		cache.Snapshot.Header.Tree == tree &&
 		cache.Snapshot.Header.Provider == ProviderName &&
 		cache.Snapshot.Header.Profile == string(options.Profile)
+}
+
+// restampCachedSearchSnapshotCommit rewrites a loaded cache entry's commit
+// provenance to the commit we are actually serving. Tree determines the
+// parsed graph, so a same-tree cache hit from a different (empty, amended,
+// rebased) commit is exactly correct content-wise; commit is provenance
+// metadata layered on top and must reflect the serving HEAD, never the
+// possibly-stale commit recorded when the entry was built.
+func restampCachedSearchSnapshotCommit(cache cachedSearchSnapshot, commit string) cachedSearchSnapshot {
+	cache.Commit = commit
+	cache.Snapshot.Header.Commit = commit
+	return cache
 }
 
 func readSearchSnapshot(path string) (cachedSearchSnapshot, error) {

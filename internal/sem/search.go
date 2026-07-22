@@ -285,8 +285,10 @@ func SearchRepository(ctx context.Context, repo, providerVersion, query string, 
 		// graph. Do not build a cold graph merely to return no results, but do
 		// preserve cached partial failures/completeness and cache-hit provenance.
 		cachedSnapshot, cacheHit := preindexedSnapshot, preindexCacheHit
-		if cacheHit && selection.commit != "" &&
-			(cachedSnapshot.Header.Commit != selection.commit || cachedSnapshot.Header.Tree != selection.tree) {
+		// Tree, not commit, is what determines whether the graph is still valid:
+		// two different commits sharing a tree parse identically, so only a tree
+		// change mid-search is a real race worth rejecting.
+		if cacheHit && selection.commit != "" && cachedSnapshot.Header.Tree != selection.tree {
 			return SearchResponse{}, errors.New("repository HEAD changed during search; retry against a stable commit")
 		}
 		totalLatency := time.Since(searchStarted).Milliseconds()
@@ -357,8 +359,8 @@ func SearchRepository(ctx context.Context, repo, providerVersion, query string, 
 		}
 		indexLatency += time.Since(indexStarted)
 	}
-	if selection.commit != "" &&
-		(snapshot.Header.Commit != selection.commit || snapshot.Header.Tree != selection.tree) {
+	// See the analogous no-hit guard above: tree identity is what matters here.
+	if selection.commit != "" && snapshot.Header.Tree != selection.tree {
 		return SearchResponse{}, errors.New("repository HEAD changed during search; retry against a stable commit")
 	}
 	queryStarted := time.Now()
@@ -818,8 +820,10 @@ func preselectSearchFiles(
 	// indexing guard, not a retrieval recall cap once the graph is preindexed.
 	// Deeper sparse search retains the exhaustive path until corpus statistics
 	// can be persisted with the preindex.
+	// Tree identity is what makes the preindexed graph exact for source's
+	// current HEAD; the grep below runs against source.commit directly, so a
+	// same-tree preindex built at a different commit is still an exact match.
 	exactFullPreindex := preindexCacheHit &&
-		preindexedSnapshot.Header.Commit == source.commit &&
 		preindexedSnapshot.Header.Tree == source.tree
 	grepPatterns, grepSafe := searchGitGrepPatterns(q.terms)
 	if exactFullPreindex && !options.Worktree && options.TopK <= defaultSearchTopK && grepSafe {
