@@ -83,7 +83,10 @@ func buildReferenceIndex(ctx context.Context, repo, head string, names map[strin
 			continue
 		}
 
-		entities, _ := parser.Parse(path, content)
+		entities, _, status := parser.ParseWithStatus(path, content)
+		if status.ParseError {
+			warnings = append(warnings, dependentsParseFailureWarning(path, status))
+		}
 		lines := strings.Split(content, "\n")
 		for _, entity := range entities {
 			block := entityBlock(lines, entity)
@@ -113,6 +116,27 @@ func dependentsFileTooLargeWarning(path string, size int) ProviderWarning {
 		FilePath:             path,
 		EffectOnCompleteness: "dependent references in this file were not counted because it exceeds max parser input",
 		Detail:               fmt.Sprintf("file is %d bytes, above max parser input %d bytes", size, defaultMaxParseBytes),
+	}
+}
+
+// dependentsParseFailureWarning mirrors the provider's parse-failure partial
+// failure (provider.go's ParseStatus.ParseError handling, which emits
+// E_PARSE_ERROR or E_PARSE_TIMEOUT depending on ParseStatus.Code), reusing
+// its code, severity, and detail so the wording lines up across both paths.
+// The effect wording is dependents-specific: entities the parser still
+// recovers keep counting exactly as before -- this warning is purely
+// additive observability, not a change to which entities get counted.
+func dependentsParseFailureWarning(path string, status ParseStatus) ProviderWarning {
+	code := status.Code
+	if code == "" {
+		code = "E_PARSE_ERROR"
+	}
+	return ProviderWarning{
+		Code:                 code,
+		Severity:             "warning",
+		FilePath:             path,
+		EffectOnCompleteness: "dependent references in this file may be undercounted because it failed to parse cleanly",
+		Detail:               status.Detail,
 	}
 }
 

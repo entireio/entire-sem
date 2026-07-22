@@ -238,13 +238,70 @@ func TestBuildReferenceIndexFallsBackWhenGrepFails(t *testing.T) {
 	}
 }
 
+// pfBrokenCallsFooTS is a hard tree-sitter parse failure (mirrors
+// analyze_parsefailure_test.go's pfBrokenTS trick: a malformed leading type
+// alias derails the whole parse) that also contains a whole-token match for
+// "Foo", so it doubles as a dependents candidate file.
+const pfBrokenCallsFooTS = "type Broken = <\n\nexport function alpha(){return Foo()}\nexport function beta(){return 2}\n"
+
+// TestBuildReferenceIndexWarnsOnParseFailure pins that a Supported candidate
+// file which fails to parse (ParseWithStatus reports ParseError) surfaces a
+// warning naming the file, mirroring the provider's parse-failure partial
+// failure, instead of silently undercounting dependents with no trace in
+// Result.Warnings. Any entities the parser still recovers keep counting
+// exactly as before -- this is observability only.
+func TestBuildReferenceIndexWarnsOnParseFailure(t *testing.T) {
+	repo := t.TempDir()
+	git(t, repo, "init")
+	git(t, repo, "config", "user.name", "Entire Graph Test")
+	git(t, repo, "config", "user.email", "graph@example.com")
+
+	write(t, repo, "broken.ts", pfBrokenCallsFooTS)
+	git(t, repo, "add", ".")
+	git(t, repo, "commit", "-m", "initial")
+	head := rev(t, repo, "HEAD")
+
+	index, warnings, err := buildReferenceIndex(context.Background(), repo, head, map[string]struct{}{"Foo": {}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var parseWarning *ProviderWarning
+	for i := range warnings {
+		if warnings[i].FilePath == "broken.ts" {
+			parseWarning = &warnings[i]
+		}
+	}
+	if parseWarning == nil {
+		t.Fatalf("expected a parse-failure warning for broken.ts, got %#v", warnings)
+	}
+	if parseWarning.Code != "E_PARSE_ERROR" {
+		t.Fatalf("expected E_PARSE_ERROR code, got %#v", parseWarning)
+	}
+	if parseWarning.Detail == "" {
+		t.Fatalf("expected non-empty detail on the parse-failure warning, got %#v", parseWarning)
+	}
+
+	// Whatever entities the broken parse did or didn't recover, dependent
+	// counting behavior on them is unchanged by this fix: it is purely
+	// additive observability.
+	dependents := index["Foo"]
+	if _, ok := dependents["broken.ts#function:alpha"]; ok {
+		t.Fatalf("alpha must not count as a dependent unless the parser actually recovered it as an entity, got %#v", dependents)
+	}
+}
+
 // TestBuildReferenceIndexIncludesGitBinaryFlaggedFiles pins that the git-grep
 // prefilter used by referenceCandidateFiles is a genuine strict superset of
 // containsIdentifier's check, even for a file git itself classifies as
 // binary. `git grep -I` (binary-aware search) silently excludes such files
 // from its match list -- it does not error, so the grep-failure fallback
 // never triggers -- which would otherwise make a real dependent inside a
-// NUL-containing but perfectly parseable source file vanish without warning.
+// NUL-containing source file vanish without warning. The embedded NUL byte
+// also trips a genuine (soft-recoverable) tree-sitter-python ERROR node, so
+// this fixture now surfaces a parse-failure warning too; the dependent is
+// still found because tree-sitter still recovers the entity around the
+// error, exactly like the pfSoftTS "soft recovery" case elsewhere.
 func TestBuildReferenceIndexIncludesGitBinaryFlaggedFiles(t *testing.T) {
 	repo, _ := newDependentsTestRepo(t)
 
@@ -271,8 +328,11 @@ func TestBuildReferenceIndexIncludesGitBinaryFlaggedFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(warnings) != 0 {
-		t.Fatalf("expected no warnings; the binary-flagged file must be found without a prefilter fallback, got %#v", warnings)
+	if got, want := len(warnings), 1; got != want {
+		t.Fatalf("expected exactly one parse-failure warning for the NUL byte tripping a tree-sitter ERROR node, got %d: %#v", got, warnings)
+	}
+	if warnings[0].Code != "E_PARSE_ERROR" || warnings[0].FilePath != "binary_caller.py" {
+		t.Fatalf("expected an E_PARSE_ERROR warning for binary_caller.py, got %#v", warnings[0])
 	}
 
 	dependents := index["Foo"]
