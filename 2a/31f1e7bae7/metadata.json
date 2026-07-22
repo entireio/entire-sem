@@ -1,0 +1,28 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "2a31f1e7bae7",
+  "strategy": "manual-commit",
+  "branch": "chore/pr46-review-followups",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "internal/sem/dependents.go",
+    "internal/sem/dependents_test.go",
+    "internal/sem/search_cache.go"
+  ],
+  "sessions": [
+    {
+      "metadata": "/2a/31f1e7bae7/0/metadata.json",
+      "transcript": "/2a/31f1e7bae7/0/full.jsonl",
+      "compact_transcript": "/2a/31f1e7bae7/0/transcript.jsonl",
+      "content_hash": "/2a/31f1e7bae7/0/content_hash.txt",
+      "prompt": "/2a/31f1e7bae7/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 60,
+    "cache_creation_tokens": 77096,
+    "cache_read_tokens": 2020163,
+    "output_tokens": 25762,
+    "api_call_count": 30
+  }
+}

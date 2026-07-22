@@ -1,0 +1,5 @@
+Review this Entire Trail: https://entire.io/gh/entireio/entire-graph/trails/4/perf-13x-faster-semantic-diff-and-tree-keyed-snapshot-cache - you should be able to access it via the entire cli.
+
+---
+
+Open a new trail and address the minor findings
