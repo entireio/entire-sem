@@ -336,3 +336,145 @@ func TestPostgresDollarBodyAfterExternalFunctionsNotSwallowed(t *testing.T) {
 		t.Errorf("time_bucket overloads should extract twice: %+v", entities)
 	}
 }
+
+// `SET search_path TO schema, public;` (the TO form with a comma list, standard
+// in goose migrations) must mask away entirely — including the terminating
+// `;`, which the grammar rejects as an empty statement — so surrounding DDL
+// still extracts (entirehq/entire-api migrations).
+func TestPostgresSetSearchPathToListMasked(t *testing.T) {
+	src := "CREATE SCHEMA IF NOT EXISTS repo;\n" +
+		"SET search_path TO repo, public;\n" +
+		"CREATE TABLE repos (id int);\n"
+	entities, _, status := TreeSitterParser{}.ParseWithStatus("001_init.sql", src)
+	if status.ParseError {
+		t.Fatalf("unexpected parse error: %s", status.Detail)
+	}
+	if countEntity(entities, "table", "repos") != 1 {
+		t.Errorf("repos missing after SET search_path TO list: %+v", entities)
+	}
+}
+
+// ALTER DEFAULT PRIVILEGES is not in the grammar and must be masked.
+func TestPostgresAlterDefaultPrivilegesMasked(t *testing.T) {
+	src := "ALTER DEFAULT PRIVILEGES IN SCHEMA repo GRANT SELECT, INSERT, UPDATE ON TABLES TO repo_rw;\n" +
+		"CREATE TABLE t (id int);\n"
+	entities, _, status := TreeSitterParser{}.ParseWithStatus("grants.sql", src)
+	if status.ParseError {
+		t.Fatalf("unexpected parse error: %s", status.Detail)
+	}
+	if countEntity(entities, "table", "t") != 1 {
+		t.Errorf("t missing after ALTER DEFAULT PRIVILEGES: %+v", entities)
+	}
+}
+
+// A column literally named `key` (a grammar keyword) must not derail the
+// CREATE TABLE (entire-api repo_trail_monitor_results).
+func TestPostgresKeyColumnNameParses(t *testing.T) {
+	src := "CREATE TABLE repo_trail_monitor_results (\n" +
+		"    id ulid PRIMARY KEY,\n" +
+		"    key            TEXT NOT NULL,\n" +
+		"    label          TEXT NOT NULL\n" +
+		");\n"
+	entities, _, status := TreeSitterParser{}.ParseWithStatus("042.sql", src)
+	if status.ParseError {
+		t.Fatalf("unexpected parse error: %s", status.Detail)
+	}
+	if countEntity(entities, "table", "repo_trail_monitor_results") != 1 {
+		t.Errorf("table missing with `key` column: %+v", entities)
+	}
+}
+
+// Multi-name DROP statements are rejected at the comma and must be masked.
+func TestPostgresMultiNameDropMasked(t *testing.T) {
+	src := "DROP VIEW IF EXISTS commits_readable, repos_readable;\n" +
+		"DROP TABLE IF EXISTS sync_state, sessions, repos;\n" +
+		"DROP DOMAIN IF EXISTS git_sha, ulid;\n" +
+		"DROP TYPE IF EXISTS mood, status;\n" +
+		"DROP MATERIALIZED VIEW IF EXISTS daily_rollup, weekly_rollup;\n" +
+		"DROP FOREIGN TABLE IF EXISTS remote_a, remote_b;\n" +
+		"DROP COLLATION IF EXISTS natural_sort, numeric_sort;\n" +
+		"DROP STATISTICS IF EXISTS users_stats, repos_stats;\n" +
+		"CREATE TABLE survivor (id int);\n"
+	entities, _, status := TreeSitterParser{}.ParseWithStatus("down.sql", src)
+	if status.ParseError {
+		t.Fatalf("unexpected parse error: %s", status.Detail)
+	}
+	if countEntity(entities, "table", "survivor") != 1 {
+		t.Errorf("survivor missing after multi-name drops: %+v", entities)
+	}
+}
+
+// SQL templates stored in ordinary string literals must not trigger statement
+// masks. The DROP-list regex used to begin inside the string and consume through
+// the enclosing CREATE TABLE's semicolon, removing its closing quote/paren and
+// causing the following table to disappear behind an E_PARSE_ERROR.
+func TestPostgresDDLTextInsideStringDoesNotTriggerMasks(t *testing.T) {
+	src := "CREATE TABLE templates (\n" +
+		"    body text DEFAULT 'DROP TABLE a, b',\n" +
+		"    escaped text DEFAULT E'it\\'s DROP TYPE mood, status'\n" +
+		");\n" +
+		"CREATE TABLE survivor (id int);\n"
+	masked := maskPostgresUnsupportedSyntax(src)
+	if !strings.Contains(masked, "'DROP TABLE a, b'") || !strings.Contains(masked, "E'it\\'s DROP TYPE mood, status'") {
+		t.Fatalf("DDL text inside string was masked:\n%s", masked)
+	}
+	entities, _, status := TreeSitterParser{}.ParseWithStatus("templates.sql", src)
+	if status.ParseError {
+		t.Fatalf("unexpected parse error: %s", status.Detail)
+	}
+	for _, name := range []string{"templates", "survivor"} {
+		if countEntity(entities, "table", name) != 1 {
+			t.Errorf("table %s missing after DDL string: %+v", name, entities)
+		}
+	}
+}
+
+// DDL-looking prose inside comments — constraint keywords after a comma,
+// apostrophes, `partition of relation "x"` — must not trigger the statement
+// masks: their replacements were stomping bytes of real statements
+// (entire-api 023_github_pull_request_meta.sql, partitions.sql).
+func TestPostgresCommentProseDoesNotTriggerMasks(t *testing.T) {
+	src := "-- keyed by the placement's repo ULID + the PR number (stable, unique within a repo). Fed by\n" +
+		"-- the consumer, whose producer is the same per-jurisdiction transport that\n" +
+		"-- partitions rejects EVERY insert -- `no partition of relation \"my_activity\"\n" +
+		"-- found for row` (SQLSTATE 23514) -- so a skipped bootstrap silently fails.\n" +
+		"CREATE TABLE github_pull_request_meta (\n" +
+		"    repo_id ulid NOT NULL,\n" +
+		"    pr_number INT NOT NULL\n" +
+		");\n"
+	entities, _, status := TreeSitterParser{}.ParseWithStatus("023.sql", src)
+	if status.ParseError {
+		t.Fatalf("unexpected parse error: %s", status.Detail)
+	}
+	if countEntity(entities, "table", "github_pull_request_meta") != 1 {
+		t.Errorf("table missing after comment prose: %+v", entities)
+	}
+}
+
+// DDL keywords inside a dollar-quoted body's string literals (`EXECUTE
+// format('... PARTITION OF ...')`) must not re-trigger statement masks after
+// the body itself is blanked: the partition-of replacement was writing
+// `(partition_dummy int)` into the middle of the blanked body.
+func TestPostgresDollarBodyStringDDLNotRemasked(t *testing.T) {
+	src := "CREATE OR REPLACE FUNCTION usr.ensure_partition(start_date date, end_date date)\n" +
+		"RETURNS void AS $$\n" +
+		"DECLARE\n" +
+		"    part_name text := 'my_activity_p' || to_char(start_date, 'YYYYMM');\n" +
+		"BEGIN\n" +
+		"    EXECUTE format(\n" +
+		"        'CREATE TABLE IF NOT EXISTS usr.%I PARTITION OF usr.my_activity FOR VALUES FROM (%L) TO (%L)',\n" +
+		"        part_name, start_date, end_date);\n" +
+		"END;\n" +
+		"$$ LANGUAGE plpgsql;\n" +
+		"CREATE TABLE tail_tbl (id int);\n"
+	entities, _, status := TreeSitterParser{}.ParseWithStatus("partitions.sql", src)
+	if status.ParseError {
+		t.Fatalf("unexpected parse error: %s", status.Detail)
+	}
+	if countEntity(entities, "function", "usr.ensure_partition") != 1 {
+		t.Errorf("ensure_partition missing: %+v", entities)
+	}
+	if countEntity(entities, "table", "tail_tbl") != 1 {
+		t.Errorf("tail_tbl missing after dollar-body string DDL: %+v", entities)
+	}
+}

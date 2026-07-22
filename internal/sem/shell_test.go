@@ -150,3 +150,51 @@ can_use_homebrew() {
 		}
 	}
 }
+
+// `exec 3<>/dev/tcp/...` read-write fd redirections have no grammar production
+// and were swallowing adjacent definitions (entire-api mise-tasks/dev/db).
+func TestBashFdDuplexRedirectMasked(t *testing.T) {
+	src := "#!/bin/bash\n" +
+		"probe_port() {\n" +
+		"  if (exec 3<>\"/dev/tcp/localhost/$1\") 2>/dev/null; then\n" +
+		"    return 0\n" +
+		"  fi\n" +
+		"}\n"
+	entities, _, status := TreeSitterParser{}.ParseWithStatus("preflight", src)
+	if status.ParseError {
+		t.Fatalf("unexpected parse error: %s", status.Detail)
+	}
+	found := false
+	for _, e := range entities {
+		if e.Name == "probe_port" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("probe_port missing: %+v", entities)
+	}
+}
+
+// Base-N arithmetic literals (`(( 10#$version <= 10#$max ))`) are rejected by
+// the grammar; the `N#` prefix is masked (entire-api scripts/check-migration-order.sh).
+func TestBashArithmeticBaseLiteralMasked(t *testing.T) {
+	src := "#!/bin/bash\n" +
+		"check() {\n" +
+		"  if (( 10#$version <= 10#$max_base_version )); then\n" +
+		"    return 1\n" +
+		"  fi\n" +
+		"}\n"
+	entities, _, status := TreeSitterParser{}.ParseWithStatus("check.sh", src)
+	if status.ParseError {
+		t.Fatalf("unexpected parse error: %s", status.Detail)
+	}
+	found := false
+	for _, e := range entities {
+		if e.Name == "check" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("check missing: %+v", entities)
+	}
+}
