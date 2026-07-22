@@ -126,7 +126,30 @@ func GrepTreeMatches(ctx context.Context, repo, treeish string, patterns []strin
 // least one of the fixed-string patterns. Git emits each path once in
 // NUL-delimited form, avoiding both matched-text fanout and ambiguity from
 // unusual path bytes.
+//
+// It passes -I, so a blob Git itself classifies as binary (a NUL byte early
+// in the content, or a `.gitattributes` binary/-diff marking) is silently
+// excluded from the result even if it contains a matching pattern. That
+// makes this preselection a strict superset of a text-only match, but NOT of
+// every possible match in the tree -- callers that need every matching file
+// regardless of Git's binary heuristic must use GrepTreePathsIncludingBinary.
 func GrepTreePaths(ctx context.Context, repo, treeish string, patterns []string) ([]string, error) {
+	return grepTreePaths(ctx, repo, treeish, patterns, true)
+}
+
+// GrepTreePathsIncludingBinary behaves exactly like GrepTreePaths except it
+// omits -I, so a file Git classifies as binary (an early NUL byte, or a
+// `.gitattributes` binary/-diff marking) is still searched and can appear in
+// the result. Use this when a caller's correctness requires a genuine strict
+// superset of every file that contains a matching pattern, regardless of
+// Git's binary heuristic -- e.g. a prefilter ahead of a parser that reads
+// raw file content directly and does not care whether Git thinks the file is
+// binary.
+func GrepTreePathsIncludingBinary(ctx context.Context, repo, treeish string, patterns []string) ([]string, error) {
+	return grepTreePaths(ctx, repo, treeish, patterns, false)
+}
+
+func grepTreePaths(ctx context.Context, repo, treeish string, patterns []string, textOnly bool) ([]string, error) {
 	if treeish == "" {
 		return nil, errors.New("git grep treeish cannot be empty")
 	}
@@ -136,7 +159,11 @@ func GrepTreePaths(ctx context.Context, repo, treeish string, patterns []string)
 	if len(patterns) == 0 {
 		return []string{}, nil
 	}
-	args := []string{"grep", "-z", "-I", "-i", "-F", "-l"}
+	args := []string{"grep", "-z"}
+	if textOnly {
+		args = append(args, "-I")
+	}
+	args = append(args, "-i", "-F", "-l")
 	patternCount := 0
 	for _, pattern := range patterns {
 		if pattern == "" {

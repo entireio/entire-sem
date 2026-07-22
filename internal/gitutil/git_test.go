@@ -179,6 +179,55 @@ func TestGrepTreePathsMatchesTextAPIAndHandlesUnusualPaths(t *testing.T) {
 	}
 }
 
+// TestGrepTreePathsIncludingBinaryFindsFilesGrepTreePathsExcludes pins the
+// only behavioral difference between the two functions: a blob Git itself
+// classifies as binary because of an early embedded NUL byte. GrepTreePaths
+// (which passes -I) must silently exclude it from its result even though it
+// contains a matching pattern; GrepTreePathsIncludingBinary must still find
+// it, and both functions must agree on an ordinary text file.
+func TestGrepTreePathsIncludingBinaryFindsFilesGrepTreePathsExcludes(t *testing.T) {
+	repo := t.TempDir()
+	git(t, repo, "init")
+	git(t, repo, "config", "user.name", "Entire Graph Test")
+	git(t, repo, "config", "user.email", "graph@example.com")
+
+	textPath := "src/text.go"
+	binaryPath := "src/binary.go"
+	for path, content := range map[string]string{
+		textPath:   "package source\n// TreeNeedle\n",
+		binaryPath: "package source\n// TreeNeedle\x00 embedded nul\n",
+	} {
+		full := filepath.Join(repo, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git(t, repo, "add", ".")
+	git(t, repo, "commit", "-m", "initial")
+	commit := gitOutput(t, repo, "rev-parse", "HEAD")
+
+	textOnly, err := GrepTreePaths(t.Context(), repo, commit, []string{"TreeNeedle"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(textOnly) != 1 || textOnly[0] != textPath {
+		t.Fatalf("GrepTreePaths = %#v, want only %#v (the NUL-containing file must be excluded by -I)", textOnly, []string{textPath})
+	}
+
+	includingBinary, err := GrepTreePathsIncludingBinary(t.Context(), repo, commit, []string{"TreeNeedle"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(includingBinary)
+	want := []string{binaryPath, textPath}
+	if !reflect.DeepEqual(includingBinary, want) {
+		t.Fatalf("GrepTreePathsIncludingBinary = %#v, want %#v", includingBinary, want)
+	}
+}
+
 func TestGrepIndexMatchesPreservesUnicodeCaseFoldingLocale(t *testing.T) {
 	repo := t.TempDir()
 	git(t, repo, "init")
