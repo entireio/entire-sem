@@ -1593,3 +1593,44 @@ func TestExpandGraphCandidatesClampsNonPositiveRegionLines(t *testing.T) {
 		}
 	}
 }
+
+// TestSearchRepositorySurvivesMaxSnippetLinesOne is a regression test for the
+// --max-snippet-lines 1 crash: a same-container-neighbor result's FocusLine was set
+// to neighbor.StartLine even when the emitted region (truncated by the tiny snippet
+// budget) no longer contained it, so SearchResponse.Validate rejected the whole
+// response with "invalid search result at rank N".
+func TestSearchRepositorySurvivesMaxSnippetLinesOne(t *testing.T) {
+	repo := t.TempDir()
+	write(t, repo, "flow.go", `package flow
+
+func alphaUniqueFocusTerm() {
+	println("alpha")
+}
+
+func beta() {
+	println("beta")
+}
+
+func gamma() {
+	println("gamma")
+}
+`)
+
+	response, err := SearchRepository(t.Context(), repo, "test", "alphaUniqueFocusTerm", SearchOptions{
+		Worktree:        true,
+		Profile:         ProfileSyntaxOnly,
+		TopK:            5,
+		MaxSnippetLines: 1,
+	})
+	if err != nil {
+		t.Fatalf("SearchRepository with MaxSnippetLines=1 returned error: %v", err)
+	}
+	if err := response.Validate(); err != nil {
+		t.Fatalf("MaxSnippetLines=1 produced an invalid response: %v", err)
+	}
+	for _, result := range response.Results {
+		if result.FocusLine < result.StartLine || result.FocusLine > result.EndLine {
+			t.Fatalf("result has out-of-range FocusLine: %#v", result)
+		}
+	}
+}

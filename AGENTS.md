@@ -102,6 +102,32 @@ entire graph version [--json]       # provider name + plugin version
 
 ---
 
+## The measured-best agent prompt (copy-paste this)
+
+This exact instruction block is what won the graphmark benchmark (23 SWE-bench instances,
+10 languages: **62.1% weighted token savings vs a no-tool agent**, beating codebase-memory-mcp's
+35.8% on every language mean). Give it to any coding agent that has `entire graph` available —
+substitute your search invocation for `<search-cmd>`:
+
+```text
+A precomputed code-search tool is available: <search-cmd> . Use it to LOCATE the fix BEFORE any
+grep/find. Your FIRST action must be ONE search:
+  <search-cmd> "<the bug in one sentence>"   <-- ranked relevant code (file:line + source)
+Then open the top hit's file with your native Read tool (pass a line range around the reported
+line), make the minimal edit, and STOP. The search top hit is the fix site on most tasks — go
+straight there and edit; do NOT re-search or grep to 'confirm'. Reach the edit in as FEW turns as
+possible (every turn re-reads your whole context — that is the token cost). Hard rules:
+(1) SEARCH FIRST. (2) After search, READ the file directly (line range) and EDIT — do not chain
+more searches. (3) NEVER read a whole file to explore; pass a line range. (4) NEVER search outside
+this repo. Apply the minimal fix and STOP the moment you can justify it.
+```
+
+For bug-fix/locate tasks, run search at `--profile full` (call-graph expansion active) with default
+text output (tiered: full snippet for the top hits, terse locators after). Measured detail that
+matters: chaining `search -> def -> callers` to "explore the tool" was the #1 measured token
+waste — prefer the search-only fast path above. (Benchmark numbers are a single full-board run
+per arm; a 3x replication is in progress — see the graphmark SNAP20 report for caveats.)
+
 ## Operating doctrine (the token-saving rules)
 
 1. **Search first — always.** Your first move on any task is one `entire graph search --query "<task>"`. Do **not** grep / find / cat to locate code before you have searched. Exploration is where ~90% of a session's tokens are wasted.

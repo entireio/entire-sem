@@ -486,7 +486,22 @@ func SearchRepository(ctx context.Context, repo, providerVersion, query string, 
 		IndexLatencyMS:            indexLatency.Milliseconds(),
 		PreselectLatencyMS:        preselectLatency.Milliseconds(),
 	}
-	scoreSearchCandidates(candidates, q, fileDF, maxInt(1, len(selectedFiles)))
+	// Graph centrality: inbound CALLS/IMPLEMENTS degree per symbol. Implementation code is called
+	// by many sites; leaf/trait-dispatch/trivial methods (and most test helpers) are not. Ranking
+	// with this signal lets the real fix site outrank a flood of common-named leaves — the graph
+	// already resolves the callers, search just wasn't using them (field feedback: search behaved
+	// like keyword BM25 with graph_candidates:0, ranking tests/leaves over the implementation).
+	// Requires CALLS in the snapshot (profile fast/full); empty at syntax-only, so the bonus no-ops.
+	inboundDegree := make(map[string]int)
+	for _, rel := range snapshot.Relations {
+		switch rel.Type {
+		case "CALLS", "ASYNC_CALLS", "IMPLEMENTS", "OVERRIDES":
+			if rel.ToID != "" {
+				inboundDegree[rel.ToID]++
+			}
+		}
+	}
+	scoreSearchCandidates(candidates, q, fileDF, maxInt(1, len(selectedFiles)), inboundDegree)
 	sortSearchCandidates(candidates)
 
 	graphCandidates := expandGraphCandidates(candidates, q, snapshot.Relations, symbolsByID, read, fileLanguages, options)
@@ -1628,6 +1643,12 @@ func makeSearchCandidate(q searchQuery, filePath, language string, lines []strin
 	if symbol.ID != "" {
 		focus = maxInt(focus, symbol.StartLine)
 	}
+	// symbol.StartLine can fall outside [start, end] when the caller passed a truncated
+	// window (e.g. a same-container-neighbor candidate clipped to a tiny --max-snippet-lines).
+	// Clamp so FocusLine always satisfies the SearchResponse.Validate invariant
+	// (StartLine <= FocusLine <= EndLine); otherwise the whole response is rejected with
+	// "invalid search result at rank N" (reproducible with --max-snippet-lines 1).
+	focus = minInt(maxInt(focus, start), end)
 	snippetStart, snippetEnd := focusedSnippetRegion(start, end, focus, maxSnippetLines)
 	snippet := strings.Join(lines[snippetStart-1:snippetEnd], "\n")
 	pathScore := pathSearchScore(q, filePath)
@@ -1671,7 +1692,7 @@ func makeSearchCandidate(q searchQuery, filePath, language string, lines []strin
 	}, true
 }
 
-func scoreSearchCandidates(candidates []searchCandidate, q searchQuery, fileDF map[string]int, fileCount int) {
+func scoreSearchCandidates(candidates []searchCandidate, q searchQuery, fileDF map[string]int, fileCount int, inboundDegree map[string]int) {
 	if len(candidates) == 0 {
 		return
 	}
@@ -1710,7 +1731,18 @@ func scoreSearchCandidates(candidates []searchCandidate, q searchQuery, fileDF m
 		if queryWeight > 0 {
 			coverage = coveredWeight / queryWeight
 		}
-		candidate.score = candidate.baseScore + bm25 + 7*coverage + minFloat64(24, codeTokenBonus)
+		// Centrality: reward well-connected implementation symbols (many inbound callers/impls) so
+		// they outrank leaf/trait-dispatch/trivial methods that merely share a common query term.
+		// log-scaled + capped so it tilts ties toward the implementation without overriding a strong
+		// direct match. Only meaningful when the candidate matched the query at all (bm25>0 or a
+		// name/base signal), so it can't drag in unrelated high-degree symbols.
+		centrality := 0.0
+		if len(inboundDegree) > 0 && candidate.result.SymbolID != "" && (bm25 > 0 || candidate.baseScore > 0) {
+			if deg := inboundDegree[candidate.result.SymbolID]; deg > 0 {
+				centrality = minFloat64(6, 1.6*math.Log(1+float64(deg)))
+			}
+		}
+		candidate.score = candidate.baseScore + bm25 + 7*coverage + minFloat64(24, codeTokenBonus) + centrality
 		if codeTokenBonus > 0 {
 			candidate.result.Signals = appendUnique(candidate.result.Signals, "exact-code-token")
 		}
@@ -1815,9 +1847,30 @@ func expandGraphCandidates(seeds []searchCandidate, q searchQuery, relations []R
 					Snippet:          strings.Join(lines[snippetStart-1:snippetEnd], "\n"),
 				},
 			}
+			// A high-confidence, type-resolved CALLS/CONSTRUCTS edge from a strongly-matched seed
+			// is very likely the collaborator that implements the query's behaviour — the vocab-gap
+			// bridge: the query matches the caller by name while the fix lives in the differently-
+			// named callee (e.g. rule "binary_operator_spaces" -> BinaryOperatorSpacesFixer ->CALLS->
+			// TokensAnalyzer.getLastTokenIndexOfArrowFunction, the gold). The default 0.28 seed
+			// fraction buries such a callee ~7 pts down, below prose/tests; score it just below the
+			// seed so it enters the top-K. derivedSearchScore's parent-0.01 cap keeps it under the
+			// caller, and best[]/dedup/diversity selection bound the added candidates.
+			// Vocab-gap bridge: boost a high-confidence CALLS/CONSTRUCTS callee to just below its
+			// caller ONLY when the callee is itself textually plausible for the query (its name shares
+			// a query term). This promotes a buried-but-relevant collaborator — e.g. the query
+			// "...arrow function..." reaches TokensAnalyzer.getLastTokenIndexOfArrowFunction (shares
+			// "arrow"/"function") from the caller BinaryOperatorSpacesFixer — while NOT surfacing the
+			// arbitrary callees of a strong direct hit (e.g. sympy's Point.__new__ callees don't match
+			// "imaginary/coordinates", so they stay unboosted and add no exploration noise).
+			seedFraction := 0.28
+			if relation.Confidence >= 0.8 &&
+				(relation.Type == "CALLS" || relation.Type == "ASYNC_CALLS" || relation.Type == "CONSTRUCTS") &&
+				searchSymbolNameMatchesQueryTerm(q, symbol) {
+				seedFraction = 0.85
+			}
 			candidate.score = derivedSearchScore(
 				seedScore,
-				0.28*seedScore+relation.Confidence+searchPathPrior(q, symbol.FilePath),
+				seedFraction*seedScore+relation.Confidence+searchPathPrior(q, symbol.FilePath),
 			)
 			candidate.baseScore = candidate.score
 			candidate.result.Signals = appendUnique(candidate.result.Signals, "graph:"+strings.ToLower(relation.Type), "graph:"+pair[2])
@@ -1835,6 +1888,22 @@ func expandGraphCandidates(seeds []searchCandidate, q searchQuery, relations []R
 		out = out[:20]
 	}
 	return out
+}
+
+// searchSymbolNameMatchesQueryTerm reports whether a symbol's name/qualified-name shares a
+// (non-trivial) query term — used to gate the graph-expansion boost to textually-plausible callees.
+func searchSymbolNameMatchesQueryTerm(q searchQuery, symbol SymbolRecord) bool {
+	name := strings.ToLower(symbol.Name)
+	qualified := strings.ToLower(symbol.QualifiedName)
+	for _, term := range q.terms {
+		if len(term) < 3 {
+			continue
+		}
+		if strings.Contains(name, term) || strings.Contains(qualified, term) {
+			return true
+		}
+	}
+	return false
 }
 
 func searchExpansionRelation(relation string) bool {
@@ -2214,7 +2283,11 @@ func expandSameContainerNeighborCandidates(
 				}
 				candidate.result.Signals = nil
 			}
-			candidate.result.FocusLine = neighbor.StartLine
+			// neighbor.StartLine is the meaningful focus point, but under a small
+			// options.MaxSnippetLines the emitted region above can be truncated to a window
+			// that no longer contains it. Clamp into the candidate's own region so FocusLine
+			// never escapes [StartLine, EndLine] and trips SearchResponse.Validate.
+			candidate.result.FocusLine = minInt(maxInt(neighbor.StartLine, candidate.result.StartLine), candidate.result.EndLine)
 			candidate.result.Signals = appendUnique(candidate.result.Signals, "same-container-neighbor")
 			candidate.score = derivedSearchScore(seed.score, 0.85*seed.score)
 			candidate.baseScore = candidate.score
@@ -2982,7 +3055,14 @@ func searchPathPrior(q searchQuery, filePath string) float64 {
 	if searchTestArtifactPath(lower) && !searchQuerySupplied(q,
 		"test", "tests", "testing", "spec", "specs", "regression", "regressions", "fixture", "fixtures",
 	) {
-		score -= 1.5
+		// Strong demotion (was -1.5 — far too weak): a test file that exercises the buggy
+		// function matches the issue's exact code tokens (function name + behaviour keywords),
+		// so it out-scores the real source at ~26-47 while the implementation sits at ~13.
+		// A bug-fix task never edits a test, so tests are pure exploration noise. -12 reliably
+		// sinks the test below the editable source (measured: briannesbitt RoundTest.php crowded
+		// out src/Carbon/Traits/Rounding.php; php-cs-fixer's 13 test files buried the fix). Not
+		// excluded outright — a test still surfaces if it is the only match.
+		score -= 12
 	}
 	if searchDocumentationArtifactPath(lower) && !searchQuerySupplied(q,
 		"doc", "docs", "documentation", "readme", "readmes", "guide", "guides", "example", "examples",
@@ -3008,8 +3088,10 @@ func searchPathPrior(q searchQuery, filePath string) float64 {
 func searchTestArtifactPath(lower string) bool {
 	return strings.Contains(lower, "/test/") || strings.Contains(lower, "/tests/") ||
 		strings.Contains(lower, "/testdata/") || strings.Contains(lower, "/fixtures/") ||
-		strings.Contains(lower, "/__tests__/") || strings.Contains(lower, ".test.") ||
-		strings.Contains(lower, ".spec.") || strings.HasSuffix(lower, "_test.go")
+		strings.Contains(lower, "/__tests__/") || strings.Contains(lower, "/spec/") ||
+		strings.Contains(lower, ".test.") || strings.Contains(lower, ".spec.") ||
+		strings.Contains(lower, "_test.") || strings.Contains(lower, "_spec.") ||
+		strings.HasSuffix(lower, "_test.go") || strings.HasSuffix(lower, ".test")
 }
 
 func searchDocumentationArtifactPath(lower string) bool {
