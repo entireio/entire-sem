@@ -104,8 +104,9 @@ type SearchStats struct {
 	SymbolsConsidered int   `json:"symbols_considered"`
 	LexicalCandidates int   `json:"lexical_candidates"`
 	GraphCandidates   int   `json:"graph_candidates"`
-	// CallerBoostedCandidates counts candidates whose rank was lifted by the
-	// call-graph caller-degree signal (the "graph:callers" result signal).
+	// CallerBoostedCandidates counts scored candidate regions across the
+	// lexical, graph-expanded, and sparse pools that received the call-graph
+	// caller-degree signal (the "graph:callers" result signal).
 	CallerBoostedCandidates int   `json:"caller_boosted_candidates,omitempty"`
 	IdentifierUsages        int   `json:"identifier_usage_candidates,omitempty"`
 	NeighborCandidates      int   `json:"same_container_neighbor_candidates,omitempty"`
@@ -495,11 +496,12 @@ func SearchRepository(ctx context.Context, repo, providerVersion, query string, 
 	}
 	scoreSearchCandidates(candidates, q, fileDF, maxInt(1, len(selectedFiles)))
 	callerBoosts := searchGraphCallerBoosts(snapshot.Relations, symbolsByID)
-	stats.CallerBoostedCandidates = applySearchCallerBoosts(candidates, callerBoosts)
+	stats.CallerBoostedCandidates += applySearchCallerBoosts(candidates, callerBoosts)
 	sortSearchCandidates(candidates)
 
 	graphCandidates := expandGraphCandidates(candidates, q, snapshot.Relations, symbolsByID, callerBoosts, read, fileLanguages, options)
 	stats.GraphCandidates = len(graphCandidates)
+	stats.CallerBoostedCandidates += countSearchCandidatesWithSignal(graphCandidates, "graph:callers")
 	candidates = append(candidates, graphCandidates...)
 	sortSearchCandidates(candidates)
 	expansionSeeds := append([]searchCandidate(nil), candidates...)
@@ -541,7 +543,7 @@ func SearchRepository(ctx context.Context, repo, providerVersion, query string, 
 	if len(sparseCandidates) > 0 {
 		scoreSparseCandidates(sparseCandidates, sparseQuery, sparseDF, sparseDocumentCount, sparseDocumentLength)
 		attachSparseCandidateSymbols(sparseCandidates, symbolsByFile)
-		applySearchCallerBoosts(sparseCandidates, callerBoosts)
+		stats.CallerBoostedCandidates += applySearchCallerBoosts(sparseCandidates, callerBoosts)
 		sortSearchCandidates(sparseCandidates)
 		sparseCandidates = dedupeSemanticMirrorCandidates(sparseCandidates, q, symbolsByID)
 		sortSearchCandidates(sparseCandidates)
@@ -1361,6 +1363,7 @@ func sparseCandidatesForFile(
 	}
 	chunkLines := maxInt(1, options.MaxRegionLines)
 	stride := minInt(sparseSearchChunkStrideLines, chunkLines)
+	pathCounts, _ := sparseSearchTermCounts(filepath.ToSlash(filePath), sparseQuery.termSet)
 	documentCount := 0
 	documentLength := 0
 	var out []searchCandidate
@@ -1373,6 +1376,10 @@ func sparseCandidatesForFile(
 		if len(counts) > 0 {
 			focus := sparseSearchFocusLine(sparseQuery, lines, start, end)
 			snippetStart, snippetEnd := focusedSnippetRegion(start, end, focus, options.MaxSnippetLines)
+			signals := []string{"sparse-region"}
+			if len(pathCounts) > 0 {
+				signals = append(signals, "path")
+			}
 			out = append(out, searchCandidate{
 				result: SearchResult{
 					FilePath:         filePath,
@@ -1382,7 +1389,7 @@ func sparseCandidatesForFile(
 					SnippetStartLine: snippetStart,
 					SnippetEndLine:   snippetEnd,
 					Language:         language,
-					Signals:          []string{"sparse-region"},
+					Signals:          signals,
 					Snippet:          "",
 				},
 				termCounts: counts,
@@ -1826,11 +1833,24 @@ func applySearchCallerBoosts(candidates []searchCandidate, boosts map[string]flo
 	return boosted
 }
 
+func countSearchCandidatesWithSignal(candidates []searchCandidate, signal string) int {
+	count := 0
+	for _, candidate := range candidates {
+		for _, candidateSignal := range candidate.result.Signals {
+			if candidateSignal == signal {
+				count++
+				break
+			}
+		}
+	}
+	return count
+}
+
 func searchBodyOnlyEvidence(signals []string) bool {
 	sawBody := false
 	for _, signal := range signals {
 		switch signal {
-		case "body":
+		case "body", "sparse-region":
 			sawBody = true
 		case "path", "symbol-name", "exact-symbol", "signature", "exact-code-token", "all-query-terms":
 			return false
@@ -1928,16 +1948,26 @@ func expandGraphCandidates(seeds []searchCandidate, q searchQuery, relations []R
 			// call) keep the old conservative score so they cannot displace
 			// direct matches.
 			inherit := 0.28 * seedScore
+			callerBoost := 0.0
 			regionText := strings.Join(lines[start-1:end], "\n")
-			if counts, _ := searchTermCounts(regionText, q.termSet); len(counts) > 0 || searchSymbolMatchesAnyTerm(q, symbol) {
+			counts, _ := searchTermCounts(regionText, q.termSet)
+			symbolMatch := searchSymbolMatchesAnyTerm(q, symbol)
+			if len(counts) > 0 || symbolMatch {
 				inherit = 0.55 * seedScore
+				callerBoost = callerBoosts[symbol.ID]
+				if !symbolMatch {
+					callerBoost *= 0.5
+				}
 			}
 			candidate.score = derivedSearchScore(
 				seedScore,
-				inherit+2.2*relation.Confidence+searchPathPrior(q, symbol.FilePath)+callerBoosts[symbol.ID],
+				inherit+2.2*relation.Confidence+searchPathPrior(q, symbol.FilePath)+callerBoost,
 			)
 			candidate.baseScore = candidate.score
 			candidate.result.Signals = appendUnique(candidate.result.Signals, "graph:"+strings.ToLower(relation.Type), "graph:"+pair[2])
+			if callerBoost > 0 {
+				candidate.result.Signals = appendUnique(candidate.result.Signals, "graph:callers")
+			}
 			if previous, exists := best[symbol.ID]; !exists || candidate.score > previous.score {
 				best[symbol.ID] = candidate
 			}
@@ -3125,10 +3155,43 @@ func searchPathPrior(q searchQuery, filePath string) float64 {
 }
 
 func searchTestArtifactPath(lower string) bool {
-	return strings.Contains(lower, "/test/") || strings.Contains(lower, "/tests/") ||
-		strings.Contains(lower, "/testdata/") || strings.Contains(lower, "/fixtures/") ||
-		strings.Contains(lower, "/__tests__/") || strings.Contains(lower, ".test.") ||
-		strings.Contains(lower, ".spec.") || strings.HasSuffix(lower, "_test.go")
+	normalized := strings.Trim(strings.ToLower(filepath.ToSlash(lower)), "/")
+	if normalized == "" {
+		return false
+	}
+	if strings.HasPrefix(normalized, ".github/workflows/") {
+		return false
+	}
+	parts := strings.Split(normalized, "/")
+	for index, part := range parts {
+		if index == len(parts)-1 {
+			break
+		}
+		switch part {
+		case "test", "tests", "testdata", "fixture", "fixtures", "__tests__", "__fixtures__", "spec", "specs":
+			return true
+		}
+		for _, suffix := range []string{
+			".test", ".tests", "-test", "-tests", "_test", "_tests",
+			".spec", ".specs", "-spec", "-specs", "_spec", "_specs",
+		} {
+			if strings.HasSuffix(part, suffix) {
+				return true
+			}
+		}
+	}
+	base := parts[len(parts)-1]
+	for _, marker := range []string{
+		".test.", ".spec.", "_test.", "_tests.", "_spec.", "_specs.",
+		"-test.", "-tests.", "-spec.", "-specs.",
+	} {
+		if strings.Contains(base, marker) {
+			return true
+		}
+	}
+	return strings.HasPrefix(base, "test_") || strings.HasPrefix(base, "test-") ||
+		strings.HasPrefix(base, "test.") || strings.HasPrefix(base, "spec_") ||
+		strings.HasPrefix(base, "spec-") || strings.HasPrefix(base, "spec.")
 }
 
 func searchDocumentationArtifactPath(lower string) bool {

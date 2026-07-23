@@ -3596,6 +3596,8 @@ func TestFastProfileKeepsSamePackageCalls(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "store/quorum.go", `package store
 
+type quorumState []int
+
 func checkQuorum(outcomes []int) bool {
 	return len(outcomes) > 1
 }
@@ -3603,14 +3605,21 @@ func checkQuorum(outcomes []int) bool {
 	writeFile(t, repo, "store/replicate.go", `package store
 
 func replicateObject(outcomes []int) bool {
-	return checkQuorum(outcomes)
+	state := quorumState(outcomes)
+	return checkQuorum(state)
+}
+`)
+	writeFile(t, repo, "other/invalid.go", `package other
+
+func buildInvalidCrossPackageValue() any {
+	return quorumState(nil)
 }
 `)
 
-	var calls []RelationRecord
+	var callLike []RelationRecord
 	err := StreamSnapshot(t.Context(), repo, "test-version", ProviderSnapshotOptions{Profile: ProfileFast}, func(rec any) error {
-		if r, ok := rec.(RelationRecord); ok && r.Type == "CALLS" {
-			calls = append(calls, r)
+		if r, ok := rec.(RelationRecord); ok && (r.Type == "CALLS" || r.Type == "CONSTRUCTS") {
+			callLike = append(callLike, r)
 		}
 		return nil
 	})
@@ -3618,16 +3627,31 @@ func replicateObject(outcomes []int) bool {
 		t.Fatal(err)
 	}
 	found := false
-	for _, call := range calls {
-		if strings.Contains(call.FromID, "replicateObject") && strings.Contains(call.ToID, "checkQuorum") {
+	foundConstruct := false
+	for _, relation := range callLike {
+		if relation.Resolution == "name_only" {
+			t.Fatalf("fast profile retained name-only call-like relation: %#v", relation)
+		}
+		if strings.Contains(relation.FromID, "replicateObject") && strings.Contains(relation.ToID, "checkQuorum") {
 			found = true
-			if call.Resolution != "package" {
-				t.Fatalf("cross-file same-package call resolution = %q, want package", call.Resolution)
+			if relation.Resolution != "package" {
+				t.Fatalf("cross-file same-package call resolution = %q, want package", relation.Resolution)
+			}
+		}
+		if relation.Type == "CONSTRUCTS" &&
+			strings.Contains(relation.FromID, "replicateObject") &&
+			strings.Contains(relation.ToID, "quorumState") {
+			foundConstruct = true
+			if relation.Resolution != "package" {
+				t.Fatalf("cross-file same-package construction resolution = %q, want package", relation.Resolution)
 			}
 		}
 	}
 	if !found {
-		t.Fatalf("fast profile dropped the cross-file same-package call: %#v", calls)
+		t.Fatalf("fast profile dropped the cross-file same-package call: %#v", callLike)
+	}
+	if !foundConstruct {
+		t.Fatalf("fast profile dropped the cross-file same-package construction: %#v", callLike)
 	}
 }
 

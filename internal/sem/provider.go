@@ -388,8 +388,8 @@ func relationTypeSet(types ...string) map[string]bool {
 	return set
 }
 
-// shallowCallRelationRetained reports whether a CALLS relation survives the
-// fast profile's shallow call resolution. Shallow keeps the single-target,
+// shallowCallRelationRetained reports whether a call-like relation survives
+// the fast profile's shallow call resolution. Shallow keeps the single-target,
 // high-precision resolutions: same-file ("exact"), unique same-package
 // ("package"), and import-path-bound ("import_resolved"). Broader name-only
 // and pattern fanouts stay full-only. Cross-file calls are what connect an
@@ -402,6 +402,15 @@ func shallowCallRelationRetained(resolution string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func shallowRelationRetained(relationType, resolution string) bool {
+	switch relationType {
+	case "CALLS", "CONSTRUCTS":
+		return shallowCallRelationRetained(resolution)
+	default:
+		return true
 	}
 }
 
@@ -950,12 +959,12 @@ func StreamSnapshot(ctx context.Context, repo, providerVersion string, options P
 			return
 		}
 		// Profile filter: emit only relation families the profile includes; in
-		// shallow call resolution, keep only high-precision calls; drop
+		// shallow call resolution, keep only high-precision call-like relations; drop
 		// evidence when the profile omits it.
 		if !spec.emits(r.Type) {
 			return
 		}
-		if r.Type == "CALLS" && spec.callResolution == "shallow" && !shallowCallRelationRetained(r.Resolution) {
+		if spec.callResolution == "shallow" && !shallowRelationRetained(r.Type, r.Resolution) {
 			return
 		}
 		if !spec.includeEvidence {
@@ -1597,14 +1606,15 @@ func resolveCallTargets(name string, from SymbolRecord, candidates, sameFile []S
 
 	// Same-package resolution: in Go every file in a directory is the same
 	// package, so a bare call resolves within that package even when the name is
-	// not globally unique. Strict uniqueness-within-directory (function symbols
-	// only) keeps this high-precision while recovering cross-file same-package
-	// calls that the globally-unique gate below would otherwise drop.
+	// not globally unique. Strict uniqueness-within-directory for functions and
+	// type-like symbols keeps this high-precision while recovering cross-file
+	// same-package calls and constructions that the globally-unique gate below
+	// would otherwise drop.
 	if from.Language == "Go" {
 		fromDir := filepath.ToSlash(filepath.Dir(from.FilePath))
 		var samePkg []SymbolRecord
 		for _, to := range candidates {
-			if to.ID == from.ID || to.Kind != "function" || !localReachable(from, to) {
+			if to.ID == from.ID || (to.Kind != "function" && !typeLikeKind(to.Kind)) || !localReachable(from, to) {
 				continue
 			}
 			if filepath.ToSlash(filepath.Dir(to.FilePath)) == fromDir {

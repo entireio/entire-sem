@@ -1597,11 +1597,14 @@ func TestExpandGraphCandidatesClampsNonPositiveRegionLines(t *testing.T) {
 
 func TestSearchGraphCallerBoostsCountDistinctProductionCallers(t *testing.T) {
 	symbolsByID := map[string]SymbolRecord{
-		"impl":     {ID: "impl", Name: "checkQuorum", FilePath: "store/quorum.go"},
-		"caller1":  {ID: "caller1", Name: "replicateObject", FilePath: "store/replicate.go"},
-		"caller2":  {ID: "caller2", Name: "storeQuarantine", FilePath: "store/quarantine.go"},
-		"testfn":   {ID: "testfn", Name: "TestQuorum", FilePath: "test/workloads/push_quorum.go"},
-		"unitfile": {ID: "unitfile", Name: "TestCheck", FilePath: "store/quorum_test.go"},
+		"impl":       {ID: "impl", Name: "checkQuorum", FilePath: "store/quorum.go"},
+		"caller1":    {ID: "caller1", Name: "replicateObject", FilePath: "store/replicate.go"},
+		"caller2":    {ID: "caller2", Name: "storeQuarantine", FilePath: "store/quarantine.go"},
+		"testfn":     {ID: "testfn", Name: "TestQuorum", FilePath: "test/workloads/push_quorum.go"},
+		"unitfile":   {ID: "unitfile", Name: "TestCheck", FilePath: "store/quorum_test.go"},
+		"rubyspec":   {ID: "rubyspec", Name: "checks quorum", FilePath: "spec/store/quorum_spec.rb"},
+		"pythontest": {ID: "pythontest", Name: "test_quorum", FilePath: "store/quorum_test.py"},
+		"dottedtest": {ID: "dottedtest", Name: "ChecksQuorum", FilePath: "Store.Tests/Quorum.cs"},
 	}
 	relations := []RelationRecord{
 		{FromID: "caller1", ToID: "impl", Type: "CALLS", Confidence: 0.8},
@@ -1611,6 +1614,9 @@ func TestSearchGraphCallerBoostsCountDistinctProductionCallers(t *testing.T) {
 		// Test-path callers carry no production signal.
 		{FromID: "testfn", ToID: "impl", Type: "CALLS", Confidence: 0.92},
 		{FromID: "unitfile", ToID: "impl", Type: "CALLS", Confidence: 0.92},
+		{FromID: "rubyspec", ToID: "impl", Type: "CALLS", Confidence: 0.92},
+		{FromID: "pythontest", ToID: "impl", Type: "CALLS", Confidence: 0.92},
+		{FromID: "dottedtest", ToID: "impl", Type: "CALLS", Confidence: 0.92},
 		// Below the confidence floor.
 		{FromID: "caller1", ToID: "caller2", Type: "CALLS", Confidence: 0.5},
 		// Structural relations are not caller evidence.
@@ -1645,6 +1651,152 @@ func TestApplySearchCallerBoostsTagsAndCounts(t *testing.T) {
 	}
 	if candidates[1].score != 12 || candidates[2].score != 9 {
 		t.Fatalf("unboosted candidates changed: %+v", candidates[1:])
+	}
+}
+
+func TestApplySearchCallerBoostsHalvesSparseBodyEvidence(t *testing.T) {
+	candidates := []searchCandidate{
+		{
+			result: SearchResult{SymbolID: "impl", Signals: []string{"sparse-region"}},
+			score:  10,
+		},
+		{
+			result: SearchResult{SymbolID: "impl", Signals: []string{"sparse-region", "path"}},
+			score:  10,
+		},
+	}
+
+	boosted := applySearchCallerBoosts(candidates, map[string]float64{"impl": 4})
+
+	if boosted != 2 {
+		t.Fatalf("boosted = %d, want 2", boosted)
+	}
+	if candidates[0].score != 12 {
+		t.Fatalf("sparse body-only score = %v, want 12", candidates[0].score)
+	}
+	if candidates[1].score != 14 {
+		t.Fatalf("sparse path score = %v, want 14", candidates[1].score)
+	}
+}
+
+func TestExpandGraphCandidatesDoesNotBoostZeroEvidenceHub(t *testing.T) {
+	q := buildSearchQuery("quorum replication")
+	seeds := []searchCandidate{{
+		result: SearchResult{SymbolID: "seed"},
+		score:  15,
+	}}
+	relations := []RelationRecord{{
+		FromID:     "seed",
+		ToID:       "hub",
+		Type:       "CALLS",
+		Confidence: 0.8,
+	}}
+	symbolsByID := map[string]SymbolRecord{
+		"seed": {ID: "seed", Name: "replicateObject", FilePath: "replicate.go", StartLine: 1, EndLine: 1},
+		"hub":  {ID: "hub", Name: "logValue", FilePath: "logging.go", StartLine: 1, EndLine: 3},
+	}
+	read := func(path string) (string, bool) {
+		if path == "logging.go" {
+			return "func logValue(value any) {\n\tfmt.Println(value)\n}", true
+		}
+		return "", false
+	}
+
+	candidates := expandGraphCandidates(
+		seeds,
+		q,
+		relations,
+		symbolsByID,
+		map[string]float64{"hub": searchCallerBoostCap},
+		read,
+		map[string]string{"logging.go": "Go"},
+		SearchOptions{},
+	)
+
+	if len(candidates) != 1 {
+		t.Fatalf("graph candidates = %#v, want one hub", candidates)
+	}
+	want := 0.28*15 + 2.2*0.8
+	if got := candidates[0].score; math.Abs(got-want) > 1e-9 {
+		t.Fatalf("zero-evidence hub score = %v, want %v without caller boost", got, want)
+	}
+	if containsString(candidates[0].result.Signals, "graph:callers") {
+		t.Fatalf("zero-evidence hub signals = %#v, must not include graph:callers", candidates[0].result.Signals)
+	}
+}
+
+func TestExpandGraphCandidatesHalvesBodyOnlyCallerBoost(t *testing.T) {
+	q := buildSearchQuery("quorum replication")
+	seeds := []searchCandidate{{
+		result: SearchResult{SymbolID: "seed"},
+		score:  15,
+	}}
+	relations := []RelationRecord{{
+		FromID:     "seed",
+		ToID:       "hub",
+		Type:       "CALLS",
+		Confidence: 0.8,
+	}}
+	symbolsByID := map[string]SymbolRecord{
+		"seed": {ID: "seed", Name: "replicateObject", FilePath: "replicate.go", StartLine: 1, EndLine: 1},
+		"hub":  {ID: "hub", Name: "logValue", FilePath: "logging.go", StartLine: 1, EndLine: 3},
+	}
+	read := func(path string) (string, bool) {
+		if path == "logging.go" {
+			return "func logValue(value any) {\n\tfmt.Println(\"quorum replication\", value)\n}", true
+		}
+		return "", false
+	}
+
+	candidates := expandGraphCandidates(
+		seeds,
+		q,
+		relations,
+		symbolsByID,
+		map[string]float64{"hub": searchCallerBoostCap},
+		read,
+		map[string]string{"logging.go": "Go"},
+		SearchOptions{},
+	)
+
+	if len(candidates) != 1 {
+		t.Fatalf("graph candidates = %#v, want one hub", candidates)
+	}
+	want := 0.55*15 + 2.2*0.8 + 0.5*searchCallerBoostCap
+	if got := candidates[0].score; math.Abs(got-want) > 1e-9 {
+		t.Fatalf("body-only hub score = %v, want %v with half caller boost", got, want)
+	}
+	if !containsString(candidates[0].result.Signals, "graph:callers") {
+		t.Fatalf("body-only hub signals = %#v, want graph:callers", candidates[0].result.Signals)
+	}
+	if got := countSearchCandidatesWithSignal(candidates, "graph:callers"); got != 1 {
+		t.Fatalf("boosted graph candidate count = %d, want 1", got)
+	}
+}
+
+func TestSearchTestArtifactPathCommonLayouts(t *testing.T) {
+	for _, path := range []string{
+		"test/workloads/push_quorum.go",
+		"store/quorum_test.go",
+		"spec/store/quorum_spec.rb",
+		"store/quorum_test.py",
+		"Store.Tests/Quorum.cs",
+		"src/__tests__/quorum.test.ts",
+	} {
+		if !searchTestArtifactPath(path) {
+			t.Errorf("searchTestArtifactPath(%q) = false, want true", path)
+		}
+	}
+	for _, path := range []string{
+		"internal/contest/score.go",
+		"internal/latest/value.go",
+		"internal/speculator/run.go",
+		"internal/testingutil/helper.go",
+		".github/workflows/test.yml",
+	} {
+		if searchTestArtifactPath(path) {
+			t.Errorf("searchTestArtifactPath(%q) = true, want false", path)
+		}
 	}
 }
 
