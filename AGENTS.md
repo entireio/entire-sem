@@ -124,8 +124,9 @@ this repo. Apply the minimal fix and STOP the moment you can justify it.
 
 For bug-fix/locate tasks, run search at `--profile full` (call-graph expansion active) with default
 text output (tiered: full snippet for the top hits, terse locators after). Measured detail that
-matters: chaining `search -> def -> callers` to "explore the tool" was the #1 token waste — the
-search-only fast path above beat the multi-verb variant by ~8pt.
+matters: chaining `search -> def -> callers` to "explore the tool" was the #1 measured token
+waste — prefer the search-only fast path above. (Benchmark numbers are a single full-board run
+per arm; a 3x replication is in progress — see the graphmark SNAP20 report for caveats.)
 
 ## Operating doctrine (the token-saving rules)
 
