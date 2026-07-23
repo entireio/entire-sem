@@ -1815,9 +1815,30 @@ func expandGraphCandidates(seeds []searchCandidate, q searchQuery, relations []R
 					Snippet:          strings.Join(lines[snippetStart-1:snippetEnd], "\n"),
 				},
 			}
+			// A high-confidence, type-resolved CALLS/CONSTRUCTS edge from a strongly-matched seed
+			// is very likely the collaborator that implements the query's behaviour — the vocab-gap
+			// bridge: the query matches the caller by name while the fix lives in the differently-
+			// named callee (e.g. rule "binary_operator_spaces" -> BinaryOperatorSpacesFixer ->CALLS->
+			// TokensAnalyzer.getLastTokenIndexOfArrowFunction, the gold). The default 0.28 seed
+			// fraction buries such a callee ~7 pts down, below prose/tests; score it just below the
+			// seed so it enters the top-K. derivedSearchScore's parent-0.01 cap keeps it under the
+			// caller, and best[]/dedup/diversity selection bound the added candidates.
+			// Vocab-gap bridge: boost a high-confidence CALLS/CONSTRUCTS callee to just below its
+			// caller ONLY when the callee is itself textually plausible for the query (its name shares
+			// a query term). This promotes a buried-but-relevant collaborator — e.g. the query
+			// "...arrow function..." reaches TokensAnalyzer.getLastTokenIndexOfArrowFunction (shares
+			// "arrow"/"function") from the caller BinaryOperatorSpacesFixer — while NOT surfacing the
+			// arbitrary callees of a strong direct hit (e.g. sympy's Point.__new__ callees don't match
+			// "imaginary/coordinates", so they stay unboosted and add no exploration noise).
+			seedFraction := 0.28
+			if relation.Confidence >= 0.8 &&
+				(relation.Type == "CALLS" || relation.Type == "ASYNC_CALLS" || relation.Type == "CONSTRUCTS") &&
+				searchSymbolNameMatchesQueryTerm(q, symbol) {
+				seedFraction = 0.85
+			}
 			candidate.score = derivedSearchScore(
 				seedScore,
-				0.28*seedScore+relation.Confidence+searchPathPrior(q, symbol.FilePath),
+				seedFraction*seedScore+relation.Confidence+searchPathPrior(q, symbol.FilePath),
 			)
 			candidate.baseScore = candidate.score
 			candidate.result.Signals = appendUnique(candidate.result.Signals, "graph:"+strings.ToLower(relation.Type), "graph:"+pair[2])
@@ -1835,6 +1856,22 @@ func expandGraphCandidates(seeds []searchCandidate, q searchQuery, relations []R
 		out = out[:20]
 	}
 	return out
+}
+
+// searchSymbolNameMatchesQueryTerm reports whether a symbol's name/qualified-name shares a
+// (non-trivial) query term — used to gate the graph-expansion boost to textually-plausible callees.
+func searchSymbolNameMatchesQueryTerm(q searchQuery, symbol SymbolRecord) bool {
+	name := strings.ToLower(symbol.Name)
+	qualified := strings.ToLower(symbol.QualifiedName)
+	for _, term := range q.terms {
+		if len(term) < 3 {
+			continue
+		}
+		if strings.Contains(name, term) || strings.Contains(qualified, term) {
+			return true
+		}
+	}
+	return false
 }
 
 func searchExpansionRelation(relation string) bool {
