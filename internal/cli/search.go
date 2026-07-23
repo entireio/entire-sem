@@ -463,7 +463,7 @@ func minIntCLI(left, right int) int {
 }
 
 func parseSearchFlags(args []string) (searchFlags, []string, error) {
-	flags := searchFlags{Format: "json", Profile: "syntax-only", Worktree: true, MaxContextBytes: 16 * 1024}
+	flags := searchFlags{Format: "json", Profile: "fast", Worktree: true, MaxContextBytes: 16 * 1024}
 	var rest []string
 	for i := 0; i < len(args); i++ {
 		switch args[i] {

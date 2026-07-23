@@ -388,6 +388,23 @@ func relationTypeSet(types ...string) map[string]bool {
 	return set
 }
 
+// shallowCallRelationRetained reports whether a CALLS relation survives the
+// fast profile's shallow call resolution. Shallow keeps the single-target,
+// high-precision resolutions: same-file ("exact"), unique same-package
+// ("package"), and import-path-bound ("import_resolved"). Broader name-only
+// and pattern fanouts stay full-only. Cross-file calls are what connect an
+// implementation to its production callers — in Go via the package, in
+// import-binding languages via the import — so dropping them starves
+// graph-aware search ranking of exactly the edges it needs.
+func shallowCallRelationRetained(resolution string) bool {
+	switch resolution {
+	case "exact", "package", "import_resolved":
+		return true
+	default:
+		return false
+	}
+}
+
 // resolveProfile maps a profile name (empty = full) to its spec. Initial
 // behavior is conservative: fast and syntax-only restrict the relation set and
 // skip the expensive families rather than approximating them.
@@ -933,12 +950,12 @@ func StreamSnapshot(ctx context.Context, repo, providerVersion string, options P
 			return
 		}
 		// Profile filter: emit only relation families the profile includes; in
-		// shallow call resolution, keep only exact (same-file) calls; drop
+		// shallow call resolution, keep only high-precision calls; drop
 		// evidence when the profile omits it.
 		if !spec.emits(r.Type) {
 			return
 		}
-		if r.Type == "CALLS" && spec.callResolution == "shallow" && r.Resolution != "exact" {
+		if r.Type == "CALLS" && spec.callResolution == "shallow" && !shallowCallRelationRetained(r.Resolution) {
 			return
 		}
 		if !spec.includeEvidence {
@@ -1986,7 +2003,12 @@ func forEachRelation(repoKey string, files []FileRecord, recordsByFile map[strin
 	needsAsyncCalls := spec.emits("ASYNC_CALLS")
 	needsDataFlow := spec.emits("DATA_FLOWS")
 	needsServiceRelations := spec.emits("HANDLES_GRPC") || spec.emits("HANDLES_GRAPHQL") || spec.emits("HANDLES_TRPC")
-	needsGlobalSymbolsByShortName := spec.callResolution == "full" || needsReceiverCalls || needsFields || needsTypes || needsOverrides || needsAsyncCalls || needsDataFlow || spec.emits("USES_TYPE") || spec.emits("PARAM_TYPE") || spec.emits("RETURNS_TYPE") || spec.emits("TESTS")
+	// Shallow call resolution needs the global short-name index too: without
+	// it, cross-file targets are invisible and shallow degenerates to
+	// same-file calls only, leaving the fast profile with no caller edges for
+	// graph-aware ranking. The emit-time shallowCallRelationRetained filter
+	// still drops the low-precision resolutions the index makes reachable.
+	needsGlobalSymbolsByShortName := spec.callResolution == "full" || spec.callResolution == "shallow" || needsReceiverCalls || needsFields || needsTypes || needsOverrides || needsAsyncCalls || needsDataFlow || spec.emits("USES_TYPE") || spec.emits("PARAM_TYPE") || spec.emits("RETURNS_TYPE") || spec.emits("TESTS")
 	needsGlobalSymbolsByFile := needsGlobalSymbolsByShortName
 	symbolsByShortName := map[string][]SymbolRecord{}
 	symbolsByFile := map[string][]SymbolRecord{}

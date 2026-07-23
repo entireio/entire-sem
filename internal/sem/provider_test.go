@@ -3592,6 +3592,45 @@ func TestNothingHere(t *testing.T) {}
 	// TestNothingHere has no matching subject -> no edge.
 }
 
+func TestFastProfileKeepsSamePackageCalls(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "store/quorum.go", `package store
+
+func checkQuorum(outcomes []int) bool {
+	return len(outcomes) > 1
+}
+`)
+	writeFile(t, repo, "store/replicate.go", `package store
+
+func replicateObject(outcomes []int) bool {
+	return checkQuorum(outcomes)
+}
+`)
+
+	var calls []RelationRecord
+	err := StreamSnapshot(t.Context(), repo, "test-version", ProviderSnapshotOptions{Profile: ProfileFast}, func(rec any) error {
+		if r, ok := rec.(RelationRecord); ok && r.Type == "CALLS" {
+			calls = append(calls, r)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, call := range calls {
+		if strings.Contains(call.FromID, "replicateObject") && strings.Contains(call.ToID, "checkQuorum") {
+			found = true
+			if call.Resolution != "package" {
+				t.Fatalf("cross-file same-package call resolution = %q, want package", call.Resolution)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("fast profile dropped the cross-file same-package call: %#v", calls)
+	}
+}
+
 func TestProfilesControlRelationOutputAndHeader(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "auth.go", `package auth

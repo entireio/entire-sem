@@ -129,7 +129,10 @@ profile never silently drops a relation family.
   `LISTENS_ON`, `HANDLES_TOOL`, `SIMILAR_TO`, `TESTS`, `RESOURCE_DEPENDS_ON`,
   with full evidence. **Semantic-depth and accuracy claims belong to `full`.**
 - `fast` — symbol inventory plus `DEFINES`, `CONTAINS`, `IMPORTS`, `CALLS`
-  (shallow: same-file/exact only), `HANDLES_ROUTE`, `HANDLES_TOOL`, and
+  (shallow: single-target, high-precision resolutions only — same-file
+  `exact`, unique same-package `package`, and import-bound
+  `import_resolved`; name-only and pattern fanouts stay full-only),
+  `HANDLES_ROUTE`, `HANDLES_TOOL`, and
   `RESOURCE_DEPENDS_ON`. Evidence is omitted and the deep families
   (type/field/similarity/HTTP/channel/test/uses-type/override) are skipped and
   their content scans avoided. **Speed/throughput claims belong to `fast`.**

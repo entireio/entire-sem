@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1497,7 +1498,7 @@ func TestExpandGraphCandidatesSkipsOutOfRangeSymbolLines(t *testing.T) {
 	// Pre-fix, clampRegion returns (0,0) for the out-of-range target and the
 	// unguarded lines[snippetStart-1:snippetEnd] slice panics with
 	// "slice bounds out of range [-1:]".
-	out := expandGraphCandidates(seeds, searchQuery{}, relations, symbolsByID, read, nil, options)
+	out := expandGraphCandidates(seeds, searchQuery{}, relations, symbolsByID, nil, read, nil, options)
 
 	for _, candidate := range out {
 		if candidate.result.SymbolID == "target" {
@@ -1529,7 +1530,7 @@ func TestExpandGraphCandidatesIncludesInRangeSymbol(t *testing.T) {
 	}
 	options := SearchOptions{MaxRegionLines: 40, MaxSnippetLines: 40}
 
-	out := expandGraphCandidates(seeds, searchQuery{}, relations, symbolsByID, read, nil, options)
+	out := expandGraphCandidates(seeds, searchQuery{}, relations, symbolsByID, nil, read, nil, options)
 
 	found := false
 	for _, candidate := range out {
@@ -1572,7 +1573,7 @@ func TestExpandGraphCandidatesClampsNonPositiveRegionLines(t *testing.T) {
 		// (end = start+MaxRegionLines-1) and the snippet slice panics with
 		// "slice bounds out of range" (low > high).
 		options := SearchOptions{MaxRegionLines: maxRegionLines, MaxSnippetLines: -1}
-		out := expandGraphCandidates(seeds, searchQuery{}, relations, symbolsByID, read, nil, options)
+		out := expandGraphCandidates(seeds, searchQuery{}, relations, symbolsByID, nil, read, nil, options)
 
 		found := false
 		for _, candidate := range out {
@@ -1591,5 +1592,143 @@ func TestExpandGraphCandidatesClampsNonPositiveRegionLines(t *testing.T) {
 			t.Fatalf("MaxRegionLines=%d: expected in-range target candidate to be included, got %d candidates",
 				maxRegionLines, len(out))
 		}
+	}
+}
+
+func TestSearchGraphCallerBoostsCountDistinctProductionCallers(t *testing.T) {
+	symbolsByID := map[string]SymbolRecord{
+		"impl":     {ID: "impl", Name: "checkQuorum", FilePath: "store/quorum.go"},
+		"caller1":  {ID: "caller1", Name: "replicateObject", FilePath: "store/replicate.go"},
+		"caller2":  {ID: "caller2", Name: "storeQuarantine", FilePath: "store/quarantine.go"},
+		"testfn":   {ID: "testfn", Name: "TestQuorum", FilePath: "test/workloads/push_quorum.go"},
+		"unitfile": {ID: "unitfile", Name: "TestCheck", FilePath: "store/quorum_test.go"},
+	}
+	relations := []RelationRecord{
+		{FromID: "caller1", ToID: "impl", Type: "CALLS", Confidence: 0.8},
+		// Duplicate edge from the same caller must not count twice.
+		{FromID: "caller1", ToID: "impl", Type: "CALLS", Confidence: 0.8},
+		{FromID: "caller2", ToID: "impl", Type: "CALLS", Confidence: 0.92},
+		// Test-path callers carry no production signal.
+		{FromID: "testfn", ToID: "impl", Type: "CALLS", Confidence: 0.92},
+		{FromID: "unitfile", ToID: "impl", Type: "CALLS", Confidence: 0.92},
+		// Below the confidence floor.
+		{FromID: "caller1", ToID: "caller2", Type: "CALLS", Confidence: 0.5},
+		// Structural relations are not caller evidence.
+		{FromID: "caller1", ToID: "caller2", Type: "CONTAINS", Confidence: 1.0},
+		// Self-edges are ignored.
+		{FromID: "impl", ToID: "impl", Type: "CALLS", Confidence: 1.0},
+	}
+
+	boosts := searchGraphCallerBoosts(relations, symbolsByID)
+
+	want := searchCallerBoostUnit * math.Log2(3) // two distinct production callers
+	if got := boosts["impl"]; math.Abs(got-want) > 1e-9 {
+		t.Fatalf("impl boost = %v, want %v", got, want)
+	}
+	if _, ok := boosts["caller2"]; ok {
+		t.Fatalf("low-confidence edge produced a boost: %v", boosts)
+	}
+}
+
+func TestApplySearchCallerBoostsTagsAndCounts(t *testing.T) {
+	candidates := []searchCandidate{
+		{result: SearchResult{SymbolID: "impl"}, score: 10},
+		{result: SearchResult{SymbolID: "other"}, score: 12},
+		{result: SearchResult{}, score: 9},
+	}
+	boosted := applySearchCallerBoosts(candidates, map[string]float64{"impl": 3, "": 99})
+	if boosted != 1 {
+		t.Fatalf("boosted = %d, want 1", boosted)
+	}
+	if candidates[0].score != 13 || !containsString(candidates[0].result.Signals, "graph:callers") {
+		t.Fatalf("boosted candidate = %+v", candidates[0])
+	}
+	if candidates[1].score != 12 || candidates[2].score != 9 {
+		t.Fatalf("unboosted candidates changed: %+v", candidates[1:])
+	}
+}
+
+func TestSearchRanksCalledImplementationAboveTestScaffolding(t *testing.T) {
+	repo := t.TempDir()
+	write(t, repo, "store/quorum.go", `package store
+
+// checkQuorum validates that enough providers succeeded to meet quorum and
+// availability-zone coverage requirements.
+func checkQuorum(outcomes []int) bool {
+	return len(outcomes) > 1
+}
+`)
+	write(t, repo, "store/replicate.go", `package store
+
+// replicateObject fans the object out to every target and fails when the
+// cluster-wide quorum check fails.
+func replicateObject(outcomes []int) bool {
+	return checkQuorum(outcomes)
+}
+`)
+	write(t, repo, "store/quarantine.go", `package store
+
+// storeQuarantine stages a pack and verifies quorum before commit.
+func storeQuarantine(outcomes []int) bool {
+	return checkQuorum(outcomes)
+}
+`)
+	write(t, repo, "store/repair.go", `package store
+
+// repairScan re-verifies quorum for under-replicated objects.
+func repairScan(outcomes []int) bool {
+	return checkQuorum(outcomes)
+}
+`)
+	// The test workload matches the query about as well as the implementation
+	// does lexically (concept terms in path, type doc, and assertion doc), the
+	// shape the entiredb feedback reported: without graph signal it outranks
+	// the implementation, which has no production path/doc advantage — only
+	// real callers.
+	write(t, repo, "test/workloads/push_quorum.go", `package workloads
+
+// PushQuorumWorkload drives a push and asserts replication behavior.
+type PushQuorumWorkload struct{}
+
+// Check asserts that the push met quorum requirements.
+func (w PushQuorumWorkload) Check(outcomes []int) bool {
+	return len(outcomes) >= 0
+}
+`)
+
+	// Default options: the profile must resolve to fast so same-package CALLS
+	// edges exist for caller-degree ranking.
+	response, err := SearchRepository(t.Context(), repo, "test", "quorum replication", SearchOptions{
+		Worktree: true,
+		TopK:     10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Profile != string(ProfileFast) {
+		t.Fatalf("default search profile = %q, want %q", response.Profile, ProfileFast)
+	}
+	implRank, testRank := 0, 0
+	var implSignals []string
+	for _, result := range response.Results {
+		if result.SymbolName == "checkQuorum" && implRank == 0 {
+			implRank = result.Rank
+			implSignals = result.Signals
+		}
+		if strings.HasPrefix(result.FilePath, "test/") && testRank == 0 {
+			testRank = result.Rank
+		}
+	}
+	if implRank == 0 {
+		t.Fatalf("checkQuorum missing from results: %#v", response.Results)
+	}
+	if !containsString(implSignals, "graph:callers") {
+		t.Fatalf("checkQuorum signals = %#v, want graph:callers", implSignals)
+	}
+	if testRank != 0 && implRank > testRank {
+		t.Fatalf("implementation ranked %d below test scaffolding at %d", implRank, testRank)
+	}
+	if response.Stats.CallerBoostedCandidates == 0 {
+		t.Fatalf("stats did not record caller-boosted candidates: %#v", response.Stats)
 	}
 }
