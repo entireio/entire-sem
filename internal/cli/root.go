@@ -72,6 +72,10 @@ func Run(ctx context.Context, opts Options, args []string) error {
 		return runIndex(ctx, opts, args[1:])
 	case "neighbors":
 		return runNeighbors(ctx, opts, args[1:])
+	case "agent-guide":
+		return runAgentGuide(opts, args[1:])
+	case "init-agents":
+		return runInitAgents(opts, args[1:])
 	case "version", "--version", "-v":
 		if len(args) > 1 && args[1] == "--json" {
 			return json.NewEncoder(opts.Stdout).Encode(map[string]string{
@@ -92,12 +96,17 @@ func Run(ctx context.Context, opts Options, args []string) error {
 func printHelp(out io.Writer) {
 	fmt.Fprintln(out, `entire-graph adds entity-level context to Entire checkpoints.
 
+For coding agents: run 'entire graph agent-guide' (search-first doctrine — measured to
+roughly halve agent token usage) or 'entire graph init-agents' to install it into a project.
+
 Usage:
   entire graph commit [rev] [--json] [--repo path]
   entire graph checkpoint <checkpoint-id> [--json] [--repo path]
   entire graph diff --base <rev> --head <rev> [--json] [--repo path] [-- path...]
   entire graph analyze [--base <rev>] [--head <rev>] [--json] [--repo path] [-- path...]
   entire graph doctor [--json]
+  entire graph agent-guide                 # print the coding-agent operating guide
+  entire graph init-agents [--repo path]   # install the guide into a project's AGENTS.md/CLAUDE.md
   entire graph version [--json]
   entire graph capabilities --json
   entire graph snapshot --repo . --format ndjson [--worktree] [--progress] [--ignore-file path] [--include-file path]
