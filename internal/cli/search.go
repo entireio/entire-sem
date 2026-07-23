@@ -117,23 +117,45 @@ func runSearch(ctx context.Context, opts Options, args []string) error {
 			"completeness":     response.Completeness,
 		})
 	case "text":
-		for _, result := range response.Results {
-			name := result.QualifiedName
-			if name == "" {
-				name = result.SymbolName
-			}
-			fmt.Fprintf(opts.Stdout, "%d. %s:%d-%d score=%.4f", result.Rank, result.FilePath, result.StartLine, result.EndLine, result.Score)
-			if name != "" {
-				fmt.Fprintf(opts.Stdout, " symbol=%s", name)
-			}
-			fmt.Fprintf(opts.Stdout, " signals=%s\n%s\n\n", strings.Join(result.Signals, ","), result.Snippet)
-		}
-		return nil
+		return writeTextSearch(opts.Stdout, response)
 	case "agent":
 		return writeAgentSearch(opts.Stdout, response, contextBudget)
 	default:
 		return fmt.Errorf("search --format must be json, ndjson, text, or agent, got %q", flags.Format)
 	}
+}
+
+// writeTextSearch renders the default `--format text` output. It is tiered: the
+// first two ranks are where an agent actually reads the match, so they keep the
+// full snippet + signals rendering. Every lower rank is overwhelmingly used only
+// to decide "is this worth opening", so a full snippet there is pure token waste
+// that crowds out the context an agent still has to load — collapse rank 3+ to a
+// single terse "N. path:line symbol" locator line instead.
+func writeTextSearch(out interface{ Write([]byte) (int, error) }, response sem.SearchResponse) error {
+	for _, result := range response.Results {
+		name := result.QualifiedName
+		if name == "" {
+			name = result.SymbolName
+		}
+		if result.Rank > 2 {
+			line := result.FocusLine
+			if line <= 0 {
+				line = result.StartLine
+			}
+			if name != "" {
+				fmt.Fprintf(out, "%d. %s:%d %s\n", result.Rank, result.FilePath, line, name)
+			} else {
+				fmt.Fprintf(out, "%d. %s:%d\n", result.Rank, result.FilePath, line)
+			}
+			continue
+		}
+		fmt.Fprintf(out, "%d. %s:%d-%d score=%.4f", result.Rank, result.FilePath, result.StartLine, result.EndLine, result.Score)
+		if name != "" {
+			fmt.Fprintf(out, " symbol=%s", name)
+		}
+		fmt.Fprintf(out, " signals=%s\n%s\n\n", strings.Join(result.Signals, ","), result.Snippet)
+	}
+	return nil
 }
 
 func writeAgentSearch(out interface{ Write([]byte) (int, error) }, response sem.SearchResponse, budget int) error {

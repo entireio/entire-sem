@@ -84,3 +84,38 @@ func TestSearchMaxContextBytesMustBePositive(t *testing.T) {
 		t.Fatalf("zero max context bytes error = %v", err)
 	}
 }
+
+func TestWriteTextSearchTiersRankOneAndTwoFullRestTerse(t *testing.T) {
+	snippet := "func serve() {\n\tprepare()\n\trun()\n\tcleanup()\n}"
+	response := sem.SearchResponse{Results: []sem.SearchResult{
+		{Rank: 1, FilePath: "src/service.go", StartLine: 10, EndLine: 14, FocusLine: 10, Score: 12.5, SymbolName: "serve", Signals: []string{"path", "body"}, Snippet: snippet},
+		{Rank: 2, FilePath: "src/other.go", StartLine: 1, EndLine: 3, FocusLine: 1, Score: 9.0, SymbolName: "other", Signals: []string{"body"}, Snippet: "func other() {}"},
+		{Rank: 3, FilePath: "src/third.go", StartLine: 20, EndLine: 30, FocusLine: 22, Score: 8.0, QualifiedName: "Third.method", Signals: []string{"body"}, Snippet: "func method() {\n\t// long\n}"},
+		{Rank: 4, FilePath: "src/fourth.go", StartLine: 40, EndLine: 44, FocusLine: 0, Score: 7.0, Signals: []string{"body"}, Snippet: "func fourth() {}"},
+	}}
+
+	var buf bytes.Buffer
+	if err := writeTextSearch(&buf, response); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+
+	if !strings.Contains(out, snippet) {
+		t.Fatalf("rank 1 must keep its full snippet:\n%s", out)
+	}
+	if !strings.Contains(out, "func other() {}") {
+		t.Fatalf("rank 2 must keep its full snippet:\n%s", out)
+	}
+	if strings.Contains(out, "func method()") || strings.Contains(out, "// long") {
+		t.Fatalf("rank 3 must NOT carry its snippet:\n%s", out)
+	}
+	if !strings.Contains(out, "3. src/third.go:22 Third.method\n") {
+		t.Fatalf("rank 3 terse line missing/wrong shape:\n%s", out)
+	}
+	if strings.Contains(out, "func fourth() {}") {
+		t.Fatalf("rank 4 must NOT carry its snippet:\n%s", out)
+	}
+	if !strings.Contains(out, "4. src/fourth.go:40\n") {
+		t.Fatalf("rank 4 terse line should fall back to StartLine when FocusLine unset:\n%s", out)
+	}
+}
