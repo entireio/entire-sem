@@ -2968,6 +2968,14 @@ func searchPathPrior(q searchQuery, filePath string) float64 {
 	if strings.Contains(lower, "/.github/workflows/") && !searchQuerySupplied(q, "workflow", "pipeline", "ci", "action") {
 		score -= 6
 	}
+	// .github/ metadata (ISSUE_TEMPLATE, PULL_REQUEST_TEMPLATE, CONTRIBUTING, FUNDING, etc.)
+	// is NEVER a code fix site, yet issue-template prose matches the problem statement's own
+	// filled-in fields (version/expected/actual boilerplate) and body-BM25-outranks the real
+	// source (measured: briannesbitt .github/ISSUE_TEMPLATE.md ranked #1 over src/Carbon/*).
+	// Hard-demote all non-workflow .github/ paths so template prose can never top the list.
+	if strings.Contains(lower, "/.github/") && !strings.Contains(lower, "/.github/workflows/") {
+		score -= 12
+	}
 	if strings.Contains(lower, "/dependencies/") || strings.Contains(lower, "/third_party/") || strings.Contains(lower, "/third-party/") {
 		score -= 5
 	}
