@@ -14,12 +14,19 @@ var identifierBoundary = regexp.MustCompile(`[A-Za-z0-9_$]+`)
 type referenceIndex map[string]map[string]struct{}
 
 func addDependentCounts(ctx context.Context, repo, head string, result *Result) error {
+	return addDependentCountsWithProgress(ctx, repo, head, result, nil)
+}
+
+func addDependentCountsWithProgress(ctx context.Context, repo, head string, result *Result, progress func(done, total int)) error {
 	names := changedReferenceNames(*result)
 	if len(names) == 0 {
+		if progress != nil {
+			progress(0, 0)
+		}
 		return nil
 	}
 
-	index, warnings, err := buildReferenceIndex(ctx, repo, head, names)
+	index, warnings, err := buildReferenceIndexWithProgress(ctx, repo, head, names, progress)
 	if err != nil {
 		return err
 	}
@@ -49,6 +56,10 @@ func changedReferenceNames(result Result) map[string]struct{} {
 }
 
 func buildReferenceIndex(ctx context.Context, repo, head string, names map[string]struct{}) (referenceIndex, []ProviderWarning, error) {
+	return buildReferenceIndexWithProgress(ctx, repo, head, names, nil)
+}
+
+func buildReferenceIndexWithProgress(ctx context.Context, repo, head string, names map[string]struct{}, progress func(done, total int)) (referenceIndex, []ProviderWarning, error) {
 	index := referenceIndex{}
 	for name := range names {
 		index[name] = map[string]struct{}{}
@@ -61,9 +72,15 @@ func buildReferenceIndex(ctx context.Context, repo, head string, names map[strin
 	if err != nil {
 		return nil, nil, err
 	}
+	if progress != nil {
+		progress(0, len(files))
+	}
 
 	parser := TreeSitterParser{}
-	for _, path := range files {
+	for i, path := range files {
+		if i > 0 && i%100 == 0 && progress != nil {
+			progress(i, len(files))
+		}
 		if !Supported(path) {
 			continue
 		}
@@ -99,6 +116,9 @@ func buildReferenceIndex(ctx context.Context, repo, head string, names map[strin
 				}
 			}
 		}
+	}
+	if progress != nil {
+		progress(len(files), len(files))
 	}
 
 	return index, warnings, nil

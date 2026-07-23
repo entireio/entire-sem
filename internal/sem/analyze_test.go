@@ -96,6 +96,47 @@ func TestAnalyzeGitRangeSurfacesModuleScopeChange(t *testing.T) {
 	}
 }
 
+func TestAnalyzeGitRangeReportsProgress(t *testing.T) {
+	repo := t.TempDir()
+	git(t, repo, "init")
+	git(t, repo, "config", "user.name", "Entire Graph Test")
+	git(t, repo, "config", "user.email", "graph@example.com")
+
+	write(t, repo, "auth.py", "def validate_token(token):\n    return bool(token)\n")
+	git(t, repo, "add", ".")
+	git(t, repo, "commit", "-m", "initial")
+	base := rev(t, repo, "HEAD")
+
+	write(t, repo, "auth.py", "def validate_token(token, issuer=None):\n    return bool(token)\n")
+	git(t, repo, "add", ".")
+	git(t, repo, "commit", "-m", "change")
+	head := rev(t, repo, "HEAD")
+
+	var phases []string
+	_, err := AnalyzeGitRangeWithOptions(t.Context(), repo, base, head, nil, AnalyzeOptions{
+		Progress: func(event AnalyzeProgressEvent) {
+			phases = append(phases, event.Phase)
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"discover", "parse", "reconcile", "dependents", "complete"} {
+		if !containsPhase(phases, want) {
+			t.Fatalf("progress phases %v missing %q", phases, want)
+		}
+	}
+}
+
+func containsPhase(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
 func TestAnalyzeGitRangeReconcilesCrossFileMove(t *testing.T) {
 	repo := t.TempDir()
 	git(t, repo, "init")

@@ -5,19 +5,55 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"time"
 
 	"github.com/entireio/entire-graph/internal/gitutil"
 )
 
 func AnalyzeGitRange(ctx context.Context, repo, base, head string, paths []string) (Result, error) {
+	return AnalyzeGitRangeWithOptions(ctx, repo, base, head, paths, AnalyzeOptions{})
+}
+
+// AnalyzeOptions configures optional semantic diff behavior.
+type AnalyzeOptions struct {
+	Progress func(AnalyzeProgressEvent)
+}
+
+// AnalyzeProgressEvent reports coarse progress for a semantic diff.
+type AnalyzeProgressEvent struct {
+	Phase      string
+	FilesDone  int
+	FilesTotal int
+	Elapsed    time.Duration
+}
+
+// AnalyzeGitRangeWithOptions analyzes a Git range with optional progress reporting.
+func AnalyzeGitRangeWithOptions(ctx context.Context, repo, base, head string, paths []string, options AnalyzeOptions) (Result, error) {
+	started := time.Now()
+	emitProgress := func(phase string, filesDone, filesTotal int) {
+		if options.Progress != nil {
+			options.Progress(AnalyzeProgressEvent{
+				Phase:      phase,
+				FilesDone:  filesDone,
+				FilesTotal: filesTotal,
+				Elapsed:    time.Since(started),
+			})
+		}
+	}
+
+	emitProgress("discover", 0, 0)
 	changed, err := gitutil.ChangedFiles(ctx, repo, base, head, paths)
 	if err != nil {
 		return Result{}, err
 	}
+	emitProgress("parse", 0, len(changed))
 	parser := TreeSitterParser{}
 	result := Result{Base: base, Head: head}
 	var deltas []*fileDelta
-	for _, file := range changed {
+	for i, file := range changed {
+		if i > 0 && i%100 == 0 {
+			emitProgress("parse", i, len(changed))
+		}
 		path := file.Path
 		oldPath := file.OldPath
 		if oldPath == "" {
@@ -102,7 +138,9 @@ func AnalyzeGitRange(ctx context.Context, repo, base, head string, paths []strin
 			added:    added,
 		})
 	}
+	emitProgress("parse", len(changed), len(changed))
 
+	emitProgress("reconcile", len(changed), len(changed))
 	result.Warnings = append(result.Warnings, reconcileMoves(deltas)...)
 
 	for _, delta := range deltas {
@@ -126,9 +164,12 @@ func AnalyzeGitRange(ctx context.Context, repo, base, head string, paths []strin
 		})
 	}
 
-	if err := addDependentCounts(ctx, repo, head, &result); err != nil {
+	if err := addDependentCountsWithProgress(ctx, repo, head, &result, func(done, total int) {
+		emitProgress("dependents", done, total)
+	}); err != nil {
 		return Result{}, err
 	}
+	emitProgress("complete", len(changed), len(changed))
 	return result, nil
 }
 

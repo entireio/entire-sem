@@ -93,10 +93,10 @@ func printHelp(out io.Writer) {
 	fmt.Fprintln(out, `entire-graph adds entity-level context to Entire checkpoints.
 
 Usage:
-  entire graph commit [rev] [--json] [--repo path]
+  entire graph commit [rev] [--json] [--progress] [--repo path]
   entire graph checkpoint <checkpoint-id> [--json] [--repo path]
-  entire graph diff --base <rev> --head <rev> [--json] [--repo path] [-- path...]
-  entire graph analyze [--base <rev>] [--head <rev>] [--json] [--repo path] [-- path...]
+  entire graph diff --base <rev> --head <rev> [--json] [--progress] [--repo path] [-- path...]
+  entire graph analyze [--base <rev>] [--head <rev>] [--json] [--progress] [--repo path] [-- path...]
   entire graph doctor [--json]
   entire graph version [--json]
   entire graph capabilities --json
@@ -105,7 +105,11 @@ Usage:
   entire graph edges --repo . --format ndjson [--worktree] [--progress] [--ignore-file path] [--include-file path]
   entire graph index --repo . [--profile syntax-only|fast|full] [--cache-dir path] [--format json] [--head] [--ignore-file path] [--include-file path]
   entire graph search --query "issue or concept" --repo . [--format json|ndjson|text|agent] [--top-k 20] [--max-context-bytes 16384] [--head] [--profile syntax-only|fast|full] [--max-indexed-files n|--index-all-files] [--cache-dir path|--no-cache]
-  entire graph neighbors --symbol NAME --repo . [--file path] [--relation CALLS] [--direction both|in|out] [--depth 1|2] [--limit 20] [--format json|text|agent] [--max-context-bytes 16384] [--head] [--cache-dir path|--no-cache] [--internal-only] [--exclude-tests]`)
+  entire graph neighbors --symbol NAME --repo . [--file path] [--relation CALLS] [--direction both|in|out] [--depth 1|2] [--limit 20] [--format json|text|agent] [--max-context-bytes 16384] [--head] [--cache-dir path|--no-cache] [--internal-only] [--exclude-tests]
+
+Notes:
+  --include-file contains gitignore-style rules that re-include ignored paths; it is not an allowlist.
+  Streaming NDJSON writes aggregate stats and completeness in the trailing summary record.`)
 }
 
 func runDoctor(ctx context.Context, opts Options, args []string) error {
@@ -374,8 +378,9 @@ func includeRecord(mode string, record any) bool {
 }
 
 type commonFlags struct {
-	Repo string
-	JSON bool
+	Repo     string
+	JSON     bool
+	Progress bool
 }
 
 type providerFlags struct {
@@ -534,6 +539,8 @@ func parseCommonFlags(args []string) (commonFlags, []string, error) {
 		switch arg {
 		case "--json":
 			flags.JSON = true
+		case "--progress":
+			flags.Progress = true
 		case "--repo":
 			i++
 			if i >= len(args) {
@@ -570,13 +577,16 @@ func runCommit(ctx context.Context, opts Options, args []string) error {
 	if err != nil {
 		return err
 	}
-	return analyzeAndPrint(ctx, opts.Stdout, repo, base, rev, nil, flags.JSON)
+	return analyzeAndPrint(ctx, opts, repo, base, rev, nil, flags.JSON, flags.Progress)
 }
 
 func runCheckpoint(ctx context.Context, opts Options, args []string) error {
 	flags, rest, err := parseCommonFlags(args)
 	if err != nil {
 		return err
+	}
+	if flags.Progress {
+		return errors.New("checkpoint does not support --progress")
 	}
 	if len(rest) != 1 {
 		return errors.New("checkpoint requires exactly one checkpoint ID")
@@ -628,7 +638,7 @@ func runDiff(ctx context.Context, opts Options, args []string) error {
 	if err != nil {
 		return err
 	}
-	return analyzeAndPrint(ctx, opts.Stdout, repo, base, head, paths, flags.JSON)
+	return analyzeAndPrint(ctx, opts, repo, base, head, paths, flags.JSON, flags.Progress)
 }
 
 func resolveRepo(ctx context.Context, env EntireEnv, explicit string) (string, error) {
@@ -641,12 +651,23 @@ func resolveRepo(ctx context.Context, env EntireEnv, explicit string) (string, e
 	return gitutil.RepoRoot(ctx, ".")
 }
 
-func analyzeAndPrint(ctx context.Context, out io.Writer, repo, base, head string, paths []string, asJSON bool) error {
-	result, err := sem.AnalyzeGitRange(ctx, repo, base, head, paths)
+func analyzeAndPrint(ctx context.Context, opts Options, repo, base, head string, paths []string, asJSON, progress bool) error {
+	analyzeOptions := sem.AnalyzeOptions{}
+	if progress {
+		analyzeOptions.Progress = func(event sem.AnalyzeProgressEvent) {
+			fmt.Fprintf(opts.Stderr, "graph diff progress phase=%s files=%d/%d elapsed=%s\n",
+				event.Phase,
+				event.FilesDone,
+				event.FilesTotal,
+				event.Elapsed.Round(time.Millisecond),
+			)
+		}
+	}
+	result, err := sem.AnalyzeGitRangeWithOptions(ctx, repo, base, head, paths, analyzeOptions)
 	if err != nil {
 		return err
 	}
-	return printResult(out, result, asJSON)
+	return printResult(opts.Stdout, result, asJSON)
 }
 
 func printResult(out io.Writer, result sem.Result, asJSON bool) error {

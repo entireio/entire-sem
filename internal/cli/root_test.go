@@ -435,6 +435,37 @@ func TestHelpDocumentsNeighborAgentContextCap(t *testing.T) {
 	}
 }
 
+func TestDiffProgressReportsToStderr(t *testing.T) {
+	repo := t.TempDir()
+	git(t, repo, "init")
+	git(t, repo, "config", "user.name", "Entire Graph Test")
+	git(t, repo, "config", "user.email", "graph@example.com")
+	write(t, repo, "auth.py", "def validate_token(token):\n    return bool(token)\n")
+	git(t, repo, "add", ".")
+	git(t, repo, "commit", "-m", "initial")
+	write(t, repo, "auth.py", "def validate_token(token, issuer=None):\n    return bool(token)\n")
+	git(t, repo, "add", ".")
+	git(t, repo, "commit", "-m", "change")
+
+	var stdout, stderr bytes.Buffer
+	err := Run(t.Context(), Options{
+		Env:    EntireEnv{RepoRoot: repo},
+		Stdout: &stdout,
+		Stderr: &stderr,
+	}, []string{"diff", "--base", "HEAD~1", "--head", "HEAD", "--progress"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"phase=discover", "phase=parse", "phase=reconcile", "phase=dependents", "phase=complete"} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Fatalf("progress output missing %q:\n%s", want, stderr.String())
+		}
+	}
+	if strings.Contains(stdout.String(), "graph diff progress") {
+		t.Fatalf("progress leaked to stdout:\n%s", stdout.String())
+	}
+}
+
 func TestNeighborsAgentFormatReturnsBoundedCallGraphAndPaths(t *testing.T) {
 	repo := t.TempDir()
 	write(t, repo, "calls.go", `package calls
