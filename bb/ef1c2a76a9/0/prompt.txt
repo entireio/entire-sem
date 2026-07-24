@@ -1,0 +1,25 @@
+entire-graph doesn't seem to have any entire runners configured AFAIK. We need to come up with a plan for some runners. Check the runners that are on the cli and the entire.io repos and come up with a plan for what runners make sense for entire-graph
+
+---
+
+Let's draft these first 5 :)
+
+---
+
+Review the current code changes (staged, unstaged, and untracked files) and provide prioritized findings.
+
+---
+
+implement changes recommended
+
+---
+
+Review the current code changes (staged, unstaged, and untracked files) and provide prioritized findings.
+
+---
+
+implement changes
+
+---
+
+Can we submit a PR?

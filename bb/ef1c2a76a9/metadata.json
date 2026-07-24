@@ -1,0 +1,30 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "bbef1c2a76a9",
+  "strategy": "manual-commit",
+  "branch": "agent/add-entire-graph-runners",
+  "checkpoints_count": 4,
+  "files_touched": [
+    ".entire/runners/trail-review.json",
+    ".entire/runners/trail-risk.json",
+    ".entire/runners/trail-security.json",
+    ".entire/runners/trail-semantic-diff.json",
+    ".entire/runners/trail-summary.json"
+  ],
+  "sessions": [
+    {
+      "metadata": "/bb/ef1c2a76a9/0/metadata.json",
+      "transcript": "/bb/ef1c2a76a9/0/full.jsonl",
+      "compact_transcript": "/bb/ef1c2a76a9/0/transcript.jsonl",
+      "content_hash": "/bb/ef1c2a76a9/0/content_hash.txt",
+      "prompt": "/bb/ef1c2a76a9/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 151434,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 1619712,
+    "output_tokens": 17208,
+    "api_call_count": 28
+  }
+}

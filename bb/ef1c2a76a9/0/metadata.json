@@ -1,0 +1,51 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "bbef1c2a76a9",
+  "session_id": "019f9261-846e-7fc0-b843-e0464227f290",
+  "strategy": "manual-commit",
+  "created_at": "2026-07-24T04:45:00.295721Z",
+  "branch": "agent/add-entire-graph-runners",
+  "checkpoints_count": 4,
+  "files_touched": [
+    ".entire/runners/trail-review.json",
+    ".entire/runners/trail-risk.json",
+    ".entire/runners/trail-security.json",
+    ".entire/runners/trail-semantic-diff.json",
+    ".entire/runners/trail-summary.json"
+  ],
+  "agent": "Codex",
+  "model": "gpt-5.6-sol",
+  "turn_id": "76b3d5d2aaa6",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 151434,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 1619712,
+    "output_tokens": 17208,
+    "api_call_count": 28
+  },
+  "session_metrics": {
+    "turn_count": 4
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-07-24T04:45:00.267Z",
+    "agent_lines": 157,
+    "agent_removed": 0,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 157,
+    "total_lines_changed": 157,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    }
+  ]
+}
